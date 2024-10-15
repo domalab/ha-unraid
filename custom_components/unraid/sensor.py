@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from datetime import datetime, timedelta
 from homeassistant.util import dt as dt_util
+from homeassistant.const import UnitOfTemperature
 
 from .const import DOMAIN
 from .coordinator import UnraidDataUpdateCoordinator
@@ -43,10 +44,13 @@ async def async_setup_entry(
         UnraidBootUsageSensor(coordinator),
         UnraidUptimeSensor(coordinator),
         UnraidUPSSensor(coordinator),
+        UnraidCPUTemperatureSensor(coordinator),
+        UnraidMotherboardTemperatureSensor(coordinator),
     ]
     # Add individual disk sensors
     for disk in coordinator.data["system_stats"].get("individual_disks", []):
-        sensors.append(UnraidIndividualDiskSensor(coordinator, disk["name"]))
+        if disk["name"].startswith("disk") and disk["mount_point"].startswith("/mnt/disk"):
+            sensors.append(UnraidIndividualDiskSensor(coordinator, disk["name"]))
     
     async_add_entities(sensors)
 
@@ -198,15 +202,18 @@ class UnraidIndividualDiskSensor(UnraidSensorBase):
     @property
     def extra_state_attributes(self):
         """Return the state attributes."""
+        attributes = {}
         for disk in self.coordinator.data["system_stats"].get("individual_disks", []):
             if disk["name"] == self._disk_name:
-                return {
+                attributes = {
                     "total_size": format_size(disk["total"]),
                     "used_space": format_size(disk["used"]),
                     "free_space": format_size(disk["free"]),
                     "mount_point": disk["mount_point"],
                 }
-        return {}
+                break
+        
+        return attributes
 
 class UnraidCacheUsageSensor(UnraidSensorBase):
     """Representation of Unraid Cache usage sensor."""
@@ -352,3 +359,61 @@ class UnraidUPSSensor(UnraidSensorBase):
             "line_voltage": ups_info.get("LINEV", "Unknown"),
             "battery_voltage": ups_info.get("BATTV", "Unknown"),
         }
+
+class UnraidCPUTemperatureSensor(UnraidSensorBase):
+    """Representation of Unraid CPU temperature sensor."""
+
+    def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            "cpu_temperature",
+            "CPU Temperature",
+            "mdi:thermometer",
+            device_class=SensorDeviceClass.TEMPERATURE,
+            state_class=SensorStateClass.MEASUREMENT,
+        )
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        temp_data = self.coordinator.data["system_stats"].get("temperature_data", {})
+        sensors_data = temp_data.get("sensors", {})
+        for sensor, data in sensors_data.items():
+            if "Core 0" in data:
+                return float(data["Core 0"].replace('°C', '').replace(' C', '').replace('+', ''))
+        return None
+
+    @property
+    def native_unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return UnitOfTemperature.CELSIUS
+
+class UnraidMotherboardTemperatureSensor(UnraidSensorBase):
+    """Representation of Unraid motherboard temperature sensor."""
+
+    def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            "motherboard_temperature",
+            "Motherboard Temperature",
+            "mdi:thermometer",
+            device_class=SensorDeviceClass.TEMPERATURE,
+            state_class=SensorStateClass.MEASUREMENT,
+        )
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        temp_data = self.coordinator.data["system_stats"].get("temperature_data", {})
+        sensors_data = temp_data.get("sensors", {})
+        for sensor, data in sensors_data.items():
+            if "MB Temp" in data:
+                return float(data["MB Temp"].replace('°C', '').replace(' C', '').replace('+', ''))
+        return None
+
+    @property
+    def native_unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return UnitOfTemperature.CELSIUS

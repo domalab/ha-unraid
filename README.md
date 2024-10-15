@@ -1,6 +1,6 @@
 # Unraid Integration for Home Assistant
 
-This custom integration allows you to monitor and control your Unraid server from Home Assistant.
+This custom integration allows you to monitor and control your Unraid server from Home Assistant. Unraid is a popular NAS (Network Attached Storage) operating system that provides flexible storage, virtualization, and application support.
 
 ## Features
 
@@ -28,16 +28,19 @@ During the setup, you'll need to provide:
 - Username: Your Unraid username (usually 'root')
 - Password: Your Unraid password
 - Port: SSH port (usually 22)
-- Ping Interval: How often to check if the server is online (in seconds)
-- Update Interval: How often to update sensor data (in seconds)
+- Ping Interval: How often to check if the server is online (in seconds). Default is 60 seconds.
+- Update Interval: How often to update sensor data (in seconds). Default is 300 seconds.
+
+Note: Setting lower intervals will provide more up-to-date information but may increase system load.
 
 ## Sensors
 
-- CPU Usage
-- RAM Usage
-- Array Usage
-- Individual Array Disks
-- Uptime
+- CPU Usage: Shows the current CPU utilization percentage.
+- RAM Usage: Displays the current RAM usage percentage.
+- Array Usage: Shows the overall array usage percentage.
+- Individual Array Disks: Displays usage information for each disk in the array.
+- Uptime: Shows how long the Unraid server has been running.
+- UPS Status: Displays information about the connected UPS (if available).
 
 ## Switches
 
@@ -50,13 +53,3 @@ During the setup, you'll need to provide:
 - `unraid.execute_in_container`: Execute a command in a Docker container
 - `unraid.execute_user_script`: Execute a user script
 - `unraid.stop_user_script`: Stop a running user script
-
-## Examples
-
-### Execute a shell command
-
-```yaml
-service: unraid.execute_command
-data:
-  entry_id: YOUR_ENTRY_ID
-  command: "echo 'Hello from Home Assistant' > /boot/config/plugins/user.scripts/scripts/ha_test.sh"

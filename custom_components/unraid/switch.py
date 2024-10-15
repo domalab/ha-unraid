@@ -99,7 +99,7 @@ class UnraidVMSwitch(UnraidSwitchBase):
         self._vm_name = vm_name
         self._attr_name = f"Unraid VM {vm_name}"
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_vm_{vm_name}"
-        self._attr_icon = "mdi:virtual-machine"
+        self._attr_icon = "mdi:desktop-classic"
 
     @property
     def is_on(self) -> bool:

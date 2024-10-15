@@ -49,6 +49,7 @@ class UnraidAPI:
         boot_usage = await self._get_boot_usage()
         uptime = await self._get_uptime()
         ups_info = await self.get_ups_info()
+        temperature_data = await self.get_temperature_data()
 
         return {
             "cpu_usage": cpu_usage,
@@ -59,6 +60,7 @@ class UnraidAPI:
             "boot_usage": boot_usage,
             "uptime": uptime,
             "ups_info": ups_info,
+            "temperature_data": temperature_data,
         }
 
     async def _get_cpu_usage(self) -> Optional[float]:
@@ -126,19 +128,20 @@ class UnraidAPI:
             for line in result.stdout.splitlines():
                 mount_point, total, used, free = line.split()
                 disk_name = mount_point.split('/')[-1]
-                total = int(total) * 1024  # Convert to bytes
-                used = int(used) * 1024    # Convert to bytes
-                free = int(free) * 1024    # Convert to bytes
-                percentage = (used / total) * 100 if total > 0 else 0
+                if disk_name.startswith('disk'):  # Only include actual disks, not tmpfs
+                    total = int(total) * 1024  # Convert to bytes
+                    used = int(used) * 1024    # Convert to bytes
+                    free = int(free) * 1024    # Convert to bytes
+                    percentage = (used / total) * 100 if total > 0 else 0
 
-                disks.append({
-                    "name": disk_name,
-                    "mount_point": mount_point,
-                    "percentage": round(percentage, 2),
-                    "total": total,
-                    "used": used,
-                    "free": free
-                })
+                    disks.append({
+                        "name": disk_name,
+                        "mount_point": mount_point,
+                        "percentage": round(percentage, 2),
+                        "total": total,
+                        "used": used,
+                        "free": free
+                    })
 
             return disks
         except Exception as e:
@@ -239,6 +242,48 @@ class UnraidAPI:
         except Exception as e:
             _LOGGER.error(f"Error getting UPS info: {e}")
             return {}
+
+    async def get_temperature_data(self):
+        temp_data = {}
+        
+        # Get CPU and motherboard temperatures
+        try:
+            result = await self.execute_command("sensors")
+            if result.exit_status == 0:
+                temp_data['sensors'] = self._parse_sensors_output(result.stdout)
+        except Exception as e:
+            _LOGGER.error(f"Error getting sensors data: {e}")
+
+        # Get thermal zone temperatures
+        try:
+            result = await self.execute_command("paste <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp)")
+            if result.exit_status == 0:
+                temp_data['thermal_zones'] = self._parse_thermal_zones(result.stdout)
+        except Exception as e:
+            _LOGGER.error(f"Error getting thermal zone data: {e}")
+
+        return temp_data
+
+    def _parse_sensors_output(self, output):
+        sensors_data = {}
+        current_sensor = None
+        for line in output.splitlines():
+            if ':' not in line:
+                current_sensor = line.strip()
+                sensors_data[current_sensor] = {}
+            else:
+                key, value = line.split(':', 1)
+                key = key.strip()
+                value = value.split('(')[0].strip()
+                sensors_data[current_sensor][key] = value
+        return sensors_data
+
+    def _parse_thermal_zones(self, output):
+        thermal_zones = {}
+        for line in output.splitlines():
+            zone_type, temp = line.split()
+            thermal_zones[zone_type] = float(temp) / 1000  # Convert milli-Celsius to Celsius
+        return thermal_zones
 
     async def get_docker_containers(self) -> List[Dict[str, Any]]:
         try:
