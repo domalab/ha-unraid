@@ -1,0 +1,15 @@
+{
+  "domain": "unraid",
+  "name": "UNRAID",
+  "codeowners": ["@domalab"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/domalab/ha-unraid/wiki",
+  "homekit": {},
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/domalab/ha-unraid/issues",
+  "requirements": [],
+  "ssdp": [],
+  "version": "0.1.0",
+  "zeroconf": []
+}
