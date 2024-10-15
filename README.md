@@ -2,6 +2,15 @@
 
 This custom integration allows you to monitor and control your Unraid server from Home Assistant. Unraid is a popular NAS (Network Attached Storage) operating system that provides flexible storage, virtualization, and application support.
 
+## Development Status
+
+This integration is in active development. Here are a few things to keep in mind:
+
+- Features may be added, changed, or removed without notice.
+- There might be bugs or unexpected behavior.
+- Regular updates may be necessary as the integration evolves.
+- Feedback and contributions are welcome to help improve the integration.
+
 ## Features
 
 - Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
@@ -12,6 +21,12 @@ This custom integration allows you to monitor and control your Unraid server fro
 - Manage user scripts
 
 ## Installation
+
+### HACS (Recommended)
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=domalab&repository=https%3A%2F%2Fgithub.com%2Fdomalab%2Fha-unraid&category=integration)
+
+### Manual
 
 1. Copy the `unraid` folder into your `custom_components` directory.
 2. Restart Home Assistant.
@@ -53,3 +68,15 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 - `unraid.execute_in_container`: Execute a command in a Docker container
 - `unraid.execute_user_script`: Execute a user script
 - `unraid.stop_user_script`: Stop a running user script
+
+## Contributing
+
+Contributions to this integration are welcome. Please fork the repository and submit a pull request with your changes. Make sure to follow the contribution guidelines.
+
+## License
+
+This integration is released under the Apache License.
+
+## Disclaimer
+
+This integration is not officially associated with or endorsed by UNRAID. UNRAID trademarks belong to UNRAID, and this integration is independently developed.
