@@ -1,0 +1,3 @@
+force_update:
+  name: Force Update
+  description: Force an immediate update of UNRAID data.
