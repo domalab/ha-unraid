@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import voluptuous as vol
 
+import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PORT
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -13,31 +14,32 @@ from .const import DOMAIN, PLATFORMS
 from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
 
+_LOGGER = logging.getLogger(__name__)
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Unraid from a config entry."""
-    api = UnraidAPI(
-        host=entry.data[CONF_HOST],
-        username=entry.data[CONF_USERNAME],
-        password=entry.data[CONF_PASSWORD],
-        port=entry.data[CONF_PORT],
-    )
-
+    _LOGGER.debug("Setting up Unraid integration")
     try:
-        await api.connect()
-    except Exception as err:
-        await api.disconnect()
-        raise ConfigEntryNotReady from err
+        api = UnraidAPI(
+            host=entry.data[CONF_HOST],
+            username=entry.data[CONF_USERNAME],
+            password=entry.data[CONF_PASSWORD],
+            port=entry.data[CONF_PORT],
+        )
 
-    coordinator = UnraidDataUpdateCoordinator(hass, api, entry)
-    await coordinator.async_config_entry_first_refresh()
+        coordinator = UnraidDataUpdateCoordinator(hass, api, entry)
+        
+        await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    await coordinator.start_ping_task()  # Start the ping task
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    return True
+        _LOGGER.debug("Unraid integration setup completed successfully")
+        return True
+    except Exception as e:
+        _LOGGER.error(f"Failed to set up Unraid integration: {e}")
+        raise
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
