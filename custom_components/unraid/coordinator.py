@@ -54,17 +54,26 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
         """Ping the Unraid server to check if it's online."""
         while True:
             try:
-                await self.api.ping()
+                # Add a timeout to the ping operation
+                ping_task = asyncio.create_task(self.api.ping())
+                await asyncio.wait_for(ping_task, timeout=10.0)  # 10 second timeout
+
                 if not self._is_online:
                     _LOGGER.info("Unraid server is back online")
                     self._is_online = True
                     await self.async_request_refresh()
-            except Exception:
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Ping to Unraid server timed out")
                 if self._is_online:
                     _LOGGER.warning("Unraid server is offline")
                     self._is_online = False
-            
-            await asyncio.sleep(self.ping_interval)
+            except Exception as e:
+                _LOGGER.error(f"Error pinging Unraid server: {e}")
+                if self._is_online:
+                    _LOGGER.warning("Unraid server is offline")
+                    self._is_online = False
+        
+        await asyncio.sleep(self.ping_interval)
 
     async def start_ping_task(self):
         """Start the ping task."""
