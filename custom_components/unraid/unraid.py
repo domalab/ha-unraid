@@ -1,5 +1,6 @@
 """API client for Unraid."""
 import asyncssh
+import asyncio
 from typing import Dict, List, Any, Optional
 import re
 import logging
@@ -50,6 +51,8 @@ class UnraidAPI:
         uptime = await self._get_uptime()
         ups_info = await self.get_ups_info()
         temperature_data = await self.get_temperature_data()
+        log_filesystem = await self._get_log_filesystem_usage()
+        docker_vdisk = await self._get_docker_vdisk_usage()
 
         return {
             "cpu_usage": cpu_usage,
@@ -61,7 +64,76 @@ class UnraidAPI:
             "uptime": uptime,
             "ups_info": ups_info,
             "temperature_data": temperature_data,
+            "log_filesystem": log_filesystem,
+            "docker_vdisk": docker_vdisk,
         }
+
+    async def get_individual_disk_usage(self) -> List[Dict[str, Any]]:
+        try:
+            result = await self.execute_command("df -k /mnt/disk* | awk 'NR>1 {print $6,$2,$3,$4}'")
+            if result.exit_status != 0:
+                _LOGGER.error(f"Individual disk usage command failed with exit status {result.exit_status}")
+                return []
+
+            disks = []
+            for line in result.stdout.splitlines():
+                mount_point, total, used, free = line.split()
+                disk_name = mount_point.split('/')[-1]
+                if disk_name.startswith('disk'):  # Only include actual disks, not tmpfs
+                    total = int(total) * 1024  # Convert to bytes
+                    used = int(used) * 1024    # Convert to bytes
+                    free = int(free) * 1024    # Convert to bytes
+                    percentage = (used / total) * 100 if total > 0 else 0
+
+                    disks.append({
+                        "name": disk_name,
+                        "mount_point": mount_point,
+                        "percentage": round(percentage, 2),
+                        "total": total,
+                        "used": used,
+                        "free": free
+                    })
+
+            return disks
+        except Exception as e:
+            _LOGGER.error(f"Error getting individual disk usage: {e}")
+            return []
+
+    async def _get_log_filesystem_usage(self) -> Dict[str, Any]:
+        try:
+            result = await self.execute_command("df -k /var/log | awk 'NR==2 {print $2,$3,$4,$5}'")
+            if result.exit_status != 0:
+                _LOGGER.error(f"Log filesystem usage command failed with exit status {result.exit_status}")
+                return {}
+
+            total, used, free, percentage = result.stdout.strip().split()
+            return {
+                "total": int(total) * 1024,
+                "used": int(used) * 1024,
+                "free": int(free) * 1024,
+                "percentage": float(percentage.strip('%'))
+            }
+        except Exception as e:
+            _LOGGER.error(f"Error getting log filesystem usage: {e}")
+            return {}
+
+    async def _get_docker_vdisk_usage(self) -> Dict[str, Any]:
+        try:
+            result = await self.execute_command("df -k /var/lib/docker | awk 'NR==2 {print $2,$3,$4,$5}'")
+            if result.exit_status != 0:
+                _LOGGER.error(f"Docker vDisk usage command failed with exit status {result.exit_status}")
+                return {}
+
+            total, used, free, percentage = result.stdout.strip().split()
+            return {
+                "total": int(total) * 1024,
+                "used": int(used) * 1024,
+                "free": int(free) * 1024,
+                "percentage": float(percentage.strip('%'))
+            }
+        except Exception as e:
+            _LOGGER.error(f"Error getting Docker vDisk usage: {e}")
+            return {}
 
     async def _get_cpu_usage(self) -> Optional[float]:
         try:
@@ -116,37 +188,6 @@ class UnraidAPI:
         except Exception as e:
             _LOGGER.error(f"Error getting array usage: {e}")
             return {"percentage": None, "total": None, "used": None, "free": None}
-
-    async def get_individual_disk_usage(self) -> List[Dict[str, Any]]:
-        try:
-            result = await self.execute_command("df -k /mnt/disk* | awk 'NR>1 {print $6,$2,$3,$4}'")
-            if result.exit_status != 0:
-                _LOGGER.error(f"Individual disk usage command failed with exit status {result.exit_status}")
-                return []
-
-            disks = []
-            for line in result.stdout.splitlines():
-                mount_point, total, used, free = line.split()
-                disk_name = mount_point.split('/')[-1]
-                if disk_name.startswith('disk'):  # Only include actual disks, not tmpfs
-                    total = int(total) * 1024  # Convert to bytes
-                    used = int(used) * 1024    # Convert to bytes
-                    free = int(free) * 1024    # Convert to bytes
-                    percentage = (used / total) * 100 if total > 0 else 0
-
-                    disks.append({
-                        "name": disk_name,
-                        "mount_point": mount_point,
-                        "percentage": round(percentage, 2),
-                        "total": total,
-                        "used": used,
-                        "free": free
-                    })
-
-            return disks
-        except Exception as e:
-            _LOGGER.error(f"Error getting individual disk usage: {e}")
-            return []
 
     async def _get_cache_usage(self) -> Dict[str, Optional[float]]:
         try:

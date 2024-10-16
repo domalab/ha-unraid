@@ -46,10 +46,12 @@ async def async_setup_entry(
         UnraidUPSSensor(coordinator),
         UnraidCPUTemperatureSensor(coordinator),
         UnraidMotherboardTemperatureSensor(coordinator),
+        UnraidLogFilesystemSensor(coordinator),
+        UnraidDockerVDiskSensor(coordinator),
     ]
     # Add individual disk sensors
     for disk in coordinator.data["system_stats"].get("individual_disks", []):
-        if disk["name"].startswith("disk") and disk["mount_point"].startswith("/mnt/disk"):
+        if disk["name"].startswith("disk") or disk["name"] == "cache":
             sensors.append(UnraidIndividualDiskSensor(coordinator, disk["name"]))
     
     async_add_entities(sensors)
@@ -214,6 +216,76 @@ class UnraidIndividualDiskSensor(UnraidSensorBase):
                 break
         
         return attributes
+
+class UnraidLogFilesystemSensor(UnraidSensorBase):
+    """Representation of Unraid Log Filesystem usage sensor."""
+
+    def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            "log_filesystem",
+            "Log Filesystem Usage",
+            "mdi:file-document",
+            device_class=SensorDeviceClass.POWER_FACTOR,
+            state_class=SensorStateClass.MEASUREMENT,
+        )
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        log_fs = self.coordinator.data["system_stats"].get("log_filesystem", {})
+        return log_fs.get("percentage")
+
+    @property
+    def native_unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return "%"
+
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes."""
+        log_fs = self.coordinator.data["system_stats"].get("log_filesystem", {})
+        return {
+            "total_size": format_size(log_fs.get("total", 0)),
+            "used_space": format_size(log_fs.get("used", 0)),
+            "free_space": format_size(log_fs.get("free", 0)),
+        }
+
+class UnraidDockerVDiskSensor(UnraidSensorBase):
+    """Representation of Unraid Docker vDisk usage sensor."""
+
+    def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            "docker_vdisk",
+            "Docker vDisk Usage",
+            "mdi:docker",
+            device_class=SensorDeviceClass.POWER_FACTOR,
+            state_class=SensorStateClass.MEASUREMENT,
+        )
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        docker_vdisk = self.coordinator.data["system_stats"].get("docker_vdisk", {})
+        return docker_vdisk.get("percentage")
+
+    @property
+    def native_unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return "%"
+
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes."""
+        docker_vdisk = self.coordinator.data["system_stats"].get("docker_vdisk", {})
+        return {
+            "total_size": format_size(docker_vdisk.get("total", 0)),
+            "used_space": format_size(docker_vdisk.get("used", 0)),
+            "free_space": format_size(docker_vdisk.get("free", 0)),
+        }
 
 class UnraidCacheUsageSensor(UnraidSensorBase):
     """Representation of Unraid Cache usage sensor."""
