@@ -1,9 +1,9 @@
 """API client for Unraid."""
-import asyncssh
 import asyncio
+import asyncssh
+import logging
 from typing import Dict, List, Any, Optional
 import re
-import logging
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,10 +30,20 @@ class UnraidAPI:
             await self.conn.wait_closed()
 
     async def ping(self) -> bool:
+        """Check if the Unraid server is accessible via SSH."""
         try:
-            result = await self.execute_command("echo 'ping'")
-            return result.exit_status == 0
-        except Exception:
+            async with asyncssh.connect(
+                self.host,
+                username=self.username,
+                password=self.password,
+                port=self.port,
+                known_hosts=None,
+                connect_timeout=10
+            ) as conn:
+                # If we can connect, the server is reachable
+                return True
+        except (asyncio.TimeoutError, asyncssh.Error) as e:
+            _LOGGER.debug(f"Failed to connect to Unraid server: {e}")
             return False
 
     async def execute_command(self, command: str) -> asyncssh.SSHCompletedProcess:
@@ -345,33 +355,23 @@ class UnraidAPI:
             _LOGGER.error(f"Error getting docker containers: {e}")
             return []
 
-    async def start_container(self, container_name: str) -> bool:
+    async def get_vms(self) -> List[Dict[str, Any]]:
         try:
-            result = await self.execute_command(f"docker start {container_name}")
-            return result.exit_status == 0 and container_name in result.stdout
-        except Exception as e:
-            _LOGGER.error(f"Error starting container {container_name}: {e}")
-            return False
-
-    async def stop_container(self, container_name: str) -> bool:
-        try:
-            result = await self.execute_command(f"docker stop {container_name}")
-            return result.exit_status == 0 and container_name in result.stdout
-        except Exception as e:
-            _LOGGER.error(f"Error stopping container {container_name}: {e}")
-            return False
-
-    async def execute_in_container(self, container_name: str, command: str, detached: bool = False) -> str:
-        try:
-            docker_command = f"docker exec {'--detach ' if detached else ''}{container_name} {command}"
-            result = await self.execute_command(docker_command)
+            result = await self.execute_command("virsh list --all --name")
             if result.exit_status != 0:
-                _LOGGER.error(f"Command in container {container_name} failed with exit status {result.exit_status}")
-                return ""
-            return result.stdout
+                _LOGGER.error(f"VM list command failed with exit status {result.exit_status}")
+                return []
+            
+            vms = []
+            for line in result.stdout.splitlines():
+                if line.strip():
+                    name = line.strip()
+                    status = await self._get_vm_status(name)
+                    vms.append({"name": name, "status": status})
+            return vms
         except Exception as e:
-            _LOGGER.error(f"Error executing command in container {container_name}: {e}")
-            return ""
+            _LOGGER.error(f"Error getting VMs: {e}")
+            return []
 
     async def get_user_scripts(self) -> List[Dict[str, Any]]:
         try:
