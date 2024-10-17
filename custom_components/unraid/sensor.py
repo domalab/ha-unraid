@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+import logging
 
 from datetime import datetime, timedelta
 from homeassistant.util import dt as dt_util
@@ -17,6 +18,8 @@ from homeassistant.const import UnitOfTemperature
 
 from .const import DOMAIN
 from .coordinator import UnraidDataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 def format_size(size_in_bytes: float) -> str:
     """Format size to appropriate unit."""
@@ -49,6 +52,7 @@ async def async_setup_entry(
         UnraidLogFilesystemSensor(coordinator),
         UnraidDockerVDiskSensor(coordinator),
     ]
+
     # Add individual disk sensors
     for disk in coordinator.data["system_stats"].get("individual_disks", []):
         if disk["name"].startswith("disk") or disk["name"] == "cache":

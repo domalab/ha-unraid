@@ -79,6 +79,7 @@ class UnraidAPI:
         }
 
     async def get_individual_disk_usage(self) -> List[Dict[str, Any]]:
+        """Fetch Individual Disk information from the Unraid system."""
         try:
             result = await self.execute_command("df -k /mnt/disk* | awk 'NR>1 {print $6,$2,$3,$4}'")
             if result.exit_status != 0:
@@ -110,6 +111,7 @@ class UnraidAPI:
             return []
 
     async def _get_log_filesystem_usage(self) -> Dict[str, Any]:
+        """Fetch log filesystem information from the Unraid system."""
         try:
             result = await self.execute_command("df -k /var/log | awk 'NR==2 {print $2,$3,$4,$5}'")
             if result.exit_status != 0:
@@ -128,6 +130,7 @@ class UnraidAPI:
             return {}
 
     async def _get_docker_vdisk_usage(self) -> Dict[str, Any]:
+        """Fetch Docker vDisk information from the Unraid system."""
         try:
             result = await self.execute_command("df -k /var/lib/docker | awk 'NR==2 {print $2,$3,$4,$5}'")
             if result.exit_status != 0:
@@ -146,6 +149,7 @@ class UnraidAPI:
             return {}
 
     async def _get_cpu_usage(self) -> Optional[float]:
+        """Fetch CPU information from the Unraid system."""
         try:
             result = await self.execute_command("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'")
             if result.exit_status != 0:
@@ -163,6 +167,7 @@ class UnraidAPI:
             return None
 
     async def _get_memory_usage(self) -> Dict[str, Optional[float]]:
+        """Fetch RAM information from the Unraid system."""
         try:
             result = await self.execute_command("free | awk '/Mem:/ {print $3/$2 * 100.0}'")
             if result.exit_status != 0:
@@ -180,6 +185,7 @@ class UnraidAPI:
             return {"percentage": None}
 
     async def _get_array_usage(self) -> Dict[str, Optional[float]]:
+        """Fetch Array information from the Unraid system."""
         try:
             result = await self.execute_command("df -k /mnt/user | awk 'NR==2 {print $2,$3,$4}'")
             if result.exit_status != 0:
@@ -200,6 +206,7 @@ class UnraidAPI:
             return {"percentage": None, "total": None, "used": None, "free": None}
 
     async def _get_cache_usage(self) -> Dict[str, Optional[float]]:
+        """Fetch cache information from the Unraid system."""
         try:
             result = await self.execute_command("df -k /mnt/cache | awk 'NR==2 {print $2,$3,$4}'")
             if result.exit_status != 0:
@@ -220,6 +227,7 @@ class UnraidAPI:
             return {"percentage": None, "total": None, "used": None, "free": None}
 
     async def _get_boot_usage(self) -> Dict[str, Optional[float]]:
+        """Fetch boot information from the Unraid system."""
         try:
             result = await self.execute_command("df -k /boot | awk 'NR==2 {print $2,$3,$4}'")
             if result.exit_status != 0:
@@ -261,6 +269,7 @@ class UnraidAPI:
         return number * units[unit]
 
     async def _get_uptime(self) -> Optional[float]:
+        """Fetch Uptime information from the Unraid system."""
         try:
             result = await self.execute_command("awk '{print $1}' /proc/uptime")
             if result.exit_status != 0:
@@ -278,6 +287,7 @@ class UnraidAPI:
             return None
 
     async def get_ups_info(self) -> Dict[str, Any]:
+        """Fetch UPS information from the Unraid system."""
         try:
             result = await self.execute_command("apcaccess status")
             if result.exit_status != 0:
@@ -295,6 +305,7 @@ class UnraidAPI:
             return {}
 
     async def get_temperature_data(self):
+        """Fetch temperature information from the Unraid system."""
         temp_data = {}
         
         # Get CPU and motherboard temperatures
