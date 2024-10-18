@@ -2,6 +2,7 @@
 import asyncio
 from datetime import timedelta
 import logging
+import time
 from typing import Any, Dict
 
 from homeassistant.config_entries import ConfigEntry
@@ -9,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN
+from .const import DOMAIN, UPDATE_CHECK_INTERVAL
 from .unraid import UnraidAPI
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,6 +25,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
         self.ping_interval = entry.data["ping_interval"]
         self._is_online = False
         self._ping_task = None
+        self.update_check_interval = entry.data[UPDATE_CHECK_INTERVAL]
+        self.last_update_check = 0
+        self.container_updates = []
 
         super().__init__(
             hass,
@@ -38,16 +42,33 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("Unraid server is offline")
 
         try:
-            return {
+            data = {
                 "system_stats": await self.api.get_system_stats(),
                 "docker_containers": await self.api.get_docker_containers(),
                 "vms": await self.api.get_vms(),
                 "user_scripts": await self.api.get_user_scripts(),
+                "container_updates": self.container_updates,
             }
+
+            # Check for updates if the interval has passed
+            current_time = time.time()
+            if current_time - self.last_update_check >= self.update_check_interval:
+                self.hass.async_create_task(self.async_check_updates())
+
+            return data
         except Exception as err:
             _LOGGER.error(f"Error communicating with Unraid: {err}")
             self._is_online = False
             raise UpdateFailed(f"Error communicating with Unraid: {err}") from err
+
+    async def async_check_updates(self):
+        """Check for container updates asynchronously."""
+        try:
+            self.container_updates = await self.api.check_container_updates()
+            self.last_update_check = time.time()
+            self.async_set_updated_data(self.data)
+        except Exception as err:
+            _LOGGER.error(f"Error checking for container updates: {err}")
 
     async def ping_unraid(self) -> None:
         """Ping the Unraid server to check if it's online."""
@@ -93,4 +114,8 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
             raise ConfigEntryNotReady from err
 
         await self.start_ping_task()
+        
+        # Schedule the first update check
+        self.hass.async_create_task(self.async_check_updates())
+
         return True

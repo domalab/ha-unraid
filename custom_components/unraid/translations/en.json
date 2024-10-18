@@ -3,6 +3,7 @@
         "step": {
             "user": {
                 "title": "Connect to Unraid",
+                "description": "Set up your Unraid server connection.",
                 "data": {
                     "host": "Host",
                     "username": "Username",
@@ -10,7 +11,16 @@
                     "port": "Port",
                     "ping_interval": "Ping Interval (seconds)",
                     "check_interval": "Update Interval (seconds)",
-                    "mac_address": "MAC Address (optional)"
+                    "update_check_interval": "Container Update Check Interval"
+                },
+                "data_description": {
+                    "host": "IP address or hostname of your Unraid server",
+                    "username": "Username for SSH access to your Unraid server",
+                    "password": "Password for SSH access to your Unraid server",
+                    "port": "SSH port (default is 22)",
+                    "ping_interval": "How often to check if the server is online (in seconds)",
+                    "check_interval": "How often to update sensor data (in seconds)",
+                    "update_check_interval": "How often to check for container updates"
                 }
             }
         },

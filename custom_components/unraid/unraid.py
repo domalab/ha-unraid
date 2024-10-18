@@ -346,6 +346,48 @@ class UnraidAPI:
             zone_type, temp = line.split()
             thermal_zones[zone_type] = float(temp) / 1000  # Convert milli-Celsius to Celsius
         return thermal_zones
+    
+    async def check_container_updates(self) -> List[Dict[str, str]]:
+        """Check for available updates for Docker containers without updating them."""
+        try:
+            # Get list of running containers
+            result = await self.execute_command("docker ps --format '{{.Image}}'")
+            if result.exit_status != 0:
+                _LOGGER.error(f"Failed to get running containers. Exit status: {result.exit_status}, Stderr: {result.stderr}")
+                return []
+
+            running_images = result.stdout.splitlines()
+
+            updates_available = []
+            for image in running_images:
+                # Get current image ID
+                result = await self.execute_command(f"docker images {image} --format '{{{{.ID}}}}'")
+                if result.exit_status != 0:
+                    _LOGGER.error(f"Failed to get image ID for {image}. Exit status: {result.exit_status}, Stderr: {result.stderr}")
+                    continue
+                current_id = result.stdout.strip()
+
+                # Pull the latest image
+                result = await self.execute_command(f"docker pull {image}")
+                if result.exit_status != 0:
+                    _LOGGER.error(f"Failed to pull latest image for {image}. Exit status: {result.exit_status}, Stderr: {result.stderr}")
+                    continue
+
+                # Get new image ID
+                result = await self.execute_command(f"docker images {image} --format '{{{{.ID}}}}'")
+                if result.exit_status != 0:
+                    _LOGGER.error(f"Failed to get new image ID for {image}. Exit status: {result.exit_status}, Stderr: {result.stderr}")
+                    continue
+                new_id = result.stdout.strip()
+
+                # Compare IDs
+                if current_id != new_id:
+                    updates_available.append({"name": image, "current": current_id, "latest": new_id})
+
+            return updates_available
+        except Exception as e:
+            _LOGGER.error(f"Error checking for container updates: {str(e)}")
+            return []
 
     async def get_docker_containers(self) -> List[Dict[str, Any]]:
         try:

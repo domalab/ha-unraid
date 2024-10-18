@@ -4,6 +4,7 @@ from __future__ import annotations
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -51,6 +52,7 @@ async def async_setup_entry(
         UnraidMotherboardTemperatureSensor(coordinator),
         UnraidLogFilesystemSensor(coordinator),
         UnraidDockerVDiskSensor(coordinator),
+        ContainerUpdatesSensor(coordinator),
     ]
 
     # Add individual disk sensors
@@ -493,3 +495,47 @@ class UnraidMotherboardTemperatureSensor(UnraidSensorBase):
     def native_unit_of_measurement(self):
         """Return the unit of measurement."""
         return UnitOfTemperature.CELSIUS
+    
+class ContainerUpdatesSensor(CoordinatorEntity, SensorEntity):
+    """Representation of an Unraid container updates sensor."""
+
+    def __init__(self, coordinator):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._attr_name = "Unraid Container Updates Available"
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_container_updates"
+        self._attr_icon = "mdi:package-up"
+
+    @property
+    def native_value(self):
+        """Return the number of container updates available."""
+        return len(self.coordinator.data.get("container_updates", []))
+
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes."""
+        updates = self.coordinator.data.get("container_updates", [])
+        last_checked = self.coordinator.last_update_check
+        
+        # Convert timestamp to human-readable format
+        if last_checked:
+            last_checked = datetime.fromtimestamp(last_checked).strftime('%d %b %Y %H:%M:%S')
+        
+        return {
+            "containers": [
+                {
+                    "name": update["name"],
+                    "current_version": update["current"],
+                    "latest_version": update["latest"]
+                }
+                for update in updates
+            ],
+            "last_checked": last_checked
+        }
+
+    @property
+    def state_attributes(self):
+        """Return the state attributes."""
+        attributes = super().state_attributes or {}
+        attributes.update(self.extra_state_attributes)
+        return attributes
