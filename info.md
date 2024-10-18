@@ -15,8 +15,9 @@ This integration is in active development. Here are a few things to keep in mind
 
 - Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
 - Monitor UPS connected to Unraid
+- Monitor Docker Container Updates
 - Control Docker containers
-- Manage VMs
+- Control VMs
 - Execute shell commands
 - Manage user scripts
 
