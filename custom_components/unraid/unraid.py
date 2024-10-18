@@ -365,6 +365,32 @@ class UnraidAPI:
         except Exception as e:
             _LOGGER.error(f"Error getting docker containers: {e}")
             return []
+        
+    async def start_container(self, container_name: str) -> bool:
+        """Start a Docker container."""
+        try:
+            result = await self.execute_command(f"docker start {container_name}")
+            if result.exit_status != 0:
+                _LOGGER.error(f"Failed to start container {container_name}: {result.stderr}")
+                return False
+            _LOGGER.info(f"Container {container_name} started successfully")
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Error starting container {container_name}: {e}")
+            return False
+        
+    async def stop_container(self, container_name: str) -> bool:
+        """Stop a Docker container."""
+        try:
+            result = await self.execute_command(f"docker stop {container_name}")
+            if result.exit_status != 0:
+                _LOGGER.error(f"Failed to stop container {container_name}: {result.stderr}")
+                return False
+            _LOGGER.info(f"Container {container_name} stopped successfully")
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Error stopping container {container_name}: {e}")
+            return False
 
     async def get_vms(self) -> List[Dict[str, Any]]:
         try:
