@@ -3,14 +3,12 @@ from homeassistant.const import Platform
 
 DOMAIN = "unraid"
 DEFAULT_PORT = 22
-DEFAULT_PING_INTERVAL = 60  # seconds
 DEFAULT_CHECK_INTERVAL = 300  # seconds
 
 # Platforms
 PLATFORMS = [Platform.SENSOR, Platform.SWITCH]
 
 # Configuration and options
-CONF_PING_INTERVAL = "ping_interval"
 CONF_CHECK_INTERVAL = "check_interval"
 
 # Dispatcher signals

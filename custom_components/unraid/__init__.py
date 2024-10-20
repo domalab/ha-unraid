@@ -7,7 +7,7 @@ from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PO
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN, PLATFORMS
+from .const import DOMAIN, PLATFORMS, CONF_CHECK_INTERVAL, DEFAULT_CHECK_INTERVAL, DEFAULT_PORT
 from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
 from .services import async_setup_services, async_unload_services
@@ -17,12 +17,20 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Unraid from a config entry."""
     _LOGGER.debug("Setting up Unraid integration")
+
+    # Migrate data from data to options if necessary
+    if CONF_CHECK_INTERVAL not in entry.options:
+        options = dict(entry.options)
+        options[CONF_CHECK_INTERVAL] = entry.data.get(CONF_CHECK_INTERVAL, DEFAULT_CHECK_INTERVAL)
+        options[CONF_PORT] = entry.data.get(CONF_PORT, DEFAULT_PORT)
+        hass.config_entries.async_update_entry(entry, options=options)
+
     try:
         api = UnraidAPI(
             host=entry.data[CONF_HOST],
             username=entry.data[CONF_USERNAME],
             password=entry.data[CONF_PASSWORD],
-            port=entry.data.get(CONF_PORT, 22),
+            port=entry.options.get(CONF_PORT, DEFAULT_PORT),
         )
 
         coordinator = UnraidDataUpdateCoordinator(hass, api, entry)
@@ -36,6 +44,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         await async_setup_services(hass)
 
+        entry.async_on_unload(entry.add_update_listener(update_listener))
+
         _LOGGER.debug("Unraid integration setup completed successfully")
         return True
     except Exception as e:
@@ -44,12 +54,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
-    await coordinator.stop_ping_task()  # Stop the ping task
-
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
 
     await async_unload_services(hass)
 
     return unload_ok
+
+async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Update listener."""
+    await hass.config_entries.async_reload(entry.entry_id)
