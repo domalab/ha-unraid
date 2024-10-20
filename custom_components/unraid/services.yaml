@@ -1,3 +1,108 @@
 force_update:
   name: Force Update
-  description: Force an immediate update of UNRAID data.
+  description: Force an immediate update of Unraid data.
+  fields:
+    config_entry:
+      name: Config Entry ID
+      description: The ID of the config entry to update. If not provided, all Unraid instances will be updated.
+      example: "1234abcd5678efgh"
+      required: false
+      selector:
+        text:
+
+execute_command:
+  name: Execute Command
+  description: Execute a command on the Unraid server.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    command:
+      name: Command
+      description: The command to execute on the Unraid server.
+      example: "ls -l /mnt/user/"
+      required: true
+      selector:
+        text:
+
+execute_in_container:
+  name: Execute in Container
+  description: Execute a command in a Docker container on the Unraid server.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    container:
+      name: Container Name
+      description: The name of the Docker container to execute the command in.
+      example: "my-container"
+      required: true
+      selector:
+        text:
+    command:
+      name: Command
+      description: The command to execute in the Docker container.
+      example: "ls -l /app/"
+      required: true
+      selector:
+        text:
+    detached:
+      name: Detached
+      description: Whether to run the command in detached mode.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+execute_user_script:
+  name: Execute User Script
+  description: Execute a user script on the Unraid server.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    script_name:
+      name: Script Name
+      description: The name of the user script to execute.
+      example: "my_script.sh"
+      required: true
+      selector:
+        text:
+    background:
+      name: Run in Background
+      description: Whether to run the script in the background.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+stop_user_script:
+  name: Stop User Script
+  description: Stop a running user script on the Unraid server.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    script_name:
+      name: Script Name
+      description: The name of the user script to stop.
+      example: "my_script.sh"
+      required: true
+      selector:
+        text:

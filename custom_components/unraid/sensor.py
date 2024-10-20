@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 import logging
+from typing import Any, Dict, List, Optional
 
 from datetime import datetime, timedelta
 from homeassistant.util import dt as dt_util
@@ -40,7 +41,7 @@ async def async_setup_entry(
     """Set up Unraid sensor based on a config entry."""
     coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    sensors = [
+    sensors: List[SensorEntity] = [
         UnraidCPUUsageSensor(coordinator),
         UnraidRAMUsageSensor(coordinator),
         UnraidArrayUsageSensor(coordinator),
@@ -52,7 +53,6 @@ async def async_setup_entry(
         UnraidMotherboardTemperatureSensor(coordinator),
         UnraidLogFilesystemSensor(coordinator),
         UnraidDockerVDiskSensor(coordinator),
-        ContainerUpdatesSensor(coordinator),
     ]
 
     # Add individual disk sensors
@@ -84,7 +84,7 @@ class UnraidSensorBase(CoordinatorEntity, SensorEntity):
         self._attr_state_class = state_class
 
     @property
-    def device_info(self):
+    def device_info(self) -> Dict[str, Any]:
         """Return device information about this Unraid server."""
         return {
             "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
@@ -94,15 +94,15 @@ class UnraidSensorBase(CoordinatorEntity, SensorEntity):
         }
 
     @property
-    def native_value(self):
+    def native_value(self) -> Any:
         """Return the state of the sensor."""
         return self.coordinator.data["system_stats"].get(self._key)
-
+    
 class UnraidCPUUsageSensor(UnraidSensorBase):
     """Representation of Unraid CPU usage sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the CPU usage sensor."""
         super().__init__(
             coordinator,
             "cpu_usage",
@@ -113,7 +113,12 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
         )
 
     @property
-    def native_unit_of_measurement(self):
+    def native_value(self) -> Optional[float]:
+        """Return the current CPU usage."""
+        return self.coordinator.data["system_stats"].get("cpu_usage")
+
+    @property
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return "%"
 
@@ -121,7 +126,7 @@ class UnraidRAMUsageSensor(UnraidSensorBase):
     """Representation of Unraid RAM usage sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the RAM usage sensor."""
         super().__init__(
             coordinator,
             "memory_usage",
@@ -132,15 +137,15 @@ class UnraidRAMUsageSensor(UnraidSensorBase):
         )
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the current RAM usage percentage."""
         percentage = self.coordinator.data["system_stats"].get("memory_usage", {}).get("percentage")
         if percentage is not None:
             return round(percentage, 1)  # Round to one decimal place
         return None
 
     @property
-    def native_unit_of_measurement(self):
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return "%"
 
@@ -148,7 +153,7 @@ class UnraidArrayUsageSensor(UnraidSensorBase):
     """Representation of Unraid Array usage sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the Array usage sensor."""
         super().__init__(
             coordinator,
             "array_usage",
@@ -159,18 +164,18 @@ class UnraidArrayUsageSensor(UnraidSensorBase):
         )
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the current Array usage percentage."""
         percentage = self.coordinator.data["system_stats"].get("array_usage", {}).get("percentage")
         return round(percentage, 1) if percentage is not None else None
 
     @property
-    def native_unit_of_measurement(self):
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return "%"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> Dict[str, str]:
         """Return the state attributes."""
         array_usage = self.coordinator.data["system_stats"].get("array_usage", {})
         return {
@@ -178,12 +183,12 @@ class UnraidArrayUsageSensor(UnraidSensorBase):
             "used_space": format_size(array_usage.get("used", 0)),
             "free_space": format_size(array_usage.get("free", 0)),
         }
-
+    
 class UnraidIndividualDiskSensor(UnraidSensorBase):
     """Representation of an individual Unraid disk usage sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator, disk_name: str) -> None:
-        """Initialize the sensor."""
+        """Initialize the individual disk sensor."""
         super().__init__(
             coordinator,
             f"disk_{disk_name}_usage",
@@ -195,20 +200,20 @@ class UnraidIndividualDiskSensor(UnraidSensorBase):
         self._disk_name = disk_name
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the current disk usage percentage."""
         for disk in self.coordinator.data["system_stats"].get("individual_disks", []):
             if disk["name"] == self._disk_name:
                 return disk["percentage"]
         return None
 
     @property
-    def native_unit_of_measurement(self):
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return "%"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> Dict[str, str]:
         """Return the state attributes."""
         attributes = {}
         for disk in self.coordinator.data["system_stats"].get("individual_disks", []):
@@ -227,7 +232,7 @@ class UnraidLogFilesystemSensor(UnraidSensorBase):
     """Representation of Unraid Log Filesystem usage sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the Log Filesystem usage sensor."""
         super().__init__(
             coordinator,
             "log_filesystem",
@@ -238,18 +243,18 @@ class UnraidLogFilesystemSensor(UnraidSensorBase):
         )
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the current Log Filesystem usage percentage."""
         log_fs = self.coordinator.data["system_stats"].get("log_filesystem", {})
         return log_fs.get("percentage")
 
     @property
-    def native_unit_of_measurement(self):
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return "%"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> Dict[str, str]:
         """Return the state attributes."""
         log_fs = self.coordinator.data["system_stats"].get("log_filesystem", {})
         return {
@@ -262,7 +267,7 @@ class UnraidDockerVDiskSensor(UnraidSensorBase):
     """Representation of Unraid Docker vDisk usage sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the Docker vDisk usage sensor."""
         super().__init__(
             coordinator,
             "docker_vdisk",
@@ -273,18 +278,18 @@ class UnraidDockerVDiskSensor(UnraidSensorBase):
         )
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the current Docker vDisk usage percentage."""
         docker_vdisk = self.coordinator.data["system_stats"].get("docker_vdisk", {})
         return docker_vdisk.get("percentage")
 
     @property
-    def native_unit_of_measurement(self):
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return "%"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> Dict[str, str]:
         """Return the state attributes."""
         docker_vdisk = self.coordinator.data["system_stats"].get("docker_vdisk", {})
         return {
@@ -292,12 +297,12 @@ class UnraidDockerVDiskSensor(UnraidSensorBase):
             "used_space": format_size(docker_vdisk.get("used", 0)),
             "free_space": format_size(docker_vdisk.get("free", 0)),
         }
-
+    
 class UnraidCacheUsageSensor(UnraidSensorBase):
     """Representation of Unraid Cache usage sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the Cache usage sensor."""
         super().__init__(
             coordinator,
             "cache_usage",
@@ -308,18 +313,18 @@ class UnraidCacheUsageSensor(UnraidSensorBase):
         )
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the current Cache usage percentage."""
         percentage = self.coordinator.data["system_stats"].get("cache_usage", {}).get("percentage")
         return round(percentage, 1) if percentage is not None else None
 
     @property
-    def native_unit_of_measurement(self):
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return "%"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> Dict[str, str]:
         """Return the state attributes."""
         cache_usage = self.coordinator.data["system_stats"].get("cache_usage", {})
         return {
@@ -332,7 +337,7 @@ class UnraidBootUsageSensor(UnraidSensorBase):
     """Representation of Unraid Boot device usage sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the Boot usage sensor."""
         super().__init__(
             coordinator,
             "boot_usage",
@@ -343,17 +348,17 @@ class UnraidBootUsageSensor(UnraidSensorBase):
         )
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the current Boot device usage percentage."""
         return self.coordinator.data["system_stats"].get("boot_usage", {}).get("percentage")
 
     @property
-    def native_unit_of_measurement(self):
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return "%"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> Dict[str, str]:
         """Return the state attributes."""
         boot_usage = self.coordinator.data["system_stats"].get("boot_usage", {})
         return {
@@ -366,14 +371,12 @@ class UnraidUptimeSensor(UnraidSensorBase):
     """Representation of Unraid Uptime sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the Uptime sensor."""
         super().__init__(
             coordinator,
             "uptime",
             "Uptime",
             "mdi:clock-outline",
-            device_class=None,
-            state_class=None,
         )
 
     @property
@@ -386,7 +389,7 @@ class UnraidUptimeSensor(UnraidSensorBase):
         return f"{days}d {hours}h {minutes}m"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
         uptime_seconds = self.coordinator.data["system_stats"].get("uptime", 0)
         days, remainder = divmod(int(uptime_seconds), 86400)
@@ -408,24 +411,22 @@ class UnraidUPSSensor(UnraidSensorBase):
     """Representation of Unraid UPS sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the UPS sensor."""
         super().__init__(
             coordinator,
             "ups_status",
             "UPS Status",
             "mdi:battery-medium",
-            device_class=None,
-            state_class=None,
         )
 
     @property
-    def native_value(self):
+    def native_value(self) -> str:
         """Return the state of the sensor."""
         ups_info = self.coordinator.data["system_stats"].get("ups_info", {})
         return ups_info.get("STATUS", "Unknown")
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
         ups_info = self.coordinator.data["system_stats"].get("ups_info", {})
         return {
@@ -442,7 +443,7 @@ class UnraidCPUTemperatureSensor(UnraidSensorBase):
     """Representation of Unraid CPU temperature sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the CPU temperature sensor."""
         super().__init__(
             coordinator,
             "cpu_temperature",
@@ -453,8 +454,8 @@ class UnraidCPUTemperatureSensor(UnraidSensorBase):
         )
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the current CPU temperature."""
         temp_data = self.coordinator.data["system_stats"].get("temperature_data", {})
         sensors_data = temp_data.get("sensors", {})
         for sensor, data in sensors_data.items():
@@ -463,7 +464,7 @@ class UnraidCPUTemperatureSensor(UnraidSensorBase):
         return None
 
     @property
-    def native_unit_of_measurement(self):
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return UnitOfTemperature.CELSIUS
 
@@ -471,7 +472,7 @@ class UnraidMotherboardTemperatureSensor(UnraidSensorBase):
     """Representation of Unraid motherboard temperature sensor."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
-        """Initialize the sensor."""
+        """Initialize the motherboard temperature sensor."""
         super().__init__(
             coordinator,
             "motherboard_temperature",
@@ -482,8 +483,8 @@ class UnraidMotherboardTemperatureSensor(UnraidSensorBase):
         )
 
     @property
-    def native_value(self):
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the current motherboard temperature."""
         temp_data = self.coordinator.data["system_stats"].get("temperature_data", {})
         sensors_data = temp_data.get("sensors", {})
         for sensor, data in sensors_data.items():
@@ -492,50 +493,6 @@ class UnraidMotherboardTemperatureSensor(UnraidSensorBase):
         return None
 
     @property
-    def native_unit_of_measurement(self):
+    def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return UnitOfTemperature.CELSIUS
-    
-class ContainerUpdatesSensor(CoordinatorEntity, SensorEntity):
-    """Representation of an Unraid container updates sensor."""
-
-    def __init__(self, coordinator):
-        """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._attr_name = "Unraid Container Updates Available"
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_container_updates"
-        self._attr_icon = "mdi:package-up"
-
-    @property
-    def native_value(self):
-        """Return the number of container updates available."""
-        return len(self.coordinator.data.get("container_updates", []))
-
-    @property
-    def extra_state_attributes(self):
-        """Return the state attributes."""
-        updates = self.coordinator.data.get("container_updates", [])
-        last_checked = self.coordinator.last_update_check
-        
-        # Convert timestamp to human-readable format
-        if last_checked:
-            last_checked = datetime.fromtimestamp(last_checked).strftime('%d %b %Y %H:%M:%S')
-        
-        return {
-            "containers": [
-                {
-                    "name": update["name"],
-                    "current_version": update["current"],
-                    "latest_version": update["latest"]
-                }
-                for update in updates
-            ],
-            "last_checked": last_checked
-        }
-
-    @property
-    def state_attributes(self):
-        """Return the state attributes."""
-        attributes = super().state_attributes or {}
-        attributes.update(self.extra_state_attributes)
-        return attributes

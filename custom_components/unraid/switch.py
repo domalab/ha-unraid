@@ -18,24 +18,31 @@ async def async_setup_entry(
     """Set up Unraid switch based on a config entry."""
     coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    if "docker_containers" not in coordinator.data or "vms" not in coordinator.data:
-        return
-
     switches = []
 
-    if coordinator.data["docker_containers"]:
-        for container in coordinator.data["docker_containers"]:
-            switches.append(UnraidDockerContainerSwitch(coordinator, container["name"]))
+    if "docker_containers" in coordinator.data:
+        switches.extend([
+            UnraidDockerContainerSwitch(coordinator, container["name"])
+            for container in coordinator.data["docker_containers"]
+        ])
 
-    if coordinator.data["vms"]:
-        for vm in coordinator.data["vms"]:
-            switches.append(UnraidVMSwitch(coordinator, vm["name"]))
+    if "vms" in coordinator.data:
+        switches.extend([
+            UnraidVMSwitch(coordinator, vm["name"])
+            for vm in coordinator.data["vms"]
+        ])
 
     if switches:
         async_add_entities(switches)
 
 class UnraidSwitchBase(CoordinatorEntity, SwitchEntity):
     """Base class for Unraid switches."""
+
+    def __init__(self, coordinator: UnraidDataUpdateCoordinator, name: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._name = name
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{name}"
 
     @property
     def device_info(self):
@@ -46,10 +53,6 @@ class UnraidSwitchBase(CoordinatorEntity, SwitchEntity):
             "manufacturer": "Lime Technology",
             "model": "Unraid Server",
         }
-
-    @property
-    def entity_registry_enabled_default(self) -> bool:
-        return True
 
     @property
     def available(self) -> bool:
@@ -65,11 +68,10 @@ class UnraidDockerContainerSwitch(UnraidSwitchBase):
     """Representation of an Unraid Docker container switch."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator, container_name: str) -> None:
-        """Initialize the switch."""
-        super().__init__(coordinator)
+        """Initialize the Docker container switch."""
+        super().__init__(coordinator, f"docker_{container_name}")
         self._container_name = container_name
         self._attr_name = f"Unraid Docker {container_name}"
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_docker_{container_name}"
         self._attr_icon = "mdi:docker"
 
     @property
@@ -94,11 +96,10 @@ class UnraidVMSwitch(UnraidSwitchBase):
     """Representation of an Unraid VM switch."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator, vm_name: str) -> None:
-        """Initialize the switch."""
-        super().__init__(coordinator)
+        """Initialize the VM switch."""
+        super().__init__(coordinator, f"vm_{vm_name}")
         self._vm_name = vm_name
         self._attr_name = f"Unraid VM {vm_name}"
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_vm_{vm_name}"
         self._attr_icon = "mdi:desktop-classic"
 
     @property

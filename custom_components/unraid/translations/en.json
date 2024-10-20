@@ -10,8 +10,7 @@
                     "password": "Password",
                     "port": "Port",
                     "ping_interval": "Ping Interval (seconds)",
-                    "check_interval": "Update Interval (seconds)",
-                    "update_check_interval": "Container Update Check Interval"
+                    "check_interval": "Update Interval (seconds)"
                 },
                 "data_description": {
                     "host": "IP address or hostname of your Unraid server",
@@ -19,8 +18,7 @@
                     "password": "Password for SSH access to your Unraid server",
                     "port": "SSH port (default is 22)",
                     "ping_interval": "How often to check if the server is online (in seconds)",
-                    "check_interval": "How often to update sensor data (in seconds)",
-                    "update_check_interval": "How often to check for container updates"
+                    "check_interval": "How often to update sensor data (in seconds)"
                 }
             }
         },
@@ -34,71 +32,13 @@
         }
     },
     "services": {
-        "execute_command": {
-            "name": "Execute Command",
-            "description": "Execute a shell command on the Unraid server.",
+        "force_update": {
+            "name": "Force Update",
+            "description": "Force an immediate update of Unraid data.",
             "fields": {
-                "entry_id": {
+                "config_entry": {
                     "name": "Unraid Instance",
-                    "description": "The Unraid instance to use for this command."
-                },
-                "command": {
-                    "name": "Command",
-                    "description": "The shell command to execute."
-                }
-            }
-        },
-        "execute_in_container": {
-            "name": "Execute in Container",
-            "description": "Execute a command in a Docker container.",
-            "fields": {
-                "entry_id": {
-                    "name": "Unraid Instance",
-                    "description": "The Unraid instance to use for this command."
-                },
-                "container": {
-                    "name": "Container",
-                    "description": "The name of the Docker container."
-                },
-                "command": {
-                    "name": "Command",
-                    "description": "The command to execute in the container."
-                },
-                "detached": {
-                    "name": "Detached",
-                    "description": "Run the command in detached mode."
-                }
-            }
-        },
-        "execute_user_script": {
-            "name": "Execute User Script",
-            "description": "Execute a user script on the Unraid server.",
-            "fields": {
-                "entry_id": {
-                    "name": "Unraid Instance",
-                    "description": "The Unraid instance to use for this command."
-                },
-                "script_name": {
-                    "name": "Script Name",
-                    "description": "The name of the user script to execute."
-                },
-                "background": {
-                    "name": "Background",
-                    "description": "Run the script in the background."
-                }
-            }
-        },
-        "stop_user_script": {
-            "name": "Stop User Script",
-            "description": "Stop a running user script on the Unraid server.",
-            "fields": {
-                "entry_id": {
-                    "name": "Unraid Instance",
-                    "description": "The Unraid instance to use for this command."
-                },
-                "script_name": {
-                    "name": "Script Name",
-                    "description": "The name of the user script to stop."
+                    "description": "The Unraid instance to update. Leave empty to update all instances."
                 }
             }
         }
