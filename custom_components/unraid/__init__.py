@@ -7,7 +7,7 @@ from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PO
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN, PLATFORMS, CONF_CHECK_INTERVAL, DEFAULT_CHECK_INTERVAL, DEFAULT_PORT
+from .const import DOMAIN, PLATFORMS, CONF_CHECK_INTERVAL, DEFAULT_CHECK_INTERVAL, DEFAULT_PORT, CONF_HAS_UPS
 from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
 from .services import async_setup_services, async_unload_services
@@ -23,6 +23,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         options = dict(entry.options)
         options[CONF_CHECK_INTERVAL] = entry.data.get(CONF_CHECK_INTERVAL, DEFAULT_CHECK_INTERVAL)
         options[CONF_PORT] = entry.data.get(CONF_PORT, DEFAULT_PORT)
+        options[CONF_HAS_UPS] = entry.data.get(CONF_HAS_UPS, False)
         hass.config_entries.async_update_entry(entry, options=options)
 
     try:
@@ -64,3 +65,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Update listener."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Update options."""
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    await coordinator.async_update_ups_status(entry.options.get(CONF_HAS_UPS, False))

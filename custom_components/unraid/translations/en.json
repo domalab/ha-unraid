@@ -9,14 +9,16 @@
                     "username": "Username",
                     "password": "Password",
                     "port": "Port",
-                    "check_interval": "Update Interval (seconds)"
+                    "check_interval": "Update Interval (seconds)",
+                    "has_ups": "UPS Connected"
                 },
                 "data_description": {
                     "host": "{host_description}",
                     "username": "{username_description}",
                     "password": "{password_description}",
                     "port": "{port_description}",
-                    "check_interval": "{check_interval_description}"
+                    "check_interval": "{check_interval_description}",
+                    "has_ups": "Check this if you have a UPS connected to your Unraid server"
                 }
             }
         },
@@ -36,7 +38,8 @@
                 "description": "Adjust Unraid integration settings.",
                 "data": {
                     "check_interval": "Update Interval (seconds)",
-                    "port": "SSH Port"
+                    "port": "SSH Port",
+                    "has_ups": "UPS Connected"
                 }
             }
         }

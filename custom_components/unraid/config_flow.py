@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN, DEFAULT_PORT, DEFAULT_CHECK_INTERVAL, CONF_CHECK_INTERVAL
+from .const import DOMAIN, DEFAULT_PORT, DEFAULT_CHECK_INTERVAL, CONF_CHECK_INTERVAL, CONF_HAS_UPS
 from .unraid import UnraidAPI
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
@@ -22,6 +22,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(CONF_CHECK_INTERVAL, default=DEFAULT_CHECK_INTERVAL): vol.All(
             int, vol.Range(min=60, max=3600)
         ),
+        vol.Required(CONF_HAS_UPS, default=False): bool,
     }
 )
 
@@ -31,12 +32,13 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
     try:
         await api.connect()
+        has_ups = await api.detect_ups()
         await api.disconnect()
     except Exception as err:
         raise CannotConnect from err
 
     # Return info that you want to store in the config entry.
-    return {"title": f"Unraid Server ({data[CONF_HOST]})"}
+    return {"title": f"Unraid Server ({data[CONF_HOST]})", "has_ups": has_ups}
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Unraid."""
@@ -51,6 +53,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 info = await validate_input(self.hass, user_input)
+                user_input[CONF_HAS_UPS] = info["has_ups"]
                 return self.async_create_entry(title=info["title"], data=user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -104,6 +107,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                             DEFAULT_PORT
                         )
                     ): int,
+                    vol.Required(
+                        CONF_HAS_UPS,
+                        default=self.config_entry.options.get(
+                            CONF_HAS_UPS,
+                            False
+                        )
+                    ): bool,
                 }
             )
         )

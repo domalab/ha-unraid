@@ -48,12 +48,15 @@ async def async_setup_entry(
         UnraidCacheUsageSensor(coordinator),
         UnraidBootUsageSensor(coordinator),
         UnraidUptimeSensor(coordinator),
-        UnraidUPSSensor(coordinator),
         UnraidCPUTemperatureSensor(coordinator),
         UnraidMotherboardTemperatureSensor(coordinator),
         UnraidLogFilesystemSensor(coordinator),
         UnraidDockerVDiskSensor(coordinator),
     ]
+    
+    # Add UPS sensor only if UPS is connected
+    if coordinator.has_ups:
+        sensors.append(UnraidUPSSensor(coordinator))
 
     # Add individual disk sensors
     for disk in coordinator.data["system_stats"].get("individual_disks", []):
@@ -418,7 +421,12 @@ class UnraidUPSSensor(UnraidSensorBase):
             "UPS Status",
             "mdi:battery-medium",
         )
-
+    
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self.coordinator.last_update_success and "ups_info" in self.coordinator.data
+    
     @property
     def native_value(self) -> str:
         """Return the state of the sensor."""

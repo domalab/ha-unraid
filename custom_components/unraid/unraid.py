@@ -253,6 +253,19 @@ class UnraidAPI:
             _LOGGER.error("Error getting uptime: %s", str(e))
             return None
 
+    async def detect_ups(self) -> bool:
+        """Attempt to detect if a UPS is connected."""
+        try:
+            result = await self.execute_command("which apcaccess")
+            if result.exit_status == 0:
+                # apcaccess is installed, now check if it can communicate with a UPS
+                result = await self.execute_command("apcaccess status")
+                return result.exit_status == 0
+            return False
+        except Exception as e:
+            _LOGGER.debug("UPS detection result: %s", "detected" if result.exit_status == 0 else "not detected")
+            return False
+
     async def get_ups_info(self) -> Dict[str, Any]:
         """Fetch UPS information from the Unraid system."""
         try:

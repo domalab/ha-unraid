@@ -22,3 +22,6 @@ ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 
 # Units
 UNIT_PERCENTAGE = "%"
+
+# UPS Configuration
+CONF_HAS_UPS = "has_ups"
