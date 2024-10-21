@@ -14,8 +14,8 @@ This integration is in active development. Here are a few things to keep in mind
 ## Features
 
 - Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
-- Monitor UPS connected to Unraid
-- Monitor Docker Container Updates
+- Monitor CPU and Motherboard temperature
+- Monitor UPS connected
 - Control Docker containers
 - Control VMs
 - Execute shell commands
@@ -53,6 +53,7 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 
 - CPU Usage: Shows the current CPU utilization percentage.
 - RAM Usage: Displays the current RAM usage percentage.
+- CPU and Motherboard Temps: Shows CPU and Motherboard temperatures
 - Array Usage: Shows the overall array usage percentage.
 - Individual Array Disks: Displays usage information for each disk in the array.
 - Uptime: Shows how long the Unraid server has been running.
