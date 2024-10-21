@@ -31,9 +31,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     api = UnraidAPI(data[CONF_HOST], data[CONF_USERNAME], data[CONF_PASSWORD], data[CONF_PORT])
 
     try:
-        await api.connect()
-        has_ups = await api.detect_ups()
-        await api.disconnect()
+        async with api:
+            if not await api.ping():
+                raise CannotConnect
+            has_ups = await api.detect_ups()
     except Exception as err:
         raise CannotConnect from err
 

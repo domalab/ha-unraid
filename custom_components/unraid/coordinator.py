@@ -32,7 +32,6 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> Dict[str, Any]:
         """Fetch data from Unraid."""
         try:
-            await self.api.connect()
             data = {
                 "system_stats": await self.api.get_system_stats(),
                 "docker_containers": await self.api.get_docker_containers(),
@@ -43,7 +42,6 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
                 ups_info = await self.api.get_ups_info()
                 if ups_info:  # Only add UPS info if it's not empty
                     data["ups_info"] = ups_info
-            await self.api.disconnect()
             return data
         except Exception as err:
             _LOGGER.error("Error communicating with Unraid: %s", err)
@@ -53,8 +51,8 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
         """Set up the coordinator."""
         try:
             # Perform initial connection to check if the server is reachable
-            await self.api.connect()
-            await self.api.disconnect()
+            if not await self.api.ping():
+                raise ConfigEntryNotReady("Unable to connect to Unraid server")
             return True
         except Exception as err:
             _LOGGER.error("Failed to connect to Unraid server: %s", err)

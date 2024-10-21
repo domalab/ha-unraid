@@ -4,6 +4,7 @@ import asyncssh
 import logging
 from typing import Dict, List, Any, Optional
 import re
+from async_timeout import timeout
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -16,56 +17,79 @@ class UnraidAPI:
         self.username = username
         self.password = password
         self.port = port
-        self.conn = None
+        self.conn: Optional[asyncssh.SSHClientConnection] = None
+        self.lock = asyncio.Lock()
+        self.connect_timeout = 30
+        self.command_timeout = 60
 
-    async def connect(self) -> None:
-        """Establish an SSH connection to the Unraid server."""
-        try:
-            self.conn = await asyncssh.connect(
-                self.host,
-                username=self.username,
-                password=self.password,
-                port=self.port,
-                known_hosts=None
-            )
-            _LOGGER.debug("Successfully connected to Unraid server at %s", self.host)
-        except asyncssh.DisconnectError as err:
-            _LOGGER.error("Failed to connect to Unraid server: %s", err)
-            raise
+    async def ensure_connection(self):
+        """Ensure that a connection to the Unraid server is established."""
+        async with self.lock:
+            if self.conn is None:
+                try:
+                    async with timeout(self.connect_timeout):
+                        self.conn = await asyncssh.connect(
+                            self.host,
+                            username=self.username,
+                            password=self.password,
+                            port=self.port,
+                            known_hosts=None,
+                            keepalive_interval=60,
+                            keepalive_count_max=5
+                        )
+                    _LOGGER.info("Connected to Unraid server at %s", self.host)
+                except asyncio.TimeoutError:
+                    _LOGGER.error("Connection to Unraid server at %s timed out", self.host)
+                    raise
+                except Exception as err:
+                    _LOGGER.error("Failed to connect to Unraid server: %s", err)
+                    raise
+
+    async def execute_command(self, command: str) -> asyncssh.SSHCompletedProcess:
+        """Execute a command on the Unraid server."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await self.ensure_connection()
+                async with timeout(self.command_timeout):
+                    result = await self.conn.run(command)
+                _LOGGER.debug("Executed command on Unraid server: %s", command)
+                return result
+            except asyncio.TimeoutError:
+                _LOGGER.error("Command execution timed out: %s", command)
+                self.conn = None
+                if attempt == max_retries - 1:
+                    raise
+            except asyncssh.Error as err:
+                _LOGGER.warning("SSH error on attempt %d: %s", attempt + 1, err)
+                self.conn = None
+                if attempt == max_retries - 1:
+                    raise
+            except Exception as err:
+                _LOGGER.error("Unexpected error while executing command: %s", err)
+                self.conn = None
+                raise
 
     async def disconnect(self) -> None:
         """Disconnect from the Unraid server."""
-        if self.conn:
-            self.conn.close()
-            await self.conn.wait_closed()
-            _LOGGER.debug("Disconnected from Unraid server at %s", self.host)
+        async with self.lock:
+            if self.conn:
+                self.conn.close()
+                await self.conn.wait_closed()
+                self.conn = None
+                _LOGGER.info("Disconnected from Unraid server at %s", self.host)
 
     async def ping(self) -> bool:
         """Check if the Unraid server is accessible via SSH."""
         try:
-            async with asyncssh.connect(
-                self.host,
-                username=self.username,
-                password=self.password,
-                port=self.port,
-                known_hosts=None,
-                connect_timeout=10
-            ) as conn:
-                _LOGGER.debug("Successfully pinged Unraid server at %s", self.host)
-                return True
-        except asyncio.TimeoutError:
-            _LOGGER.warning("Timeout while pinging Unraid server at %s", self.host)
-            return False
-        except asyncssh.DisconnectError as e:
+            async with timeout(self.connect_timeout):
+                await self.ensure_connection()
+                await self.conn.run("echo")
+            _LOGGER.debug("Successfully pinged Unraid server at %s", self.host)
+            return True
+        except Exception as e:
             _LOGGER.error("Failed to ping Unraid server at %s: %s", self.host, e)
             return False
-
-    async def execute_command(self, command: str) -> asyncssh.SSHCompletedProcess:
-        """Execute a command on the Unraid server."""
-        if not self.conn:
-            await self.connect()
-        _LOGGER.debug("Executing command on Unraid server: %s", command)
-        return await self.conn.run(command)
 
     async def get_system_stats(self) -> Dict[str, Any]:
         """Fetch system statistics from the Unraid server."""
@@ -369,27 +393,6 @@ class UnraidAPI:
             _LOGGER.error("Error getting Docker vDisk usage: %s", str(e))
             return {}
 
-    async def _get_image_id(self, image: str) -> Optional[str]:
-        """Get the ID of a Docker image."""
-        try:
-            result = await self.execute_command(f"docker images {image} --format '{{{{.ID}}}}'")
-            if result.exit_status != 0:
-                _LOGGER.error("Failed to get image ID for %s. Exit status: %d", image, result.exit_status)
-                return None
-            return result.stdout.strip()
-        except Exception as e:
-            _LOGGER.error("Error getting image ID for %s: %s", image, str(e))
-            return None
-
-    async def _pull_latest_image(self, image: str) -> None:
-        """Pull the latest version of a Docker image."""
-        try:
-            result = await self.execute_command(f"docker pull {image}")
-            if result.exit_status != 0:
-                _LOGGER.error("Failed to pull latest image for %s. Exit status: %d", image, result.exit_status)
-        except Exception as e:
-            _LOGGER.error("Error pulling latest image for %s: %s", image, str(e))
-
     async def get_docker_containers(self) -> List[Dict[str, Any]]:
         """Fetch information about Docker containers."""
         try:
@@ -532,3 +535,10 @@ class UnraidAPI:
         except Exception as e:
             _LOGGER.error("Error stopping user script %s: %s", script_name, str(e))
             return ""
+
+    async def __aenter__(self):
+        await self.ensure_connection()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.disconnect()
