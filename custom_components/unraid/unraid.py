@@ -5,8 +5,52 @@ import logging
 from typing import Dict, List, Any, Optional
 import re
 from async_timeout import timeout
+from enum import Enum
+import json
 
 _LOGGER = logging.getLogger(__name__)
+
+class VMState(Enum):
+    """VM states matching Unraid/libvirt states."""
+    RUNNING = 'running'
+    STOPPED = 'shut off'
+    PAUSED = 'paused'
+    IDLE = 'idle'
+    IN_SHUTDOWN = 'in shutdown'
+    CRASHED = 'crashed'
+    SUSPENDED = 'pmsuspended'
+
+    @classmethod
+    def is_running(cls, state: str) -> bool:
+        """Check if the state represents a running VM."""
+        return state.lower() == cls.RUNNING.value
+
+    @classmethod
+    def parse(cls, state: str) -> str:
+        """Parse the VM state string."""
+        state = state.lower().strip()
+        try:
+            return next(s.value for s in cls if s.value == state)
+        except StopIteration:
+            return state
+
+class ContainerStates(Enum):
+    """Docker container states."""
+    RUNNING = 'running'
+    EXITED = 'exited'
+    PAUSED = 'paused'
+    RESTARTING = 'restarting'
+    DEAD = 'dead'
+    CREATED = 'created'
+
+    @classmethod
+    def parse(cls, state: str) -> str:
+        """Parse the container state string."""
+        state = state.lower().strip()
+        try:
+            return next(s.value for s in cls if s.value == state)
+        except StopIteration:
+            return state
 
 class UnraidAPI:
     """API client for interacting with Unraid servers."""
@@ -397,18 +441,35 @@ class UnraidAPI:
         """Fetch information about Docker containers."""
         try:
             _LOGGER.debug("Fetching Docker container information")
-            result = await self.execute_command("docker ps -a --format '{{.Names}}|{{.State}}'")
+            # Get basic container info with proven format
+            result = await self.execute_command("docker ps -a --format '{{.Names}}|{{.State}}|{{.ID}}|{{.Image}}'")
             if result.exit_status != 0:
                 _LOGGER.error("Docker container list command failed with exit status %d", result.exit_status)
                 return []
-            
+
             containers = []
             for line in result.stdout.splitlines():
                 parts = line.split('|')
-                if len(parts) == 2:
-                    containers.append({"name": parts[0], "status": parts[1]})
+                if len(parts) == 4:  # Now expecting 4 parts
+                    container_name = parts[0].strip()
+                    # Get container icon if available
+                    icon_path = f"/var/lib/docker/unraid/images/{container_name}-icon.png"
+                    icon_result = await self.execute_command(
+                        f"[ -f {icon_path} ] && (base64 {icon_path}) || echo ''"
+                    )
+                    icon_data = icon_result.stdout[0] if icon_result.exit_status == 0 else ""
+
+                    containers.append({
+                        "name": container_name,
+                        "state": ContainerStates.parse(parts[1].strip()),
+                        "status": parts[1].strip(),
+                        "id": parts[2].strip(),
+                        "image": parts[3].strip(),
+                        "icon": icon_data
+                    })
                 else:
                     _LOGGER.warning("Unexpected format in docker container output: %s", line)
+
             return containers
         except Exception as e:
             _LOGGER.error("Error getting docker containers: %s", str(e))
@@ -417,8 +478,8 @@ class UnraidAPI:
     async def start_container(self, container_name: str) -> bool:
         """Start a Docker container."""
         try:
-            _LOGGER.debug("Starting Docker container: %s", container_name)
-            result = await self.execute_command(f"docker start {container_name}")
+            _LOGGER.debug("Starting container: %s", container_name)
+            result = await self.execute_command(f'docker start "{container_name}"')
             if result.exit_status != 0:
                 _LOGGER.error("Failed to start container %s: %s", container_name, result.stderr)
                 return False
@@ -427,12 +488,12 @@ class UnraidAPI:
         except Exception as e:
             _LOGGER.error("Error starting container %s: %s", container_name, str(e))
             return False
-        
+
     async def stop_container(self, container_name: str) -> bool:
         """Stop a Docker container."""
         try:
-            _LOGGER.debug("Stopping Docker container: %s", container_name)
-            result = await self.execute_command(f"docker stop {container_name}")
+            _LOGGER.debug("Stopping container: %s", container_name)
+            result = await self.execute_command(f'docker stop "{container_name}"')
             if result.exit_status != 0:
                 _LOGGER.error("Failed to stop container %s: %s", container_name, result.stderr)
                 return False
@@ -455,43 +516,100 @@ class UnraidAPI:
             for line in result.stdout.splitlines():
                 if line.strip():
                     name = line.strip()
-                    status = await self._get_vm_status(name)
-                    vms.append({"name": name, "status": status})
+                    status = await self.get_vm_status(name)
+                    os_type = await self.get_vm_os_info(name)
+                    vms.append({
+                        "name": name, 
+                        "status": status,
+                        "os_type": os_type
+                    })
             return vms
         except Exception as e:
             _LOGGER.error("Error getting VMs: %s", str(e))
             return []
+        
+    async def get_vm_os_info(self, vm_name: str) -> str:
+        """Get the OS type of a VM."""
+        try:
+            # First try to get OS info from VM XML
+            result = await self.execute_command(f'virsh dumpxml "{vm_name}" | grep "<os>"')
+            xml_output = result.stdout
 
-    async def _get_vm_status(self, vm_name: str) -> str:
-        """Get the status of a specific virtual machine."""
+            # Check for Windows-specific indicators
+            if any(indicator in '\n'.join(xml_output).lower() for indicator in ['windows', 'win', 'microsoft']):
+                return 'windows'
+            
+            # Try to get detailed OS info if available
+            result = await self.execute_command(f'virsh domosinfo "{vm_name}" 2>/dev/null')
+            if result.exit_status == 0:
+                os_info = '\n'.join(result.stdout).lower()
+                if any(indicator in os_info for indicator in ['windows', 'win', 'microsoft']):
+                    return 'windows'
+                elif any(indicator in os_info for indicator in ['linux', 'unix', 'ubuntu', 'debian', 'centos', 'fedora', 'rhel']):
+                    return 'linux'
+            
+            # Default to checking common paths in VM name
+            vm_name_lower = vm_name.lower()
+            if any(win_term in vm_name_lower for win_term in ['windows', 'win']):
+                return 'windows'
+            elif any(linux_term in vm_name_lower for linux_term in ['linux', 'ubuntu', 'debian', 'centos', 'fedora', 'rhel']):
+                return 'linux'
+            
+            return 'unknown'
+        except Exception as e:
+            _LOGGER.debug("Error getting OS info for VM %s: %s", vm_name, str(e))
+            return 'unknown'
+
+    async def get_vm_status(self, vm_name: str) -> str:
+        """Get detailed status of a specific virtual machine."""
         try:
             result = await self.execute_command(f"virsh domstate {vm_name}")
             if result.exit_status != 0:
-                _LOGGER.error("VM status command for %s failed with exit status %d", vm_name, result.exit_status)
-                return "unknown"
-            return result.stdout.strip()
+                _LOGGER.error("Failed to get VM status for %s: %s", vm_name, result.stderr)
+                return VMState.CRASHED.value
+            return VMState.parse(result.stdout.strip())
         except Exception as e:
             _LOGGER.error("Error getting VM status for %s: %s", vm_name, str(e))
-            return "unknown"
-
-    async def start_vm(self, vm_name: str) -> bool:
-        """Start a virtual machine."""
-        try:
-            _LOGGER.debug("Starting VM: %s", vm_name)
-            result = await self.execute_command(f"virsh start {vm_name}")
-            return result.exit_status == 0 and "started" in result.stdout.lower()
-        except Exception as e:
-            _LOGGER.error("Error starting VM %s: %s", vm_name, str(e))
-            return False
+            return VMState.CRASHED.value
 
     async def stop_vm(self, vm_name: str) -> bool:
-        """Stop a virtual machine."""
+        """Stop a virtual machine using ACPI shutdown."""
         try:
             _LOGGER.debug("Stopping VM: %s", vm_name)
-            result = await self.execute_command(f"virsh shutdown {vm_name}")
-            return result.exit_status == 0 and "shutting down" in result.stdout.lower()
+            result = await self.execute_command(f'virsh shutdown "{vm_name}" --mode acpi')
+            success = result.exit_status == 0
+            
+            if success:
+                # Wait for the VM to actually shut down
+                for _ in range(30):  # Wait up to 60 seconds
+                    await asyncio.sleep(2)
+                    status = await self.get_vm_status(vm_name)
+                    if status == VMState.STOPPED.value:
+                        return True
+                return False
+            return False
         except Exception as e:
             _LOGGER.error("Error stopping VM %s: %s", vm_name, str(e))
+            return False
+
+    async def start_vm(self, vm_name: str) -> bool:
+        """Start a virtual machine and wait for it to be running."""
+        try:
+            _LOGGER.debug("Starting VM: %s", vm_name)
+            result = await self.execute_command(f'virsh start "{vm_name}"')
+            success = result.exit_status == 0
+            
+            if success:
+                # Wait for the VM to actually start
+                for _ in range(15):  # Wait up to 30 seconds
+                    await asyncio.sleep(2)
+                    status = await self.get_vm_status(vm_name)
+                    if status == VMState.RUNNING.value:
+                        return True
+                return False
+            return False
+        except Exception as e:
+            _LOGGER.error("Error starting VM %s: %s", vm_name, str(e))
             return False
 
     async def get_user_scripts(self) -> List[Dict[str, Any]]:

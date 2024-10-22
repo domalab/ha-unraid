@@ -1,11 +1,14 @@
 """Switch platform for Unraid."""
 from __future__ import annotations
 
+from typing import Any, Dict
+
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .coordinator import UnraidDataUpdateCoordinator
@@ -79,8 +82,20 @@ class UnraidDockerContainerSwitch(UnraidSwitchBase):
         """Return true if the container is running."""
         for container in self.coordinator.data["docker_containers"]:
             if container["name"] == self._container_name:
-                return container["status"].lower() == "running"
+                return container["state"] == "running"
         return False
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        for container in self.coordinator.data["docker_containers"]:
+            if container["name"] == self._container_name:
+                return {
+                    "container_id": container["id"],
+                    "status": container["status"],
+                    "image": container["image"]
+                }
+        return {}
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn the container on."""
@@ -100,7 +115,27 @@ class UnraidVMSwitch(UnraidSwitchBase):
         super().__init__(coordinator, f"vm_{vm_name}")
         self._vm_name = vm_name
         self._attr_name = f"Unraid VM {vm_name}"
-        self._attr_icon = "mdi:desktop-classic"
+        self._attr_entity_registry_enabled_default = True
+        self._attr_assumed_state = False
+
+    @property
+    def icon(self) -> str:
+        """Return the icon to use for the VM."""
+        for vm in self.coordinator.data["vms"]:
+            if vm["name"] == self._vm_name:
+                if vm.get("os_type") == "windows":
+                    return "mdi:microsoft-windows"
+                elif vm.get("os_type") == "linux":
+                    return "mdi:linux"
+                return "mdi:desktop-tower"
+        return "mdi:desktop-tower"
+
+    @property
+    def available(self) -> bool:
+        """Return if the switch is available."""
+        if not self.coordinator.last_update_success:
+            return False
+        return any(vm["name"] == self._vm_name for vm in self.coordinator.data["vms"])
 
     @property
     def is_on(self) -> bool:
@@ -109,13 +144,28 @@ class UnraidVMSwitch(UnraidSwitchBase):
             if vm["name"] == self._vm_name:
                 return vm["status"].lower() == "running"
         return False
+    
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        for vm in self.coordinator.data["vms"]:
+            if vm["name"] == self._vm_name:
+                return {
+                    "os_type": vm.get("os_type", "unknown"),
+                    "status": vm.get("status", "unknown"),
+                }
+        return {}
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn the VM on."""
-        await self.coordinator.api.start_vm(self._vm_name)
+        success = await self.coordinator.api.start_vm(self._vm_name)
+        if not success:
+            raise HomeAssistantError(f"Failed to start VM {self._vm_name}")
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn the VM off."""
-        await self.coordinator.api.stop_vm(self._vm_name)
+        success = await self.coordinator.api.stop_vm(self._vm_name)
+        if not success:
+            raise HomeAssistantError(f"Failed to stop VM {self._vm_name}")
         await self.coordinator.async_request_refresh()

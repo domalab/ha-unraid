@@ -32,16 +32,22 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> Dict[str, Any]:
         """Fetch data from Unraid."""
         try:
+            # Fetch VM data first for faster switch response
+            vms = await self.api.get_vms()
+            
+            # Then fetch the rest of the data
             data = {
+                "vms": vms,
                 "system_stats": await self.api.get_system_stats(),
                 "docker_containers": await self.api.get_docker_containers(),
-                "vms": await self.api.get_vms(),
                 "user_scripts": await self.api.get_user_scripts(),
             }
+            
             if self.has_ups:
                 ups_info = await self.api.get_ups_info()
-                if ups_info:  # Only add UPS info if it's not empty
+                if ups_info:
                     data["ups_info"] = ups_info
+                    
             return data
         except Exception as err:
             _LOGGER.error("Error communicating with Unraid: %s", err)
