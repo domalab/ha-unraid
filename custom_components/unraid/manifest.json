@@ -4,12 +4,13 @@
   "codeowners": ["@domalab"],
   "config_flow": true,
   "dependencies": [],
+  "diagnostics": true,
   "documentation": "https://github.com/domalab/ha-unraid/wiki",
   "homekit": {},
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/domalab/ha-unraid/issues",
   "requirements": [],
   "ssdp": [],
-  "version": "0.1.4",
+  "version": "0.1.5",
   "zeroconf": []
 }

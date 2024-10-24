@@ -1,13 +1,22 @@
 """Constants for the Unraid integration."""
-from homeassistant.const import Platform
-
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_PORT,
+    CONF_USERNAME,
+    Platform,
+)
 
 DOMAIN = "unraid"
 DEFAULT_PORT = 22
 DEFAULT_CHECK_INTERVAL = 300  # seconds
 
 # Platforms
-PLATFORMS = [Platform.SENSOR, Platform.SWITCH]
+PLATFORMS = [
+    Platform.BINARY_SENSOR,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
 # Configuration and options
 CONF_CHECK_INTERVAL = "check_interval"
