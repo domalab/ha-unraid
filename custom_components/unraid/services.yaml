@@ -106,3 +106,80 @@ stop_user_script:
       required: true
       selector:
         text:
+
+array_stop:
+  name: Stop Array
+  description: >-
+    Stop the Unraid array. This operation will fail if there are active file operations
+    unless ignore_lock is set to true. Ensure all important operations are completed
+    before stopping the array.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    ignore_lock:
+      name: Ignore Operation Lock
+      description: >-
+        If true, will attempt to stop the array even if file operations are detected.
+        Use with caution as this may cause data corruption.
+      default: false
+      required: false
+      selector:
+        boolean:
+
+system_reboot:
+  name: Reboot System
+  description: >-
+    Reboot the Unraid system. This operation will fail if there are running VMs
+    or active file operations. Running Docker containers will be stopped.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    delay:
+      name: Delay
+      description: >-
+        Delay in seconds before executing the reboot (0-3600).
+        This allows time for running operations to complete.
+      default: 0
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+
+system_shutdown:
+  name: Shutdown System
+  description: >-
+    Shutdown the Unraid system. This operation requires the array to be stopped first
+    and will fail if there are running VMs or active file operations.
+    Running Docker containers will be stopped.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    delay:
+      name: Delay
+      description: >-
+        Delay in seconds before executing the shutdown (0-3600).
+        This allows time for running operations to complete.
+      default: 0
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds

@@ -8,6 +8,8 @@ from async_timeout import timeout
 from enum import Enum
 import json
 
+from homeassistant.exceptions import HomeAssistantError
+
 _LOGGER = logging.getLogger(__name__)
 
 class VMState(Enum):
@@ -653,6 +655,155 @@ class UnraidAPI:
         except Exception as e:
             _LOGGER.error("Error stopping user script %s: %s", script_name, str(e))
             return ""
+        
+    async def get_array_status(self) -> str:
+        """Get current array status."""
+        try:
+            result = await self.execute_command("/usr/local/sbin/emcmd status")
+            if result.exit_status != 0:
+                _LOGGER.error("Failed to get array status: %s", result.stderr)
+                return "unknown"
+            # Array states: Started, Stopped, Starting, Stopping
+            status = result.stdout.strip().lower()
+            return status
+        except Exception as e:
+            _LOGGER.error("Error getting array status: %s", str(e))
+            return "unknown"
+
+    async def array_stop(self, ignore_lock: bool = False) -> bool:
+        """Stop the Unraid array with safety checks."""
+        try:
+            # Check if array is already stopped
+            status = await self.get_array_status()
+            if status == "stopped":
+                _LOGGER.warning("Array is already stopped")
+                return True
+            
+            if status == "stopping":
+                _LOGGER.warning("Array is already in the process of stopping")
+                return True
+
+            # Check for active transfers/mover operations
+            result = await self.execute_command("ps aux | grep -E 'mover|rsync|cp|mv' | grep -v grep")
+            if result.stdout.strip() and not ignore_lock:
+                _LOGGER.error("Active file operations detected. Cannot safely stop array")
+                raise HomeAssistantError("Cannot stop array: Active file operations detected")
+
+            _LOGGER.info("Stopping Unraid array")
+            result = await self.execute_command("/usr/local/sbin/emcmd stop")
+            
+            if result.exit_status != 0:
+                _LOGGER.error("Failed to stop array: %s", result.stderr)
+                raise HomeAssistantError(f"Failed to stop array: {result.stderr}")
+
+            # Wait for array to begin stopping
+            for _ in range(5):  # 5 second timeout
+                if await self.get_array_status() in ["stopping", "stopped"]:
+                    _LOGGER.info("Array stop command executed successfully")
+                    return True
+                await asyncio.sleep(1)
+
+            raise HomeAssistantError("Array did not enter stopping state")
+
+        except HomeAssistantError:
+            raise
+        except Exception as e:
+            _LOGGER.error("Error stopping array: %s", str(e))
+            raise HomeAssistantError(f"Unexpected error stopping array: {str(e)}")
+
+    async def system_reboot(self, delay: int = 0) -> bool:
+        """Reboot the Unraid system with safety checks."""
+        try:
+            # Check for active transfers/mover operations
+            result = await self.execute_command("ps aux | grep -E 'mover|rsync|cp|mv' | grep -v grep")
+            if result.stdout.strip():
+                _LOGGER.error("Active file operations detected. Cannot safely reboot")
+                raise HomeAssistantError("Cannot reboot: Active file operations detected")
+
+            # Check VM status
+            vms = await self.get_vms()
+            running_vms = [vm["name"] for vm in vms if vm["status"] == "running"]
+            if running_vms:
+                _LOGGER.error("Running VMs detected: %s", ", ".join(running_vms))
+                raise HomeAssistantError(f"Cannot reboot: Running VMs detected: {', '.join(running_vms)}")
+
+            # Check Docker container status
+            containers = await self.get_docker_containers()
+            running_containers = [c["name"] for c in containers if c["state"] == "running"]
+            if running_containers:
+                _LOGGER.warning("Running containers will be stopped: %s", ", ".join(running_containers))
+
+            if delay > 0:
+                _LOGGER.info("Scheduled reboot in %d seconds", delay)
+                reboot_cmd = f"shutdown -r +{delay//60}"
+            else:
+                reboot_cmd = "shutdown -r now"
+
+            _LOGGER.info("Executing reboot command: %s", reboot_cmd)
+            result = await self.execute_command(reboot_cmd)
+            
+            if result.exit_status != 0:
+                _LOGGER.error("Failed to reboot system: %s", result.stderr)
+                raise HomeAssistantError(f"Failed to reboot system: {result.stderr}")
+
+            _LOGGER.info("System reboot command executed successfully")
+            return True
+
+        except HomeAssistantError:
+            raise
+        except Exception as e:
+            _LOGGER.error("Error rebooting system: %s", str(e))
+            raise HomeAssistantError(f"Unexpected error rebooting system: {str(e)}")
+
+    async def system_shutdown(self, delay: int = 0) -> bool:
+        """Shutdown the Unraid system with safety checks."""
+        try:
+            # Check for active transfers/mover operations
+            result = await self.execute_command("ps aux | grep -E 'mover|rsync|cp|mv' | grep -v grep")
+            if result.stdout.strip():
+                _LOGGER.error("Active file operations detected. Cannot safely shutdown")
+                raise HomeAssistantError("Cannot shutdown: Active file operations detected")
+
+            # Check array status
+            array_status = await self.get_array_status()
+            if array_status not in ["stopped", "stopping"]:
+                _LOGGER.error("Array must be stopped before shutdown")
+                raise HomeAssistantError("Cannot shutdown: Array must be stopped first")
+
+            # Check VM status
+            vms = await self.get_vms()
+            running_vms = [vm["name"] for vm in vms if vm["status"] == "running"]
+            if running_vms:
+                _LOGGER.error("Running VMs detected: %s", ", ".join(running_vms))
+                raise HomeAssistantError(f"Cannot shutdown: Running VMs detected: {', '.join(running_vms)}")
+
+            # Check Docker container status
+            containers = await self.get_docker_containers()
+            running_containers = [c["name"] for c in containers if c["state"] == "running"]
+            if running_containers:
+                _LOGGER.warning("Running containers will be stopped: %s", ", ".join(running_containers))
+
+            if delay > 0:
+                _LOGGER.info("Scheduled shutdown in %d seconds", delay)
+                shutdown_cmd = f"shutdown +{delay//60}"
+            else:
+                shutdown_cmd = "shutdown now"
+
+            _LOGGER.info("Executing shutdown command: %s", shutdown_cmd)
+            result = await self.execute_command(shutdown_cmd)
+            
+            if result.exit_status != 0:
+                _LOGGER.error("Failed to shutdown system: %s", result.stderr)
+                raise HomeAssistantError(f"Failed to shutdown system: {result.stderr}")
+
+            _LOGGER.info("System shutdown command executed successfully")
+            return True
+
+        except HomeAssistantError:
+            raise
+        except Exception as e:
+            _LOGGER.error("Error shutting down system: %s", str(e))
+            raise HomeAssistantError(f"Unexpected error shutting down system: {str(e)}")
 
     async def __aenter__(self):
         await self.ensure_connection()
