@@ -38,6 +38,8 @@ This integration is in active development. Here are a few things to keep in mind
 
 ## Configuration
 
+> **IMPORTANT:** SSH needs to be enabled on Unraid --> Settings --> Management
+
 During the setup, you'll need to provide:
 
 - Host: The IP address or hostname of your Unraid server
