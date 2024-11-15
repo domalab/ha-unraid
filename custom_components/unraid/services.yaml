@@ -107,30 +107,6 @@ stop_user_script:
       selector:
         text:
 
-array_stop:
-  name: Stop Array
-  description: >-
-    Stop the Unraid array. This operation will fail if there are active file operations
-    unless ignore_lock is set to true. Ensure all important operations are completed
-    before stopping the array.
-  fields:
-    entry_id:
-      name: Config Entry ID
-      description: The ID of the config entry for the Unraid instance.
-      example: "1234abcd5678efgh"
-      required: true
-      selector:
-        text:
-    ignore_lock:
-      name: Ignore Operation Lock
-      description: >-
-        If true, will attempt to stop the array even if file operations are detected.
-        Use with caution as this may cause data corruption.
-      default: false
-      required: false
-      selector:
-        boolean:
-
 system_reboot:
   name: Reboot System
   description: >-

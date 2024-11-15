@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+import logging
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
@@ -12,6 +13,8 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .coordinator import UnraidDataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -107,21 +110,35 @@ class UnraidDockerContainerSwitch(UnraidSwitchBase):
         await self.coordinator.api.stop_container(self._container_name)
         await self.coordinator.async_request_refresh()
 
-class UnraidVMSwitch(UnraidSwitchBase):
+class UnraidVMSwitch(CoordinatorEntity, SwitchEntity):
     """Representation of an Unraid VM switch."""
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator, vm_name: str) -> None:
         """Initialize the VM switch."""
-        super().__init__(coordinator, f"vm_{vm_name}")
+        super().__init__(coordinator)
         self._vm_name = vm_name
+        # Remove any leading numbers and spaces for the entity ID
+        cleaned_name = ''.join(c for c in vm_name if not c.isdigit()).strip()
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_vm_{cleaned_name}"
         self._attr_name = f"Unraid VM {vm_name}"
         self._attr_entity_registry_enabled_default = True
-        self._attr_assumed_state = False
+        self._attr_has_entity_name = True
+        self._last_known_state = None
+
+    @property
+    def device_info(self) -> Dict[str, Any]:
+        """Return device information."""
+        return {
+            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
+            "name": f"Unraid Server ({self.coordinator.config_entry.data['host']})",
+            "manufacturer": "Lime Technology",
+            "model": "Unraid Server",
+        }
 
     @property
     def icon(self) -> str:
-        """Return the icon to use for the VM."""
-        for vm in self.coordinator.data["vms"]:
+        """Return the icon based on OS type."""
+        for vm in self.coordinator.data.get("vms", []):
             if vm["name"] == self._vm_name:
                 if vm.get("os_type") == "windows":
                     return "mdi:microsoft-windows"
@@ -135,37 +152,61 @@ class UnraidVMSwitch(UnraidSwitchBase):
         """Return if the switch is available."""
         if not self.coordinator.last_update_success:
             return False
-        return any(vm["name"] == self._vm_name for vm in self.coordinator.data["vms"])
+        return any(vm["name"] == self._vm_name for vm in self.coordinator.data.get("vms", []))
 
     @property
     def is_on(self) -> bool:
         """Return true if the VM is running."""
-        for vm in self.coordinator.data["vms"]:
+        for vm in self.coordinator.data.get("vms", []):
             if vm["name"] == self._vm_name:
-                return vm["status"].lower() == "running"
+                state = vm["status"].lower()
+                self._last_known_state = state
+                return state == "running"
         return False
-    
+
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
-        for vm in self.coordinator.data["vms"]:
+        attrs = {
+            "status": "unknown",
+            "os_type": "unknown",
+        }
+        
+        for vm in self.coordinator.data.get("vms", []):
             if vm["name"] == self._vm_name:
-                return {
-                    "os_type": vm.get("os_type", "unknown"),
+                attrs.update({
                     "status": vm.get("status", "unknown"),
-                }
-        return {}
+                    "os_type": vm.get("os_type", "unknown"),
+                })
+                break
+                
+        return attrs
 
-    async def async_turn_on(self, **kwargs) -> None:
+    async def _safe_vm_operation(self, operation: str, func) -> None:
+        """Safely execute a VM operation with proper error handling."""
+        try:
+            _LOGGER.debug("Attempting to %s VM '%s'", operation, self._vm_name)
+            success = await func(self._vm_name)
+            
+            if not success:
+                error_msg = f"Failed to {operation} VM '{self._vm_name}'"
+                if self._last_known_state:
+                    error_msg += f" (Last known state: {self._last_known_state})"
+                _LOGGER.error(error_msg)
+                raise HomeAssistantError(error_msg)
+                
+            # Force a refresh after the operation
+            await self.coordinator.async_request_refresh()
+            
+        except Exception as err:
+            error_msg = f"Error during {operation} operation for VM '{self._vm_name}': {str(err)}"
+            _LOGGER.error(error_msg)
+            raise HomeAssistantError(error_msg) from err
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the VM on."""
-        success = await self.coordinator.api.start_vm(self._vm_name)
-        if not success:
-            raise HomeAssistantError(f"Failed to start VM {self._vm_name}")
-        await self.coordinator.async_request_refresh()
+        await self._safe_vm_operation("start", self.coordinator.api.start_vm)
 
-    async def async_turn_off(self, **kwargs) -> None:
+    async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the VM off."""
-        success = await self.coordinator.api.stop_vm(self._vm_name)
-        if not success:
-            raise HomeAssistantError(f"Failed to stop VM {self._vm_name}")
-        await self.coordinator.async_request_refresh()
+        await self._safe_vm_operation("stop", self.coordinator.api.stop_vm)

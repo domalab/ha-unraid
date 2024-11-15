@@ -9,7 +9,8 @@
                     "username": "Username",
                     "password": "Password",
                     "port": "Port",
-                    "check_interval": "Update Interval (seconds)",
+                    "general_interval": "General Update Interval (Minutes)",
+                    "disk_interval": "Disk Update Interval (Hours)",
                     "has_ups": "UPS Connected"
                 },
                 "data_description": {
@@ -17,7 +18,8 @@
                     "username": "{username_description}",
                     "password": "{password_description}",
                     "port": "{port_description}",
-                    "check_interval": "{check_interval_description}",
+                    "general_interval": "{general_interval_description}",
+                    "disk_interval": "{disk_interval_description}",
                     "has_ups": "Check this if you have a UPS connected to your Unraid server"
                 }
             }
@@ -34,24 +36,19 @@
     "options": {
         "step": {
             "init": {
-                "title": "Configure Unraid",
-                "description": "Adjust Unraid integration settings.",
+                "title": "Update Intervals",
+                "description": "Configure update intervals and settings",
                 "data": {
-                    "check_interval": "Update Interval (seconds)",
+                    "general_interval": "General Update Interval (Minutes)",
+                    "disk_interval": "Disk Update Interval (Hours)",
                     "port": "SSH Port",
                     "has_ups": "UPS Connected"
-                }
-            }
-        }
-    },
-    "services": {
-        "force_update": {
-            "name": "Force Update",
-            "description": "Force an immediate update of Unraid data.",
-            "fields": {
-                "config_entry": {
-                    "name": "Unraid Instance",
-                    "description": "The Unraid instance to update. Leave empty to update all instances."
+                },
+                "data_description": {
+                    "general_interval": "How often to update non-disk sensors (1-60 minutes)",
+                    "disk_interval": "How often to update disk information (1-24 hours)",
+                    "port": "SSH port for connecting to your Unraid server",
+                    "has_ups": "Enable if you have a UPS connected to your Unraid server"
                 }
             }
         }

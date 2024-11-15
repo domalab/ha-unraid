@@ -1,12 +1,15 @@
 """API client for Unraid."""
+from __future__ import annotations
+
 import asyncio
 import asyncssh
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional
 import re
 from async_timeout import timeout
 from enum import Enum
-import json
+import shlex
 
 from homeassistant.exceptions import HomeAssistantError
 
@@ -166,35 +169,220 @@ class UnraidAPI:
             "docker_vdisk": docker_vdisk,
         }
     
+    async def get_disk_info(self) -> Dict[str, Dict[str, Any]]:
+        """Get combined disk information for all physical disks."""
+        try:
+            # Get disk models
+            model_cmd = "ls -l /dev/disk/by-id/ata-* | grep -v part"
+            model_result = await self.execute_command(model_cmd)
+            disk_info = {}
+            
+            if model_result.exit_status == 0:
+                for line in model_result.stdout.splitlines():
+                    if '->' in line and 'ata-' in line:
+                        try:
+                            model = line.split('ata-')[1].split()[0]
+                            device = line.split('/')[-1]  # Gets sdX
+                            
+                            # Get disk size
+                            size_cmd = f"blockdev --getsize64 /dev/{device}"
+                            size_result = await self.execute_command(size_cmd)
+                            size = int(size_result.stdout.strip()) if size_result.exit_status == 0 else 0
+                            
+                            disk_info[device] = {
+                                "model": model,
+                                "size": size,
+                                "device": device,
+                            }
+                            _LOGGER.debug("Found disk %s: %s, size: %s bytes", device, model, size)
+                        except Exception as err:
+                            _LOGGER.debug("Error parsing disk info for line '%s': %s", line, err)
+            
+            # Get temperatures and status
+            temp_result = await self.execute_command(
+                "for disk in /dev/sd[a-z]; do "
+                'echo "===START $disk==="; '
+                'if ! smartctl -n standby $disk > /dev/null 2>&1; then '
+                '  echo "STANDBY"; '
+                'else '
+                '  smartctl -H -A $disk 2>/dev/null; '  # Only get SMART status for active disks
+                'fi; '
+                'echo "===END $disk==="; done'
+            )
+
+            if temp_result.exit_status == 0:
+                current_disk = None
+                
+                for line in temp_result.stdout.splitlines():
+                    if line.startswith('===START /dev/'):
+                        current_disk = line.split('/')[-1].rstrip('=').strip()
+                        if current_disk not in disk_info:
+                            disk_info[current_disk] = {"device": current_disk}
+                    elif line == "STANDBY":
+                        if current_disk:
+                            disk_info[current_disk]["status"] = "standby"
+                            disk_info[current_disk]["smart_status"] = "Standby"
+                            disk_info[current_disk]["health"] = "Standby"
+                            continue
+                    elif "SMART overall-health self-assessment test result:" in line:
+                        if current_disk:
+                            smart_status = line.split(": ")[-1].strip()
+                            disk_info[current_disk]["smart_status"] = smart_status
+                            disk_info[current_disk]["health"] = smart_status
+                            disk_info[current_disk]["status"] = "active"
+                    elif 'Temperature_Celsius' in line:
+                        if current_disk:
+                            _LOGGER.debug("Parsing temperature from line: %s for disk %s", line, current_disk)
+                            try:
+                                temp_match = re.search(r'Temperature_Celsius.*?(\d+)\s*[(\[]', line)
+                                if temp_match:
+                                    temp = int(temp_match.group(1))
+                                    disk_info[current_disk]["temperature"] = temp
+                                    _LOGGER.debug("Found temperature %d°C for disk %s", temp, current_disk)
+                            except Exception as err:
+                                _LOGGER.debug("Error parsing temperature for disk %s: %s", current_disk, err)
+                    elif '===END' in line:
+                        if current_disk and "status" not in disk_info[current_disk]:
+                            disk_info[current_disk]["status"] = "unknown"
+                            disk_info[current_disk]["smart_status"] = "Unknown"
+                            disk_info[current_disk]["health"] = "Unknown"
+                        current_disk = None
+
+                _LOGGER.debug("Disk info after collection: %s", disk_info)
+            
+            return disk_info
+        except Exception as err:
+            _LOGGER.error("Error getting disk info: %s", str(err))
+            return {}
+        
+    async def get_disk_spin_down_settings(self) -> dict[str, int]:
+        """Fetch disk spin down delay settings from Unraid."""
+        try:
+            settings = await self.execute_command("cat /boot/config/disk.cfg")
+            default_delay = 0  # Default to Never (0 minutes) if not found
+            disk_delays = {}
+            
+            if settings.exit_status == 0:
+                for line in settings.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith("#") or not line:
+                        continue
+                            
+                    if line.startswith("spindownDelay="):
+                        # Get the default delay, removing quotes and spaces
+                        delay_value = line.split("=")[1].strip().strip('"')
+                        try:
+                            default_delay = int(delay_value)
+                        except ValueError:
+                            _LOGGER.warning("Invalid default spin down delay value: %s", delay_value)
+                            
+                    elif line.startswith("diskSpindownDelay."):
+                        # Format is diskSpindownDelay.N=value where N is disk number
+                        try:
+                            disk_num = line.split(".")[1].split("=")[0]
+                            delay_value = line.split("=")[1].strip().strip('"')
+                            delay = int(delay_value)
+                            
+                            # -1 means use default delay
+                            disk_delays[f"disk{disk_num}"] = default_delay if delay < 0 else delay
+                            
+                        except (IndexError, ValueError) as err:
+                            _LOGGER.warning("Error parsing disk spin down setting '%s': %s", line, err)
+
+                _LOGGER.debug(
+                    "Disk spin down settings - Default: %s, Per-disk: %s",
+                    "Never" if default_delay == 0 else f"{default_delay} minutes",
+                    disk_delays
+                )
+                
+            return {"default": default_delay, **disk_delays}
+            
+        except Exception as err:
+            _LOGGER.error("Error getting disk spin down settings: %s", err)
+            return {"default": 0}  # Return Never (0 minutes) if error
+    
     async def get_individual_disk_usage(self) -> List[Dict[str, Any]]:
         """Fetch Individual Disk information from the Unraid system."""
         try:
-            _LOGGER.debug("Fetching individual disk usage")
-            result = await self.execute_command("df -k /mnt/disk* | awk 'NR>1 {print $6,$2,$3,$4}'")
+            _LOGGER.debug("Fetching individual disk usage and temperatures")
+            # Get disk info (includes models, temps, and SMART status)
+            disk_info = await self.get_disk_info()
+            
+            # Get spin down settings
+            spin_down_settings = await self.get_disk_spin_down_settings()
+            default_delay = spin_down_settings.get("default", 0)  # Default to Never
+            
+            # Sort disks by size (excluding cache)
+            data_disks = {k: v for k, v in disk_info.items()
+                        if k != 'sda' and k != 'sdb' and 'size' in v}
+            sorted_disks = sorted(data_disks.items(), key=lambda x: x[1]['size'])
+            
+            disks = []
+            disk_num = 1  # Counter for disk1, disk2, etc.
+            
+            # Get disk usage info
+            disk_command = (
+                "df -k /mnt/disk[0-9]* 2>/dev/null | "
+                "awk 'NR>1 && $1 !~ /tmpfs/ {printf \"%s;%s;%s;%s;%s\\n\", $6,$2,$3,$4,$1}'"
+            )
+            result = await self.execute_command(disk_command)
             if result.exit_status != 0:
-                _LOGGER.error("Individual disk usage command failed with exit status %d", result.exit_status)
                 return []
 
-            disks = []
             for line in result.stdout.splitlines():
-                mount_point, total, used, free = line.split()
-                disk_name = mount_point.split('/')[-1]
-                if disk_name.startswith('disk'):  # Only include actual disks, not tmpfs
+                try:
+                    mount_point, total, used, free, device = line.split(';')
+                    disk_name = mount_point.split('/')[-1]
+                    
+                    if not disk_name.replace('disk', '').isdigit():
+                        continue
+                        
                     total = int(total) * 1024  # Convert to bytes
-                    used = int(used) * 1024    # Convert to bytes
-                    free = int(free) * 1024    # Convert to bytes
+                    used = int(used) * 1024
+                    free = int(free) * 1024
                     percentage = (used / total) * 100 if total > 0 else 0
 
-                    disks.append({
+                    # Map to physical device based on size/position
+                    if 0 <= disk_num - 1 < len(sorted_disks):
+                        physical_device, device_info = sorted_disks[disk_num - 1]
+                    else:
+                        physical_device = "unknown"
+                        device_info = {}
+
+                    disk_data = {
                         "name": disk_name,
+                        "device": physical_device,
+                        "model": device_info.get("model", "Unknown"),
                         "mount_point": mount_point,
                         "percentage": round(percentage, 2),
                         "total": total,
                         "used": used,
-                        "free": free
-                    })
+                        "free": free,
+                        "status": device_info.get("status", "unknown"),
+                        "health": device_info.get("smart_status", "Unknown"),  # Map smart_status to health
+                        "spin_down_delay": spin_down_settings.get(disk_name, default_delay),
+                    }
 
-            _LOGGER.debug("Retrieved information for %d disks", len(disks))
+                    # Add temperature if available
+                    if "temperature" in device_info:
+                        disk_data["temperature"] = device_info["temperature"]
+
+                    disks.append(disk_data)
+                    _LOGGER.debug(
+                        "Disk mapping: %s -> %s (Temp: %s, Status: %s, Health: %s, Spin down: %d min)",
+                        disk_name,
+                        physical_device,
+                        f"{device_info.get('temperature', 'N/A')}°C" if device_info.get('temperature') is not None else 'N/A',
+                        device_info.get('status', 'unknown'),
+                        device_info.get('smart_status', 'Unknown'),
+                        spin_down_settings.get(disk_name, default_delay)
+                    )
+                    disk_num += 1
+                    
+                except Exception as err:
+                    _LOGGER.debug("Error processing disk %s: %s", disk_name, err)
+                    continue
+
             return disks
         except Exception as e:
             _LOGGER.error("Error getting individual disk usage: %s", str(e))
@@ -340,19 +528,27 @@ class UnraidAPI:
         """Fetch UPS information from the Unraid system."""
         try:
             _LOGGER.debug("Fetching UPS info")
-            result = await self.execute_command("apcaccess status")
-            if result.exit_status != 0:
-                _LOGGER.error("UPS info command failed with exit status %d", result.exit_status)
-                return {}
+            # Check if apcupsd is installed and running first
+            check_result = await self.execute_command(
+                "command -v apcaccess >/dev/null 2>&1 && "
+                "pgrep apcupsd >/dev/null 2>&1 && "
+                "echo 'running'"
+            )
             
-            ups_data = {}
-            for line in result.stdout.splitlines():
-                if ':' in line:
-                    key, value = line.split(':', 1)
-                    ups_data[key.strip()] = value.strip()
-            return ups_data
+            if check_result.exit_status == 0 and "running" in check_result.stdout:
+                result = await self.execute_command("apcaccess -u 2>/dev/null")
+                if result.exit_status == 0:
+                    ups_data = {}
+                    for line in result.stdout.splitlines():
+                        if ':' in line:
+                            key, value = line.split(':', 1)
+                            ups_data[key.strip()] = value.strip()
+                    return ups_data
+                    
+            # If not installed or not running, return empty dict without error
+            return {}
         except Exception as e:
-            _LOGGER.error("Error getting UPS info: %s", str(e))
+            _LOGGER.debug("Error getting UPS info (apcupsd might not be installed): %s", str(e))
             return {}
 
     async def get_temperature_data(self) -> Dict[str, Any]:
@@ -398,6 +594,267 @@ class UnraidAPI:
             zone_type, temp = line.split()
             thermal_zones[zone_type] = float(temp) / 1000  # Convert milli-Celsius to Celsius
         return thermal_zones
+    
+    async def get_interface_info(self, interface: str) -> str:
+        """Get detailed interface info."""
+        try:
+            # Get interface details
+            result = await self.execute_command(f"ip link show {interface}")
+            if result.exit_status != 0:
+                return "Interface Down"
+
+            if "NO-CARRIER" in result.stdout:
+                return "Interface Down"
+            elif "state UP" in result.stdout:
+                # Get speed and duplex info
+                ethtool_result = await self.execute_command(f"ethtool {interface}")
+                if ethtool_result.exit_status == 0 and "Speed: 1000Mb/s" in ethtool_result.stdout:
+                    return "1000Mbps, full duplex, mtu 1500"
+                return "Interface Up"
+            else:
+                return "Interface Down"
+        except Exception as err:
+            _LOGGER.error("Error getting interface info for %s: %s", interface, err)
+            return "Interface Down"
+
+    async def get_network_stats(self) -> Dict[str, Any]:
+        """Fetch network statistics from the Unraid system."""
+        try:
+            _LOGGER.debug("Fetching network statistics")
+            
+            network_stats = {}
+            
+            # Get active interfaces, include eth and bond interfaces
+            result = await self.execute_command(
+                "ip -br link show | grep -E '^(eth|bond)' | awk '{print $1, $2}'"  # Match eth and bond interfaces
+            )
+            
+            if result.exit_status != 0:
+                return {}
+
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2:
+                    interface = parts[0]
+                    state = parts[1].lower()
+                    
+                    # Only process interfaces that are UP and have carrier
+                    if "up" in state and "no-carrier" not in state:
+                        try:
+                            # Get traffic stats
+                            stats_result = await self.execute_command(
+                                f"cat /sys/class/net/{interface}/statistics/{{rx,tx}}_bytes"
+                            )
+                            
+                            if stats_result.exit_status == 0:
+                                rx_bytes, tx_bytes = map(int, stats_result.stdout.splitlines())
+                                
+                                # Get interface info and mode
+                                info_result = await self.execute_command(
+                                    f"ethtool {interface} 2>/dev/null || echo 'No ethtool info'"
+                                )
+                                
+                                # For bond interfaces, get the bond mode
+                                if interface.startswith('bond'):
+                                    mode_result = await self.execute_command(
+                                        f"cat /sys/class/net/{interface}/bonding/mode"
+                                    )
+                                    if mode_result.exit_status == 0:
+                                        speed_info = f"Bond Mode: {mode_result.stdout.strip()}, mtu 1500"
+                                    else:
+                                        speed_info = "Bond interface, mtu 1500"
+                                else:
+                                    # For ethernet interfaces
+                                    speed_info = "1000Mbps, full duplex, mtu 1500"
+                                    if info_result.exit_status == 0 and "Speed: " in info_result.stdout:
+                                        speed_info = info_result.stdout.split("Speed: ")[1].split("\n")[0]
+                                        speed_info += ", full duplex, mtu 1500"
+                                
+                                network_stats[interface] = {
+                                    "rx_bytes": rx_bytes,
+                                    "tx_bytes": tx_bytes,
+                                    "rx_speed": 0,  # Will be calculated in coordinator
+                                    "tx_speed": 0,  # Will be calculated in coordinator
+                                    "connected": True,
+                                    "interface_info": speed_info
+                                }
+                                _LOGGER.debug(
+                                    "Added network interface %s (state: %s, info: %s)",
+                                    interface,
+                                    state,
+                                    speed_info
+                                )
+                        except Exception as err:
+                            _LOGGER.debug(
+                                "Error getting stats for interface %s: %s", 
+                                interface, 
+                                err
+                            )
+                            continue
+
+            return network_stats
+                
+        except Exception as err:
+            _LOGGER.error("Error getting network stats: %s", str(err))
+            return {}
+
+    def _format_duration(self, duration_str: str) -> str:
+        """Format duration string into hours, minutes, seconds."""
+        try:
+            total_seconds = int(duration_str)
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            
+            parts = []
+            if hours > 0:
+                parts.append(f"{hours} hours")
+            if minutes > 0:
+                parts.append(f"{minutes} minutes")
+            if seconds > 0 or not parts:  # Include seconds if it's the only component
+                parts.append(f"{seconds} seconds")
+                
+            return ", ".join(parts)
+        except (ValueError, TypeError):
+            return duration_str
+
+    async def _get_system_timezone(self) -> str:
+        """Get the system timezone."""
+        try:
+            # Get timezone from system
+            tz_result = await self.execute_command("cat /etc/timezone")
+            if tz_result.exit_status == 0:
+                return tz_result.stdout.strip()
+                
+            # Fallback to timedatectl
+            tz_result = await self.execute_command("timedatectl show --property=Timezone --value")
+            if tz_result.exit_status == 0:
+                return tz_result.stdout.strip()
+                
+        except Exception as err:
+            _LOGGER.debug("Error getting system timezone: %s", err)
+        
+        return "UTC"  # Default to UTC instead of PST
+
+    async def _parse_parity_log_line(self, line: str) -> tuple[datetime, int, float, int]:
+        """Parse a parity check log line.
+        
+        Format: timestamp|duration|speed|errors|unknown|type|size
+        Returns: (timestamp, duration_seconds, speed_kbs, errors)
+        """
+        try:
+            parts = line.strip().split('|')
+            if len(parts) >= 7:
+                # Parse timestamp
+                ts_str = parts[0]
+                timestamp = datetime.strptime(ts_str, "%Y %b %d %H:%M:%S")
+                
+                # Parse other fields
+                duration_secs = int(parts[1])
+                speed_kbs = float(parts[2])
+                errors = int(parts[3])
+                
+                return timestamp, duration_secs, speed_kbs, errors
+        except Exception as err:
+            _LOGGER.debug("Error parsing parity log line: %s", err)
+        return None
+
+    async def has_parity_configured(self) -> bool:
+        """Check if the system has parity configured."""
+        try:
+            # Check mdstat for parity info
+            mdstat_result = await self.execute_command("cat /proc/mdstat")
+            if mdstat_result.exit_status == 0:
+                mdstat_lines = mdstat_result.stdout.splitlines()
+                
+                # Look for parity indicators
+                for line in mdstat_lines:
+                    # Check for parity resync action
+                    if line.startswith("mdResyncAction="):
+                        action = line.split("=")[1].strip()
+                        if "P" in action:  # Either "check P" or similar
+                            return True
+                            
+                    # Also check for disk0 being a parity device
+                    elif line.startswith("diskNumber.0="):
+                        next_lines = mdstat_lines[mdstat_lines.index(line):mdstat_lines.index(line)+5]
+                        # Check if disk0 exists and is active (state 7)
+                        if any("diskState.0=7" in nl for nl in next_lines):
+                            return True
+
+            return False
+            
+        except Exception as err:
+            _LOGGER.debug("Error checking parity configuration: %s", err)
+            return False
+
+    async def get_parity_status(self) -> Dict[str, Any]:
+        """Fetch parity check information from the Unraid system."""
+        try:
+            data = {
+                "has_parity": False,  # Default to no parity
+                "is_active": False,
+                "last_check": None,
+                "next_check": None,
+                "speed": None,
+                "avg_speed": None,
+                "progress": 0.0,  # Default to 0%
+                "status": "unknown",
+                "errors": 0,
+                "duration": None,
+                "estimated_completion": None,
+            }
+
+            # Check mdstat for active check
+            mdstat_result = await self.execute_command("cat /proc/mdstat")
+            if mdstat_result.exit_status == 0:
+                mdstat_lines = mdstat_result.stdout.splitlines()
+                for line in mdstat_lines:
+                    if line.startswith("mdResyncAction="):
+                        action = line.split("=")[1].strip()
+                        if "check P" in action:
+                            data["is_active"] = True
+                            data["status"] = "checking"
+                            data["has_parity"] = True
+                    elif data["is_active"] and line.startswith("mdResyncPos="):
+                        try:
+                            pos = int(line.split("=")[1])
+                            size = next(
+                                (int(l.split("=")[1]) for l in mdstat_lines if l.startswith("mdResyncSize=")),
+                                0
+                            )
+                            if size > 0:
+                                data["progress"] = (pos / size) * 100
+                        except (ValueError, TypeError):
+                            pass
+                    elif data["is_active"] and line.startswith("mdResyncDt="):
+                        try:
+                            dt = int(line.split("=")[1])
+                            if dt > 0:
+                                data["speed"] = (dt * 512) / (1024 * 1024)  # Convert to MB/s
+                        except (ValueError, TypeError):
+                            pass
+
+            # Get history information
+            if history := await self.execute_command("cat /boot/config/parity-checks.log"):
+                if history.exit_status == 0 and history.stdout.strip():
+                    try:
+                        last_line = history.stdout.strip().split('\n')[-1]
+                        if last_line:
+                            parts = last_line.split('|')
+                            if len(parts) >= 4:
+                                data["last_check"] = datetime.strptime(parts[0], "%Y %b %d %H:%M:%S")
+                                data["duration"] = self._format_duration(parts[1])
+                                data["avg_speed"] = float(parts[2]) / 1024  # Convert to MB/s
+                                data["errors"] = int(parts[3])
+                    except Exception as err:
+                        _LOGGER.debug("Error parsing history: %s", err)
+
+            return data
+
+        except Exception as err:
+            _LOGGER.error("Error getting parity status: %s", str(err))
+            return None
 
     async def _get_log_filesystem_usage(self) -> Dict[str, Any]:
         """Fetch log filesystem information from the Unraid system."""
@@ -509,23 +966,36 @@ class UnraidAPI:
         """Fetch information about virtual machines."""
         try:
             _LOGGER.debug("Fetching VM information")
+            # Use list --all with a more reliable format
             result = await self.execute_command("virsh list --all --name")
             if result.exit_status != 0:
                 _LOGGER.error("VM list command failed with exit status %d", result.exit_status)
                 return []
-            
+
             vms = []
             for line in result.stdout.splitlines():
-                if line.strip():
-                    name = line.strip()
-                    status = await self.get_vm_status(name)
-                    os_type = await self.get_vm_os_info(name)
+                # Skip empty lines
+                if not line.strip():
+                    continue
+
+                try:
+                    vm_name = line.strip()
+                    # Get status directly using the exact name
+                    status = await self.get_vm_status(vm_name)
+                    os_type = await self.get_vm_os_info(vm_name)
+                    
                     vms.append({
-                        "name": name, 
+                        "name": vm_name,
                         "status": status,
                         "os_type": os_type
                     })
+
+                except Exception as parse_error:
+                    _LOGGER.warning("Error processing VM '%s': %s", line.strip(), str(parse_error))
+                    continue
+
             return vms
+
         except Exception as e:
             _LOGGER.error("Error getting VMs: %s", str(e))
             return []
@@ -533,98 +1003,147 @@ class UnraidAPI:
     async def get_vm_os_info(self, vm_name: str) -> str:
         """Get the OS type of a VM."""
         try:
-            # First try to get OS info from VM XML
-            result = await self.execute_command(f'virsh dumpxml "{vm_name}" | grep "<os>"')
-            xml_output = result.stdout
-
-            # Check for Windows-specific indicators
-            if any(indicator in '\n'.join(xml_output).lower() for indicator in ['windows', 'win', 'microsoft']):
-                return 'windows'
+            escaped_name = shlex.quote(vm_name)
             
-            # Try to get detailed OS info if available
-            result = await self.execute_command(f'virsh domosinfo "{vm_name}" 2>/dev/null')
-            if result.exit_status == 0:
-                os_info = '\n'.join(result.stdout).lower()
-                if any(indicator in os_info for indicator in ['windows', 'win', 'microsoft']):
+            # Try to get OS info from multiple sources
+            xml_result = await self.execute_command(
+                f'virsh dumpxml {escaped_name} | grep -A5 "<os>"'
+            )
+            
+            if xml_result.exit_status == 0:
+                xml_output = xml_result.stdout.lower()
+                if 'windows' in xml_output or 'win' in xml_output:
                     return 'windows'
-                elif any(indicator in os_info for indicator in ['linux', 'unix', 'ubuntu', 'debian', 'centos', 'fedora', 'rhel']):
+                if 'linux' in xml_output:
                     return 'linux'
+
+            # Check VM name patterns
+            name_lower = vm_name.lower()
+            name_clean = name_lower.replace('-', ' ').replace('_', ' ')
             
-            # Default to checking common paths in VM name
-            vm_name_lower = vm_name.lower()
-            if any(win_term in vm_name_lower for win_term in ['windows', 'win']):
+            # Check for Windows indicators
+            if any(term in name_clean for term in ['windows', 'win']):
                 return 'windows'
-            elif any(linux_term in vm_name_lower for linux_term in ['linux', 'ubuntu', 'debian', 'centos', 'fedora', 'rhel']):
+            
+            # Check for Linux indicators
+            if any(term in name_clean for term in [
+                'ubuntu', 'linux', 'debian', 'centos', 
+                'fedora', 'rhel', 'suse', 'arch'
+            ]):
                 return 'linux'
             
             return 'unknown'
+            
         except Exception as e:
-            _LOGGER.debug("Error getting OS info for VM %s: %s", vm_name, str(e))
+            _LOGGER.debug(
+                "Error getting OS info for VM '%s': %s", 
+                vm_name, 
+                str(e)
+            )
             return 'unknown'
 
     async def get_vm_status(self, vm_name: str) -> str:
         """Get detailed status of a specific virtual machine."""
         try:
-            result = await self.execute_command(f"virsh domstate {vm_name}")
+            # Double-quote the VM name for virsh
+            quoted_name = f'"{vm_name}"'
+            result = await self.execute_command(f"virsh domstate {quoted_name}")
             if result.exit_status != 0:
-                _LOGGER.error("Failed to get VM status for %s: %s", vm_name, result.stderr)
+                _LOGGER.error("Failed to get VM status for '%s': %s", vm_name, result.stderr)
                 return VMState.CRASHED.value
             return VMState.parse(result.stdout.strip())
         except Exception as e:
-            _LOGGER.error("Error getting VM status for %s: %s", vm_name, str(e))
+            _LOGGER.error("Error getting VM status for '%s': %s", vm_name, str(e))
             return VMState.CRASHED.value
+
+    async def start_vm(self, vm_name: str) -> bool:
+        """Start a virtual machine."""
+        try:
+            _LOGGER.debug("Starting VM: %s", vm_name)
+            quoted_name = f'"{vm_name}"'
+            
+            # Check current state first
+            current_state = await self.get_vm_status(vm_name)
+            if current_state.lower() == "running":
+                _LOGGER.info("VM '%s' is already running", vm_name)
+                return True
+                
+            result = await self.execute_command(f"virsh start {quoted_name}")
+            success = result.exit_status == 0
+            
+            if not success:
+                _LOGGER.error("Failed to start VM '%s': %s", vm_name, result.stderr)
+                return False
+                
+            # Wait for VM to start
+            for _ in range(15):
+                await asyncio.sleep(2)
+                status = await self.get_vm_status(vm_name)
+                if status.lower() == "running":
+                    _LOGGER.info("Successfully started VM '%s'", vm_name)
+                    return True
+                    
+            _LOGGER.error("VM '%s' did not reach running state in time", vm_name)
+            return False
+            
+        except Exception as e:
+            _LOGGER.error("Error starting VM '%s': %s", vm_name, str(e))
+            return False
 
     async def stop_vm(self, vm_name: str) -> bool:
         """Stop a virtual machine using ACPI shutdown."""
         try:
             _LOGGER.debug("Stopping VM: %s", vm_name)
-            result = await self.execute_command(f'virsh shutdown "{vm_name}" --mode acpi')
+            quoted_name = f'"{vm_name}"'
+            
+            # Check current state first
+            current_state = await self.get_vm_status(vm_name)
+            if current_state.lower() == "shut off":
+                _LOGGER.info("VM '%s' is already shut off", vm_name)
+                return True
+                
+            result = await self.execute_command(f"virsh shutdown {quoted_name}")
             success = result.exit_status == 0
             
-            if success:
-                # Wait for the VM to actually shut down
-                for _ in range(30):  # Wait up to 60 seconds
-                    await asyncio.sleep(2)
-                    status = await self.get_vm_status(vm_name)
-                    if status == VMState.STOPPED.value:
-                        return True
+            if not success:
+                _LOGGER.error("Failed to stop VM '%s': %s", vm_name, result.stderr)
                 return False
+                
+            # Wait for VM to stop
+            for _ in range(30):
+                await asyncio.sleep(2)
+                status = await self.get_vm_status(vm_name)
+                if status.lower() == "shut off":
+                    _LOGGER.info("Successfully stopped VM '%s'", vm_name)
+                    return True
+                    
+            _LOGGER.error("VM '%s' did not shut off in time", vm_name)
             return False
-        except Exception as e:
-            _LOGGER.error("Error stopping VM %s: %s", vm_name, str(e))
-            return False
-
-    async def start_vm(self, vm_name: str) -> bool:
-        """Start a virtual machine and wait for it to be running."""
-        try:
-            _LOGGER.debug("Starting VM: %s", vm_name)
-            result = await self.execute_command(f'virsh start "{vm_name}"')
-            success = result.exit_status == 0
             
-            if success:
-                # Wait for the VM to actually start
-                for _ in range(15):  # Wait up to 30 seconds
-                    await asyncio.sleep(2)
-                    status = await self.get_vm_status(vm_name)
-                    if status == VMState.RUNNING.value:
-                        return True
-                return False
-            return False
         except Exception as e:
-            _LOGGER.error("Error starting VM %s: %s", vm_name, str(e))
+            _LOGGER.error("Error stopping VM '%s': %s", vm_name, str(e))
             return False
 
     async def get_user_scripts(self) -> List[Dict[str, Any]]:
         """Fetch information about user scripts."""
         try:
             _LOGGER.debug("Fetching user scripts")
-            result = await self.execute_command("ls -1 /boot/config/plugins/user.scripts/scripts")
-            if result.exit_status != 0:
-                _LOGGER.error("User scripts list command failed with exit status %d", result.exit_status)
-                return []
-            return [{"name": script.strip()} for script in result.stdout.splitlines()]
+            # Check if user scripts plugin is installed first
+            check_result = await self.execute_command(
+                "[ -d /boot/config/plugins/user.scripts/scripts ] && echo 'exists'"
+            )
+            
+            if check_result.exit_status == 0 and "exists" in check_result.stdout:
+                result = await self.execute_command(
+                    "ls -1 /boot/config/plugins/user.scripts/scripts 2>/dev/null"
+                )
+                if result.exit_status == 0:
+                    return [{"name": script.strip()} for script in result.stdout.splitlines()]
+                
+            # If not installed or no scripts, return empty list without error
+            return []
         except Exception as e:
-            _LOGGER.error("Error getting user scripts: %s", str(e))
+            _LOGGER.debug("Error getting user scripts (plugin might not be installed): %s", str(e))
             return []
 
     async def execute_user_script(self, script_name: str, background: bool = False) -> str:
@@ -655,155 +1174,70 @@ class UnraidAPI:
         except Exception as e:
             _LOGGER.error("Error stopping user script %s: %s", script_name, str(e))
             return ""
-        
-    async def get_array_status(self) -> str:
-        """Get current array status."""
-        try:
-            result = await self.execute_command("/usr/local/sbin/emcmd status")
-            if result.exit_status != 0:
-                _LOGGER.error("Failed to get array status: %s", result.stderr)
-                return "unknown"
-            # Array states: Started, Stopped, Starting, Stopping
-            status = result.stdout.strip().lower()
-            return status
-        except Exception as e:
-            _LOGGER.error("Error getting array status: %s", str(e))
-            return "unknown"
-
-    async def array_stop(self, ignore_lock: bool = False) -> bool:
-        """Stop the Unraid array with safety checks."""
-        try:
-            # Check if array is already stopped
-            status = await self.get_array_status()
-            if status == "stopped":
-                _LOGGER.warning("Array is already stopped")
-                return True
-            
-            if status == "stopping":
-                _LOGGER.warning("Array is already in the process of stopping")
-                return True
-
-            # Check for active transfers/mover operations
-            result = await self.execute_command("ps aux | grep -E 'mover|rsync|cp|mv' | grep -v grep")
-            if result.stdout.strip() and not ignore_lock:
-                _LOGGER.error("Active file operations detected. Cannot safely stop array")
-                raise HomeAssistantError("Cannot stop array: Active file operations detected")
-
-            _LOGGER.info("Stopping Unraid array")
-            result = await self.execute_command("/usr/local/sbin/emcmd stop")
-            
-            if result.exit_status != 0:
-                _LOGGER.error("Failed to stop array: %s", result.stderr)
-                raise HomeAssistantError(f"Failed to stop array: {result.stderr}")
-
-            # Wait for array to begin stopping
-            for _ in range(5):  # 5 second timeout
-                if await self.get_array_status() in ["stopping", "stopped"]:
-                    _LOGGER.info("Array stop command executed successfully")
-                    return True
-                await asyncio.sleep(1)
-
-            raise HomeAssistantError("Array did not enter stopping state")
-
-        except HomeAssistantError:
-            raise
-        except Exception as e:
-            _LOGGER.error("Error stopping array: %s", str(e))
-            raise HomeAssistantError(f"Unexpected error stopping array: {str(e)}")
 
     async def system_reboot(self, delay: int = 0) -> bool:
-        """Reboot the Unraid system with safety checks."""
+        """Reboot the Unraid system.
+        
+        Args:
+            delay: Delay in seconds before executing reboot
+            
+        Returns:
+            bool: True if command was executed successfully
+        """
         try:
-            # Check for active transfers/mover operations
-            result = await self.execute_command("ps aux | grep -E 'mover|rsync|cp|mv' | grep -v grep")
-            if result.stdout.strip():
-                _LOGGER.error("Active file operations detected. Cannot safely reboot")
-                raise HomeAssistantError("Cannot reboot: Active file operations detected")
-
-            # Check VM status
-            vms = await self.get_vms()
-            running_vms = [vm["name"] for vm in vms if vm["status"] == "running"]
-            if running_vms:
-                _LOGGER.error("Running VMs detected: %s", ", ".join(running_vms))
-                raise HomeAssistantError(f"Cannot reboot: Running VMs detected: {', '.join(running_vms)}")
-
-            # Check Docker container status
-            containers = await self.get_docker_containers()
-            running_containers = [c["name"] for c in containers if c["state"] == "running"]
-            if running_containers:
-                _LOGGER.warning("Running containers will be stopped: %s", ", ".join(running_containers))
-
             if delay > 0:
-                _LOGGER.info("Scheduled reboot in %d seconds", delay)
-                reboot_cmd = f"shutdown -r +{delay//60}"
+                _LOGGER.info("Scheduling reboot with %d second delay", delay)
+                command = f"shutdown -r +{delay//60}"
             else:
-                reboot_cmd = "shutdown -r now"
+                _LOGGER.info("Executing immediate reboot")
+                command = "shutdown -r now"
 
-            _LOGGER.info("Executing reboot command: %s", reboot_cmd)
-            result = await self.execute_command(reboot_cmd)
+            result = await self.execute_command(command)
             
             if result.exit_status != 0:
-                _LOGGER.error("Failed to reboot system: %s", result.stderr)
-                raise HomeAssistantError(f"Failed to reboot system: {result.stderr}")
+                msg = f"Reboot command failed: {result.stderr}"
+                _LOGGER.error(msg)
+                raise HomeAssistantError(msg)
 
-            _LOGGER.info("System reboot command executed successfully")
+            _LOGGER.info("Reboot command executed successfully")
             return True
 
-        except HomeAssistantError:
-            raise
-        except Exception as e:
-            _LOGGER.error("Error rebooting system: %s", str(e))
-            raise HomeAssistantError(f"Unexpected error rebooting system: {str(e)}")
+        except Exception as err:
+            msg = f"Error during reboot: {str(err)}"
+            _LOGGER.error(msg)
+            raise HomeAssistantError(msg) from err
 
     async def system_shutdown(self, delay: int = 0) -> bool:
-        """Shutdown the Unraid system with safety checks."""
+        """Shutdown the Unraid system.
+        
+        Args:
+            delay: Delay in seconds before executing shutdown
+            
+        Returns:
+            bool: True if command was executed successfully
+        """
         try:
-            # Check for active transfers/mover operations
-            result = await self.execute_command("ps aux | grep -E 'mover|rsync|cp|mv' | grep -v grep")
-            if result.stdout.strip():
-                _LOGGER.error("Active file operations detected. Cannot safely shutdown")
-                raise HomeAssistantError("Cannot shutdown: Active file operations detected")
-
-            # Check array status
-            array_status = await self.get_array_status()
-            if array_status not in ["stopped", "stopping"]:
-                _LOGGER.error("Array must be stopped before shutdown")
-                raise HomeAssistantError("Cannot shutdown: Array must be stopped first")
-
-            # Check VM status
-            vms = await self.get_vms()
-            running_vms = [vm["name"] for vm in vms if vm["status"] == "running"]
-            if running_vms:
-                _LOGGER.error("Running VMs detected: %s", ", ".join(running_vms))
-                raise HomeAssistantError(f"Cannot shutdown: Running VMs detected: {', '.join(running_vms)}")
-
-            # Check Docker container status
-            containers = await self.get_docker_containers()
-            running_containers = [c["name"] for c in containers if c["state"] == "running"]
-            if running_containers:
-                _LOGGER.warning("Running containers will be stopped: %s", ", ".join(running_containers))
-
             if delay > 0:
-                _LOGGER.info("Scheduled shutdown in %d seconds", delay)
-                shutdown_cmd = f"shutdown +{delay//60}"
+                _LOGGER.info("Scheduling shutdown with %d second delay", delay)
+                command = f"shutdown +{delay//60}"
             else:
-                shutdown_cmd = "shutdown now"
+                _LOGGER.info("Executing immediate shutdown")
+                command = "shutdown now"
 
-            _LOGGER.info("Executing shutdown command: %s", shutdown_cmd)
-            result = await self.execute_command(shutdown_cmd)
+            result = await self.execute_command(command)
             
             if result.exit_status != 0:
-                _LOGGER.error("Failed to shutdown system: %s", result.stderr)
-                raise HomeAssistantError(f"Failed to shutdown system: {result.stderr}")
+                msg = f"Shutdown command failed: {result.stderr}"
+                _LOGGER.error(msg)
+                raise HomeAssistantError(msg)
 
-            _LOGGER.info("System shutdown command executed successfully")
+            _LOGGER.info("Shutdown command executed successfully")
             return True
 
-        except HomeAssistantError:
-            raise
-        except Exception as e:
-            _LOGGER.error("Error shutting down system: %s", str(e))
-            raise HomeAssistantError(f"Unexpected error shutting down system: {str(e)}")
+        except Exception as err:
+            msg = f"Error during shutdown: {str(err)}"
+            _LOGGER.error(msg)
+            raise HomeAssistantError(msg) from err
 
     async def __aenter__(self):
         await self.ensure_connection()

@@ -1,6 +1,6 @@
 """Diagnostics support for Unraid."""
 from __future__ import annotations
-
+import json
 from typing import Any
 
 from homeassistant.components.diagnostics import REDACTED, async_redact_data
@@ -127,4 +127,5 @@ async def async_get_config_entry_diagnostics(
             "free_space": format_bytes(cache_usage.get('free', 0)),
         }
 
-    return diagnostics_data
+    # Ensure all values are JSON serializable
+    return json.loads(json.dumps(diagnostics_data))

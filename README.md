@@ -15,7 +15,7 @@ This integration is in active development. Here are a few things to keep in mind
 
 - Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
 - Monitor CPU and Motherboard temperature
-- Monitor UPS connected
+- Monitor UPS Connected
 - Control Docker containers
 - Control VMs
 - Execute shell commands
@@ -59,7 +59,14 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 - Array Usage: Shows the overall array usage percentage.
 - Individual Array Disks: Displays usage information for each disk in the array.
 - Uptime: Shows how long the Unraid server has been running.
+- UPS Power: Displays information about the UPS power consumption
+
+## Diagnostics
 - UPS Status: Displays information about the connected UPS (if available).
+- Disk Health: Displays disk health information
+- VM and Docker Service: Displays information about docker and vm services
+- SSH Connectivity: Display information about integration connected to Unraid via SSH
+- Parity Check: Displays information if parity check is enabled.
 
 ## Switches
 
@@ -72,6 +79,8 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 - `unraid.execute_in_container`: Execute a command in a Docker container
 - `unraid.execute_user_script`: Execute a user script
 - `unraid.stop_user_script`: Stop a running user script
+- `unraid.system_reboot`: Reboot Unraid
+- `unraid.system_shutdown`: Shutdown Unraid
 
 ## Contributing
 

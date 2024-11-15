@@ -1,6 +1,5 @@
 """The Unraid integration."""
 from __future__ import annotations
-
 import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -15,8 +14,10 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from .const import (
     DOMAIN,
     PLATFORMS,
-    CONF_CHECK_INTERVAL,
-    DEFAULT_CHECK_INTERVAL,
+    CONF_GENERAL_INTERVAL,
+    CONF_DISK_INTERVAL,
+    DEFAULT_GENERAL_INTERVAL,
+    DEFAULT_DISK_INTERVAL,
     DEFAULT_PORT,
     CONF_HAS_UPS,
 )
@@ -31,11 +32,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Setting up Unraid integration")
 
     # Migrate data from data to options if necessary
-    if CONF_CHECK_INTERVAL not in entry.options:
+    if CONF_GENERAL_INTERVAL not in entry.options:
         options = dict(entry.options)
-        options[CONF_CHECK_INTERVAL] = entry.data.get(CONF_CHECK_INTERVAL, DEFAULT_CHECK_INTERVAL)
-        options[CONF_PORT] = entry.data.get(CONF_PORT, DEFAULT_PORT)
-        options[CONF_HAS_UPS] = entry.data.get(CONF_HAS_UPS, False)
+        # Convert old check interval (seconds) to new format (minutes)
+        old_interval = entry.data.get("check_interval", 300)  # 300 seconds default
+        minutes = max(1, old_interval // 60)  # Convert to minutes, minimum 1
+        
+        options.update({
+            CONF_GENERAL_INTERVAL: minutes,
+            CONF_DISK_INTERVAL: DEFAULT_DISK_INTERVAL,  # Start with default disk interval in hours
+            CONF_PORT: entry.data.get(CONF_PORT, DEFAULT_PORT),
+            CONF_HAS_UPS: entry.data.get(CONF_HAS_UPS, False),
+        })
+        
         hass.config_entries.async_update_entry(entry, options=options)
 
     try:
@@ -61,9 +70,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         _LOGGER.debug("Unraid integration setup completed successfully")
         return True
-    except Exception as e:
-        _LOGGER.error("Failed to set up Unraid integration: %s", e)
-        raise ConfigEntryNotReady from e
+
+    except Exception as err:
+        _LOGGER.error("Failed to set up Unraid integration: %s", err)
+        raise ConfigEntryNotReady from err
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
@@ -71,8 +81,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
-
-    await async_unload_services(hass)
+        await async_unload_services(hass)
 
     return unload_ok
 

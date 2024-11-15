@@ -1,7 +1,7 @@
 """Config flow for Unraid integration."""
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -10,21 +10,80 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN, DEFAULT_PORT, DEFAULT_CHECK_INTERVAL, CONF_CHECK_INTERVAL, CONF_HAS_UPS
+from .const import (
+    DOMAIN,
+    DEFAULT_PORT,
+    CONF_GENERAL_INTERVAL,
+    CONF_DISK_INTERVAL,
+    DEFAULT_GENERAL_INTERVAL,
+    DEFAULT_DISK_INTERVAL,
+    MIN_UPDATE_INTERVAL,
+    MAX_GENERAL_INTERVAL,
+    MIN_DISK_INTERVAL,
+    MAX_DISK_INTERVAL,
+    CONF_HAS_UPS,
+)
 from .unraid import UnraidAPI
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST): str,
-        vol.Required(CONF_USERNAME): str,
-        vol.Required(CONF_PASSWORD): str,
-        vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
-        vol.Optional(CONF_CHECK_INTERVAL, default=DEFAULT_CHECK_INTERVAL): vol.All(
-            int, vol.Range(min=60, max=3600)
+def get_schema_base(
+    general_interval: int,
+    disk_interval: int,
+    include_auth: bool = False,
+    has_ups: bool = False,
+) -> vol.Schema:
+    """Get base schema with sliders for both intervals."""
+    schema = {
+        vol.Required(
+            CONF_GENERAL_INTERVAL,
+            default=general_interval
+        ): vol.All(
+            vol.Coerce(int),
+            vol.Range(
+                min=MIN_UPDATE_INTERVAL,
+                max=MAX_GENERAL_INTERVAL,
+                msg=f"General interval must be between {MIN_UPDATE_INTERVAL} and {MAX_GENERAL_INTERVAL} minutes"
+            )
         ),
-        vol.Required(CONF_HAS_UPS, default=False): bool,
+        vol.Required(
+            CONF_DISK_INTERVAL,
+            default=disk_interval
+        ): vol.All(
+            vol.Coerce(int),
+            vol.Range(
+                min=MIN_DISK_INTERVAL,
+                max=MAX_DISK_INTERVAL,
+                msg=f"Disk interval must be between {MIN_DISK_INTERVAL} and {MAX_DISK_INTERVAL} hours"
+            )
+        ),
     }
-)
+
+    if include_auth:
+        auth_schema = {
+            vol.Required(CONF_HOST): str,
+            vol.Required(CONF_USERNAME): str,
+            vol.Required(CONF_PASSWORD): str,
+            vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
+        }
+        schema = {**auth_schema, **schema}
+    else:
+        schema[vol.Optional(CONF_PORT, default=DEFAULT_PORT)] = vol.Coerce(int)
+
+    schema[vol.Required(CONF_HAS_UPS, default=has_ups)] = bool
+    
+    return vol.Schema(schema)
+
+def get_init_schema(general_interval: int, disk_interval: int) -> vol.Schema:
+    """Get schema for initial setup."""
+    return get_schema_base(general_interval, disk_interval, include_auth=True)
+
+def get_options_schema(
+    general_interval: int,
+    disk_interval: int,
+    port: int,
+    has_ups: bool
+) -> vol.Schema:
+    """Get schema for options flow."""
+    return get_schema_base(general_interval, disk_interval, has_ups=has_ups)
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
@@ -34,43 +93,52 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         async with api:
             if not await api.ping():
                 raise CannotConnect
-            has_ups = await api.detect_ups()
     except Exception as err:
         raise CannotConnect from err
 
-    # Return info that you want to store in the config entry.
-    return {"title": f"Unraid Server ({data[CONF_HOST]})", "has_ups": has_ups}
+    return {"title": f"Unraid Server ({data[CONF_HOST]})"}
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Unraid."""
 
     VERSION = 1
+    
+    def __init__(self):
+        """Initialize the config flow."""
+        self._general_interval = DEFAULT_GENERAL_INTERVAL
+        self._disk_interval = DEFAULT_DISK_INTERVAL
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
+        
         if user_input is not None:
             try:
                 info = await validate_input(self.hass, user_input)
-                user_input[CONF_HAS_UPS] = info["has_ups"]
                 return self.async_create_entry(title=info["title"], data=user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
                 errors["base"] = "unknown"
 
+        schema = get_init_schema(
+            self._general_interval,
+            self._disk_interval
+        )
+
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=schema,
             errors=errors,
             description_placeholders={
                 "host_description": "IP address or hostname of your Unraid server",
-                "username_description": "Username for SSH access to your Unraid server",
-                "password_description": "Password for SSH access to your Unraid server",
-                "port_description": "SSH port (default is 22)",
-                "check_interval_description": "How often to update sensor data (in seconds)",
+                "username_description": "Username for SSH access",
+                "password_description": "Password for SSH access",
+                "port_description": f"SSH port (default: {DEFAULT_PORT})",
+                "general_interval_description": "How often to update non-disk sensors (1-60 minutes)",
+                "disk_interval_description": "How often to update disk information (1-24 hours)",
             },
         )
 
@@ -81,42 +149,47 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return OptionsFlowHandler(config_entry)
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    def __init__(self, config_entry):
+    """Handle options flow for Unraid."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
         self.config_entry = config_entry
+        self._general_interval = config_entry.options.get(
+            CONF_GENERAL_INTERVAL, DEFAULT_GENERAL_INTERVAL
+        )
+        self._disk_interval = config_entry.options.get(
+            CONF_DISK_INTERVAL, DEFAULT_DISK_INTERVAL
+        )
+        self._port = config_entry.options.get(CONF_PORT, DEFAULT_PORT)
+        self._has_ups = config_entry.options.get(
+            CONF_HAS_UPS, 
+            config_entry.data.get(CONF_HAS_UPS, False)
+        )
 
-    async def async_step_init(self, user_input=None):
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(
+                title="",
+                data={
+                    **self.config_entry.options,
+                    **user_input,
+                    CONF_HAS_UPS: user_input.get(CONF_HAS_UPS, self._has_ups)
+                }
+            )
+
+        schema = get_options_schema(
+            self._general_interval,
+            self._disk_interval,
+            self._port,
+            self._has_ups
+        )
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_CHECK_INTERVAL,
-                        default=self.config_entry.options.get(
-                            CONF_CHECK_INTERVAL,
-                            DEFAULT_CHECK_INTERVAL
-                        )
-                    ): vol.All(int, vol.Range(min=60, max=3600)),
-                    vol.Optional(
-                        CONF_PORT,
-                        default=self.config_entry.options.get(
-                            CONF_PORT,
-                            DEFAULT_PORT
-                        )
-                    ): int,
-                    vol.Required(
-                        CONF_HAS_UPS,
-                        default=self.config_entry.options.get(
-                            CONF_HAS_UPS,
-                            False
-                        )
-                    ): bool,
-                }
-            )
+            data_schema=schema,
         )
 
 class CannotConnect(HomeAssistantError):
