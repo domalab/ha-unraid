@@ -29,6 +29,9 @@ _LOGGER = logging.getLogger(__name__)
 
 def format_size(size_in_bytes: float) -> str:
     """Format size to appropriate unit."""
+    if size_in_bytes is None or not isinstance(size_in_bytes, (int, float)):
+        return "0 B"  # Default value for invalid input
+        
     units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
     size = float(size_in_bytes)
     unit_index = 0
