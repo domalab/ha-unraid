@@ -744,18 +744,21 @@ class UnraidMotherboardTemperatureSensor(UnraidSensorBase):
             temp_data = self.coordinator.data["system_stats"].get("temperature_data", {})
             sensors_data = temp_data.get("sensors", {})
 
-            # Common motherboard temperature patterns
+            # Common motherboard temperature patterns in priority order
             mb_patterns = [
                 'mb temp', 'board temp', 'system temp',
                 'motherboard', 'systin', 'temp1'
             ]
 
-            for sensor_data in sensors_data.values():
-                for key, value in sensor_data.items():
-                    if isinstance(value, (str, float)):
-                        if any(pattern in key.lower() for pattern in mb_patterns):
-                            if temp := self._parse_temperature(str(value)):
-                                return temp
+            # Iterate through each pattern in the specified order
+            for pattern in mb_patterns:
+                pattern_lower = pattern.lower()
+	            for sensor_data in sensors_data.values():
+	                for key, value in sensor_data.items():
+                        if isinstance(value, (str, float)) and pattern_lower in key.lower():
+                            temp = self._parse_temperature(str(value))
+                            if temp is not None:
+	                                return temp
 
             return None
 
