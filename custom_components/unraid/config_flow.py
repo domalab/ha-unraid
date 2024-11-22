@@ -9,6 +9,7 @@ from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PO
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 
 from .const import (
     DOMAIN,
@@ -80,7 +81,7 @@ def get_options_schema(
     general_interval: int,
     disk_interval: int,
     port: int,
-    has_ups: bool
+    has_ups: bool,
 ) -> vol.Schema:
     """Get schema for options flow."""
     return get_schema_base(general_interval, disk_interval, has_ups=has_ups)
@@ -176,7 +177,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 data={
                     **self.config_entry.options,
                     **user_input,
-                    CONF_HAS_UPS: user_input.get(CONF_HAS_UPS, self._has_ups)
+                    CONF_HAS_UPS: user_input.get(CONF_HAS_UPS, self._has_ups),
                 }
             )
 
@@ -184,12 +185,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             self._general_interval,
             self._disk_interval,
             self._port,
-            self._has_ups
+            self._has_ups,
         )
 
         return self.async_show_form(
             step_id="init",
             data_schema=schema,
+            description_placeholders={
+                "general_interval_description": "How often to update non-disk sensors (1-60 minutes)",
+                "disk_interval_description": "How often to update disk information (1-24 hours)"
+            },
         )
 
 class CannotConnect(HomeAssistantError):

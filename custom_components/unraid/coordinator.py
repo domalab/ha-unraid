@@ -1,10 +1,13 @@
 """DataUpdateCoordinator for Unraid."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 import logging
 import asyncio
-from typing import Any, Dict
+import hashlib 
+import json
+from typing import Any, Dict, Optional
+
+from datetime import datetime, timedelta
 from collections import deque
 from dataclasses import dataclass
 from homeassistant.core import callback
@@ -27,6 +30,7 @@ from .const import (
     CONF_HAS_UPS,
 )
 from .unraid import UnraidAPI
+from .helpers import get_unraid_disk_mapping
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,45 +42,39 @@ class DiskUpdateMetrics:
     success: bool
 
 class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
-    """Class to manage fetching Unraid data.
-    
-    This coordinator manages two different update intervals:
-    1. General interval (minutes): For updating non-disk sensors
-    2. Disk interval (hours): For updating disk-related information
-    
-    The coordinator ensures thread-safe updates and proper error handling.
-    """
+    """Class to manage fetching Unraid data."""
 
     def __init__(
-        self, 
-        hass: HomeAssistant, 
-        api: UnraidAPI, 
+        self,
+        hass: HomeAssistant,
+        api: UnraidAPI,
         entry: ConfigEntry,
     ) -> None:
-        """Initialize the coordinator.
-        
-        Args:
-            hass: HomeAssistant instance
-            api: UnraidAPI instance
-            entry: ConfigEntry instance
-        """
+        """Initialize the coordinator."""
         self.api = api
         self.entry = entry
         self.has_ups = entry.options.get(CONF_HAS_UPS, False)
-        
+
         # Thread safety locks
         self._disk_update_lock = asyncio.Lock()
         self._metrics_lock = asyncio.Lock()
-        
+
         # Update tracking
         self._last_disk_update: datetime | None = None
         self._update_metrics: deque[DiskUpdateMetrics] = deque(maxlen=10)
         self._disk_update_in_progress = False
         self._failed_update_count = 0
 
+        # Enhanced disk mapping tracking
+        self._disk_mapping: Dict[str, str] = {}
+        self._previous_disk_mapping: Dict[str, str] = {}
+        self._last_disk_config_hash: Optional[str] = None
+        self._last_valid_mapping: Optional[Dict[str, str]] = None
+        self._mapping_error_count: int = 0
+
         # Get update intervals from options with validation
         self._general_interval = max(
-            1, 
+            1,
             min(
                 60,
                 entry.options.get(CONF_GENERAL_INTERVAL, DEFAULT_GENERAL_INTERVAL)
@@ -118,21 +116,94 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         """Get recent update metrics."""
         return list(self._update_metrics)
 
+    def _get_disk_config_hash(self, system_stats: dict) -> str:
+        """Generate a hash of current disk configuration to detect changes."""
+        disk_config = []
+        for disk in system_stats.get("individual_disks", []):
+            disk_config.append({
+                "name": disk.get("name"),
+                "mount_point": disk.get("mount_point"),
+                "device": disk.get("device")
+            })
+            
+        config_str = json.dumps(disk_config, sort_keys=True)
+        return hashlib.md5(config_str.encode()).hexdigest()
+
+    @callback
+    def _verify_disk_mapping(self, old_mapping: Dict[str, str], new_mapping: Dict[str, str]) -> bool:
+        """Verify disk mapping consistency.
+        
+        Args:
+            old_mapping: Previous disk mapping
+            new_mapping: New disk mapping
+            
+        Returns:
+            bool: True if mapping is consistent, False otherwise
+        """
+        if not old_mapping:
+            return True
+            
+        inconsistent = {
+            disk: (old_dev, new_mapping[disk])
+            for disk, old_dev in old_mapping.items()
+            if disk in new_mapping and old_dev != new_mapping[disk]
+        }
+        
+        if inconsistent:
+            self._mapping_error_count += 1
+            _LOGGER.warning(
+                "Inconsistent disk mapping detected (error count: %d): %s",
+                self._mapping_error_count,
+                {k: f"was {v[0]}, now {v[1]}" for k, v in inconsistent.items()}
+            )
+            return False
+            
+        self._mapping_error_count = 0
+        return True
+
+    def _update_disk_mapping(self, system_stats: dict) -> None:
+        """Update disk mapping if configuration has changed."""
+        try:
+            current_hash = self._get_disk_config_hash(system_stats)
+            
+            if current_hash != self._last_disk_config_hash:
+                _LOGGER.debug("Disk configuration changed, updating mapping")
+                
+                # Get new mapping
+                new_mapping = get_unraid_disk_mapping(system_stats)
+                
+                # Verify mapping consistency
+                if self._verify_disk_mapping(self._disk_mapping, new_mapping):
+                    self._previous_disk_mapping = self._disk_mapping.copy()
+                    self._disk_mapping = new_mapping
+                    self._last_disk_config_hash = current_hash
+                    self._last_valid_mapping = new_mapping
+                    _LOGGER.debug("Updated disk mapping: %s", self._disk_mapping)
+                else:
+                    # If validation fails, use last valid mapping if available
+                    if self._last_valid_mapping and self._mapping_error_count <= 3:
+                        _LOGGER.warning(
+                            "Using last valid mapping due to inconsistency. Will retry on next update."
+                        )
+                        self._disk_mapping = self._last_valid_mapping
+                    else:
+                        # If error count is too high or no valid mapping exists, use new mapping
+                        _LOGGER.error(
+                            "Multiple mapping errors detected. Forcing update to new mapping: %s",
+                            new_mapping
+                        )
+                        self._disk_mapping = new_mapping
+                        self._last_disk_config_hash = current_hash
+                        self._mapping_error_count = 0
+                        
+        except Exception as err:
+            _LOGGER.error("Error updating disk mapping: %s", err)
+
     async def _async_update_disk_data(
         self, 
         system_stats: dict[str, Any]
     ) -> dict[str, Any]:
-        """Update disk-specific data.
-        
-        Args:
-            system_stats: Current system stats dictionary to update
-            
-        Returns:
-            Updated system stats dictionary
-            
-        Raises:
-            UpdateFailed: If disk update fails
-        """
+        """Update disk-specific data."""
         start_time = dt_util.utcnow()
         success = False
         duration = 0.0
@@ -204,17 +275,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 )
 
     async def _async_update_data(self) -> Dict[str, Any]:
-        """Fetch data from Unraid.
-        
-        This method implements the main update logic, handling both
-        general updates and disk updates when due.
-        
-        Returns:
-            Dict containing all Unraid data
-            
-        Raises:
-            UpdateFailed: If critical data cannot be fetched
-        """
+        """Fetch data from Unraid."""
         try:
             # Always fetch non-disk data
             data = {
@@ -227,6 +288,25 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             # Get base system stats
             system_stats = await self.api.get_system_stats()
 
+            # Add disk configuration
+            disk_cfg_result = await self.api.execute_command(
+                "cat /boot/config/disk.cfg"
+            )
+            
+            if disk_cfg_result.exit_status == 0:
+                disk_config = {}
+                for line in disk_cfg_result.stdout.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        try:
+                            key, value = line.split("=", 1)
+                            value = value.strip('"')
+                            disk_config[key] = value
+                        except ValueError:
+                            continue
+                            
+                data["disk_config"] = disk_config
+
             # Handle disk updates
             if self.disk_update_due:
                 system_stats = await self._async_update_disk_data(system_stats)
@@ -238,6 +318,12 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 system_stats["array_usage"] = (
                     self.data["system_stats"]["array_usage"]
                 )
+
+            # Update disk mapping if needed
+            self._update_disk_mapping(system_stats)
+
+            # Add mapping to data
+            system_stats["disk_mapping"] = self._disk_mapping
 
             # Add network statistics processing
             await self._async_update_network_stats(system_stats)

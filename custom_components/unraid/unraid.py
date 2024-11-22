@@ -6,6 +6,7 @@ import asyncssh
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional
+from dataclasses import dataclass
 import re
 from async_timeout import timeout
 from enum import Enum
@@ -57,6 +58,19 @@ class ContainerStates(Enum):
         except StopIteration:
             return state
 
+@dataclass
+class ArrayState:
+    """Unraid array state information."""
+    state: str
+    num_disks: int
+    num_disabled: int
+    num_invalid: int
+    num_missing: int
+    synced: bool
+    sync_action: Optional[str] = None
+    sync_progress: float = 0.0
+    sync_errors: int = 0
+
 class UnraidAPI:
     """API client for interacting with Unraid servers."""
 
@@ -94,13 +108,15 @@ class UnraidAPI:
                     _LOGGER.error("Failed to connect to Unraid server: %s", err)
                     raise
 
-    async def execute_command(self, command: str) -> asyncssh.SSHCompletedProcess:
+    async def execute_command(self, command: str, timeout: int = None) -> asyncssh.SSHCompletedProcess:
         """Execute a command on the Unraid server."""
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 await self.ensure_connection()
-                async with timeout(self.command_timeout):
+                # Use the class's default timeout if none specified
+                command_timeout = timeout or self.command_timeout
+                async with asyncio.timeout(command_timeout):
                     result = await self.conn.run(command)
                 _LOGGER.debug("Executed command on Unraid server: %s", command)
                 return result
@@ -140,9 +156,58 @@ class UnraidAPI:
             _LOGGER.error("Failed to ping Unraid server at %s: %s", self.host, e)
             return False
 
+    async def _parse_array_state(self) -> ArrayState:
+            """Parse detailed array state from mdcmd output."""
+            try:
+                result = await self.execute_command("mdcmd status")
+                if result.exit_status != 0:
+                    return ArrayState(
+                        state="unknown",
+                        num_disks=0,
+                        num_disabled=0,
+                        num_invalid=0,
+                        num_missing=0,
+                        synced=False
+                    )
+
+                # Parse mdcmd output
+                state_dict = {}
+                for line in result.stdout.splitlines():
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        state_dict[key] = value.strip()
+
+                return ArrayState(
+                    state=state_dict.get("mdState", "UNKNOWN").upper(),
+                    num_disks=int(state_dict.get("mdNumDisks", 0)),
+                    num_disabled=int(state_dict.get("mdNumDisabled", 0)),
+                    num_invalid=int(state_dict.get("mdNumInvalid", 0)),
+                    num_missing=int(state_dict.get("mdNumMissing", 0)),
+                    synced=bool(int(state_dict.get("sbSynced", 0))),
+                    sync_action=state_dict.get("mdResyncAction"),
+                    sync_progress=float(state_dict.get("mdResync", 0)),
+                    sync_errors=int(state_dict.get("mdResyncCorr", 0))
+                )
+
+            except Exception as err:
+                _LOGGER.error("Error parsing array state: %s", err)
+                return ArrayState(
+                    state="ERROR",
+                    num_disks=0,
+                    num_disabled=0,
+                    num_invalid=0,
+                    num_missing=0,
+                    synced=False
+                )
+
     async def get_system_stats(self) -> Dict[str, Any]:
         """Fetch system statistics from the Unraid server."""
         _LOGGER.debug("Fetching system stats from Unraid server")
+        
+        # Get array state first
+        array_state = await self._parse_array_state()
+        
+        # Get other stats...
         cpu_usage = await self._get_cpu_usage()
         memory_usage = await self._get_memory_usage()
         array_usage = await self._get_array_usage()
@@ -156,6 +221,17 @@ class UnraidAPI:
         docker_vdisk = await self._get_docker_vdisk_usage()
 
         return {
+            "array_state": {
+                "state": array_state.state,
+                "num_disks": array_state.num_disks,
+                "num_disabled": array_state.num_disabled,
+                "num_invalid": array_state.num_invalid,
+                "num_missing": array_state.num_missing,
+                "synced": array_state.synced,
+                "sync_action": array_state.sync_action,
+                "sync_progress": array_state.sync_progress,
+                "sync_errors": array_state.sync_errors,
+            },
             "cpu_usage": cpu_usage,
             "memory_usage": memory_usage,
             "array_usage": array_usage,
@@ -169,6 +245,45 @@ class UnraidAPI:
             "docker_vdisk": docker_vdisk,
         }
     
+    async def _get_smart_attributes(self, device: str) -> Dict[str, Any]:
+        """Get detailed SMART attributes for a device.
+        
+        Args:
+            device: Full path to device (e.g., /dev/sda)
+            
+        Returns:
+            Dictionary of SMART attributes
+        """
+        try:
+            result = await self.execute_command(
+                f"smartctl -A {device} | grep -E 'Reallocated|Current_Pending|Offline_Uncorrectable|UDMA_CRC'"
+            )
+            
+            attrs = {
+                "reallocated_sectors": 0,
+                "pending_sectors": 0,
+                "offline_uncorrectable": 0,
+                "udma_crc_errors": 0,
+                "udma_crc_errors_prev": 0,  # Store previous value for comparison
+            }
+            
+            if result.exit_status == 0:
+                for line in result.stdout.splitlines():
+                    if "Reallocated_Sector" in line:
+                        attrs["reallocated_sectors"] = int(line.split()[-1])
+                    elif "Current_Pending_Sector" in line:
+                        attrs["pending_sectors"] = int(line.split()[-1])
+                    elif "Offline_Uncorrectable" in line:
+                        attrs["offline_uncorrectable"] = int(line.split()[-1])
+                    elif "UDMA_CRC_Error" in line:
+                        attrs["udma_crc_errors"] = int(line.split()[-1])
+                        
+            return attrs
+            
+        except Exception as err:
+            _LOGGER.debug("Error getting SMART attributes for %s: %s", device, err)
+            return {}
+
     async def get_disk_info(self) -> Dict[str, Dict[str, Any]]:
         """Get combined disk information for all physical disks."""
         try:
@@ -230,6 +345,11 @@ class UnraidAPI:
                             disk_info[current_disk]["smart_status"] = smart_status
                             disk_info[current_disk]["health"] = smart_status
                             disk_info[current_disk]["status"] = "active"
+                            # Get additional SMART attributes
+                            smart_attrs = await self._get_smart_attributes(f"/dev/{current_disk}")
+                            disk_info[current_disk].update(smart_attrs)
+                            # Store previous UDMA errors for next comparison
+                            disk_info[current_disk]["udma_crc_errors_prev"] = disk_info[current_disk].get("udma_crc_errors", 0)
                     elif 'Temperature_Celsius' in line:
                         if current_disk:
                             _LOGGER.debug("Parsing temperature from line: %s for disk %s", line, current_disk)
@@ -340,7 +460,7 @@ class UnraidAPI:
                     total = int(total) * 1024  # Convert to bytes
                     used = int(used) * 1024
                     free = int(free) * 1024
-                    percentage = (used / total) * 100 if total > 0 else 0
+                    percentage = round((used / total) * 100, 1) if total > 0 else 0
 
                     # Map to physical device based on size/position
                     if 0 <= disk_num - 1 < len(sorted_disks):
@@ -354,12 +474,12 @@ class UnraidAPI:
                         "device": physical_device,
                         "model": device_info.get("model", "Unknown"),
                         "mount_point": mount_point,
-                        "percentage": round(percentage, 2),
+                        "percentage": percentage,
                         "total": total,
                         "used": used,
                         "free": free,
                         "status": device_info.get("status", "unknown"),
-                        "health": device_info.get("smart_status", "Unknown"),  # Map smart_status to health
+                        "health": device_info.get("smart_status", "Unknown"),
                         "spin_down_delay": spin_down_settings.get(disk_name, default_delay),
                     }
 
@@ -369,16 +489,13 @@ class UnraidAPI:
 
                     disks.append(disk_data)
                     _LOGGER.debug(
-                        "Disk mapping: %s -> %s (Temp: %s, Status: %s, Health: %s, Spin down: %d min)",
+                        "Disk %s -> %s: Usage %.1f%%",
                         disk_name,
                         physical_device,
-                        f"{device_info.get('temperature', 'N/A')}°C" if device_info.get('temperature') is not None else 'N/A',
-                        device_info.get('status', 'unknown'),
-                        device_info.get('smart_status', 'Unknown'),
-                        spin_down_settings.get(disk_name, default_delay)
+                        percentage
                     )
                     disk_num += 1
-                    
+                        
                 except Exception as err:
                     _LOGGER.debug("Error processing disk %s: %s", disk_name, err)
                     continue
@@ -426,49 +543,168 @@ class UnraidAPI:
             _LOGGER.error("Error getting memory usage: %s", str(e))
             return {"percentage": None}
 
+    async def get_service_status(self, service_name: str) -> bool:
+        """Check if an Unraid service is running."""
+        try:
+            result = await self.execute_command(f"/etc/rc.d/rc.{service_name} status")
+            return result.exit_status == 0 and "is currently running" in result.stdout
+        except Exception:
+            return False
+
+    async def _get_array_status(self) -> str:
+        """Get Unraid array status using mdcmd."""
+        try:
+            result = await self.execute_command("mdcmd status")
+            if result.exit_status != 0:
+                return "unknown"
+
+            # Parse mdcmd output
+            status_lines = result.stdout.splitlines()
+            status_dict = {}
+            for line in status_lines:
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    status_dict[key] = value
+
+            # Check array state
+            if status_dict.get("mdState") == "STARTED":
+                return "started"
+            elif status_dict.get("mdState") == "STOPPED":
+                return "stopped"
+            else:
+                return status_dict.get("mdState", "unknown").lower()
+
+        except Exception as err:
+            _LOGGER.error("Error getting array status: %s", err)
+            return "error"
+
     async def _get_array_usage(self) -> Dict[str, Optional[float]]:
         """Fetch Array information from the Unraid system."""
         try:
             _LOGGER.debug("Fetching array usage")
+            # First check array status using mdcmd
+            array_status = await self._get_array_status()
+            if array_status != "started":
+                _LOGGER.debug("Array is %s, skipping usage check", array_status)
+                return {
+                    "percentage": 0,
+                    "total": 0,
+                    "used": 0,
+                    "free": 0,
+                    "status": array_status
+                }
+
             result = await self.execute_command("df -k /mnt/user | awk 'NR==2 {print $2,$3,$4}'")
             if result.exit_status != 0:
-                _LOGGER.error("Array usage command failed with exit status %d", result.exit_status)
-                return {"percentage": None, "total": None, "used": None, "free": None}
+                _LOGGER.debug("Array usage command failed, array might not be mounted")
+                return {
+                    "percentage": 0,
+                    "total": 0,
+                    "used": 0,
+                    "free": 0,
+                    "status": "not_mounted"
+                }
             
-            total, used, free = map(int, result.stdout.strip().split())
-            percentage = (used / total) * 100
-            
-            return {
-                "percentage": round(percentage, 2),
-                "total": total * 1024,  # Convert to bytes
-                "used": used * 1024,    # Convert to bytes
-                "free": free * 1024     # Convert to bytes
-            }
+            output = result.stdout.strip()
+            if not output:
+                return {
+                    "percentage": 0,
+                    "total": 0,
+                    "used": 0,
+                    "free": 0,
+                    "status": "empty"
+                }
+                
+            try:
+                total, used, free = map(int, output.split())
+                if total > 0:
+                    percentage = (used / total) * 100
+                else:
+                    percentage = 0
+                
+                return {
+                    "percentage": round(percentage, 1),
+                    "total": total * 1024,  # Convert to bytes
+                    "used": used * 1024,    # Convert to bytes
+                    "free": free * 1024,    # Convert to bytes
+                    "status": "started"
+                }
+            except ValueError:
+                return {
+                    "percentage": 0,
+                    "total": 0,
+                    "used": 0,
+                    "free": 0,
+                    "status": "error"
+                }
+                
         except Exception as e:
-            _LOGGER.error("Error getting array usage: %s", str(e))
-            return {"percentage": None, "total": None, "used": None, "free": None}
+            _LOGGER.debug("Error getting array usage: %s", str(e))
+            return {
+                "percentage": 0,
+                "total": 0,
+                "used": 0,
+                "free": 0,
+                "status": "error"
+            }
         
     async def _get_cache_usage(self) -> Dict[str, Optional[float]]:
         """Fetch cache information from the Unraid system."""
         try:
             _LOGGER.debug("Fetching cache usage")
+            # First check if cache is mounted
+            cache_check = await self.execute_command("mountpoint -q /mnt/cache")
+            if cache_check.exit_status != 0:
+                _LOGGER.debug("Cache is not mounted, skipping usage check")
+                return {
+                    "percentage": 0,
+                    "total": 0,
+                    "used": 0,
+                    "free": 0,
+                    "status": "not_mounted"
+                }
+
             result = await self.execute_command("df -k /mnt/cache | awk 'NR==2 {print $2,$3,$4}'")
             if result.exit_status != 0:
-                _LOGGER.error("Cache usage command failed with exit status %d", result.exit_status)
-                return {"percentage": None, "total": None, "used": None, "free": None}
-            
-            total, used, free = map(int, result.stdout.strip().split())
-            percentage = (used / total) * 100
+                _LOGGER.debug("Cache usage command failed, cache might not be available")
+                return {
+                    "percentage": 0,
+                    "total": 0,
+                    "used": 0,
+                    "free": 0,
+                    "status": "error"
+                }
+                
+            output = result.stdout.strip()
+            if not output:
+                return {
+                    "percentage": 0,
+                    "total": 0,
+                    "used": 0,
+                    "free": 0,
+                    "status": "empty"
+                }
+                
+            total, used, free = map(int, output.split())
+            percentage = (used / total) * 100 if total > 0 else 0
             
             return {
                 "percentage": round(percentage, 2),
                 "total": total * 1024,  # Convert to bytes
                 "used": used * 1024,    # Convert to bytes
-                "free": free * 1024     # Convert to bytes
+                "free": free * 1024,    # Convert to bytes
+                "status": "mounted"
             }
+                
         except Exception as e:
-            _LOGGER.error("Error getting cache usage: %s", str(e))
-            return {"percentage": None, "total": None, "used": None, "free": None}
+            _LOGGER.debug("Error getting cache usage: %s", str(e))
+            return {
+                "percentage": 0,
+                "total": 0,
+                "used": 0,
+                "free": 0,
+                "status": "error"
+            }
 
     async def _get_boot_usage(self) -> Dict[str, Optional[float]]:
         """Fetch boot information from the Unraid system."""
@@ -805,37 +1041,71 @@ class UnraidAPI:
                 "estimated_completion": None,
             }
 
-            # Check mdstat for active check
+            # Check mdstat for status
             mdstat_result = await self.execute_command("cat /proc/mdstat")
             if mdstat_result.exit_status == 0:
                 mdstat_lines = mdstat_result.stdout.splitlines()
+                resync_active = False
+                resync_size = 0
+                
                 for line in mdstat_lines:
-                    if line.startswith("mdResyncAction="):
-                        action = line.split("=")[1].strip()
-                        if "check P" in action:
-                            data["is_active"] = True
-                            data["status"] = "checking"
-                            data["has_parity"] = True
-                    elif data["is_active"] and line.startswith("mdResyncPos="):
+                    if line.startswith("mdResync="):
+                        # Get current resync position - if >0, sync is active
                         try:
-                            pos = int(line.split("=")[1])
-                            size = next(
-                                (int(l.split("=")[1]) for l in mdstat_lines if l.startswith("mdResyncSize=")),
-                                0
-                            )
-                            if size > 0:
-                                data["progress"] = (pos / size) * 100
-                        except (ValueError, TypeError):
-                            pass
-                    elif data["is_active"] and line.startswith("mdResyncDt="):
+                            resync_pos = int(line.split("=")[1])
+                            resync_active = resync_pos > 0
+                        except (ValueError, IndexError):
+                            continue
+                            
+                    elif line.startswith("mdResyncSize="):
                         try:
+                            resync_size = int(line.split("=")[1])
+                        except (ValueError, IndexError):
+                            continue
+                            
+                    elif line.startswith("mdResyncDt="):
+                        try:
+                            # Calculate speed in MB/s
                             dt = int(line.split("=")[1])
                             if dt > 0:
-                                data["speed"] = (dt * 512) / (1024 * 1024)  # Convert to MB/s
-                        except (ValueError, TypeError):
-                            pass
+                                data["speed"] = round((dt * 512) / (1024 * 1024), 2)
+                        except (ValueError, IndexError):
+                            continue
+                            
+                    elif line.startswith("mdResyncAction="):
+                        action = line.split("=")[1].strip()
+                        # Only set has_parity if we see parity check action
+                        if "check" in action:
+                            data["has_parity"] = True
+                    
+                    elif line.startswith("mdResyncCorr="):
+                        try:
+                            data["errors"] = int(line.split("=")[1])
+                        except (ValueError, IndexError):
+                            continue
 
-            # Get history information
+                # Update active status and progress
+                data["is_active"] = resync_active
+                data["status"] = "checking" if resync_active else "idle"
+                
+                if resync_active and resync_size > 0:
+                    try:
+                        resync_pos = int([l.split("=")[1] for l in mdstat_lines 
+                                        if l.startswith("mdResync=")][0])
+                        data["progress"] = round((resync_pos / resync_size) * 100, 2)
+                        
+                        # Calculate estimated completion time
+                        if data["speed"]:
+                            remaining_bytes = (resync_size - resync_pos) * 512
+                            remaining_seconds = remaining_bytes / (data["speed"] * 1024 * 1024)
+                            data["estimated_completion"] = (
+                                datetime.now(timezone.utc) + 
+                                timedelta(seconds=remaining_seconds)
+                            )
+                    except (IndexError, ValueError, ZeroDivisionError):
+                        pass
+
+            # Get history information for average speed
             if history := await self.execute_command("cat /boot/config/parity-checks.log"):
                 if history.exit_status == 0 and history.stdout.strip():
                     try:
@@ -843,9 +1113,14 @@ class UnraidAPI:
                         if last_line:
                             parts = last_line.split('|')
                             if len(parts) >= 4:
-                                data["last_check"] = datetime.strptime(parts[0], "%Y %b %d %H:%M:%S")
-                                data["duration"] = self._format_duration(parts[1])
-                                data["avg_speed"] = float(parts[2]) / 1024  # Convert to MB/s
+                                data["last_check"] = datetime.strptime(
+                                    parts[0], 
+                                    "%Y %b %d %H:%M:%S"
+                                )
+                                duration_secs = int(parts[1])
+                                data["duration"] = self._format_duration(str(duration_secs))
+                                # Convert KB/s to MB/s
+                                data["avg_speed"] = round(float(parts[2]) / 1024, 2)
                                 data["errors"] = int(parts[3])
                     except Exception as err:
                         _LOGGER.debug("Error parsing history: %s", err)
@@ -900,10 +1175,16 @@ class UnraidAPI:
         """Fetch information about Docker containers."""
         try:
             _LOGGER.debug("Fetching Docker container information")
+            # Check if Docker service is running using Unraid's rc script
+            service_check = await self.execute_command("/etc/rc.d/rc.docker status")
+            if service_check.exit_status != 0 or "is currently running" not in service_check.stdout:
+                _LOGGER.debug("Docker service is not running, no containers available")
+                return []
+
             # Get basic container info with proven format
             result = await self.execute_command("docker ps -a --format '{{.Names}}|{{.State}}|{{.ID}}|{{.Image}}'")
             if result.exit_status != 0:
-                _LOGGER.error("Docker container list command failed with exit status %d", result.exit_status)
+                _LOGGER.debug("No Docker containers found or docker command not available")
                 return []
 
             containers = []
@@ -926,12 +1207,10 @@ class UnraidAPI:
                         "image": parts[3].strip(),
                         "icon": icon_data
                     })
-                else:
-                    _LOGGER.warning("Unexpected format in docker container output: %s", line)
 
             return containers
         except Exception as e:
-            _LOGGER.error("Error getting docker containers: %s", str(e))
+            _LOGGER.debug("Error getting docker containers (this is normal if Docker is not configured): %s", str(e))
             return []
         
     async def start_container(self, container_name: str) -> bool:
@@ -966,10 +1245,16 @@ class UnraidAPI:
         """Fetch information about virtual machines."""
         try:
             _LOGGER.debug("Fetching VM information")
-            # Use list --all with a more reliable format
+            # Check if libvirt service is running using Unraid's rc script
+            service_check = await self.execute_command("/etc/rc.d/rc.libvirt status")
+            if service_check.exit_status != 0 or "is currently running" not in service_check.stdout:
+                _LOGGER.debug("libvirt service is not running, skipping VM checks")
+                return []
+
+            # Only proceed with VM checks if service is running
             result = await self.execute_command("virsh list --all --name")
             if result.exit_status != 0:
-                _LOGGER.error("VM list command failed with exit status %d", result.exit_status)
+                _LOGGER.debug("No VMs found or virsh command not available")
                 return []
 
             vms = []
@@ -980,7 +1265,6 @@ class UnraidAPI:
 
                 try:
                     vm_name = line.strip()
-                    # Get status directly using the exact name
                     status = await self.get_vm_status(vm_name)
                     os_type = await self.get_vm_os_info(vm_name)
                     
@@ -991,13 +1275,13 @@ class UnraidAPI:
                     })
 
                 except Exception as parse_error:
-                    _LOGGER.warning("Error processing VM '%s': %s", line.strip(), str(parse_error))
+                    _LOGGER.debug("Error processing VM '%s': %s", line.strip(), str(parse_error))
                     continue
 
             return vms
 
         except Exception as e:
-            _LOGGER.error("Error getting VMs: %s", str(e))
+            _LOGGER.debug("Error getting VMs (VM service may be disabled): %s", str(e))
             return []
         
     async def get_vm_os_info(self, vm_name: str) -> str:

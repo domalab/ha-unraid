@@ -10,6 +10,7 @@ from homeassistant.const import (
     Platform,
 )
 
+# Unraid Server
 DOMAIN = "unraid"
 DEFAULT_PORT = 22
 
@@ -29,6 +30,7 @@ CONF_GENERAL_INTERVAL = "general_interval"
 CONF_DISK_INTERVAL = "disk_interval"
 CONF_HAS_UPS = "has_ups"
 
+
 # Platforms
 PLATFORMS = [
     Platform.BINARY_SENSOR,
@@ -36,13 +38,13 @@ PLATFORMS = [
     Platform.SWITCH,
 ]
 
-# Dispatcher signals
+# Signals
 SIGNAL_UPDATE_UNRAID = f"{DOMAIN}_update"
 
 # Services
 SERVICE_FORCE_UPDATE = "force_update"
 
-# Attributes
+# Config Entry Attributes
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 
 # Units
@@ -61,11 +63,12 @@ UPS_METRICS = {
     "BATTV": {"min": 0, "max": 60, "unit": "V"},
 }
 
+# SpinDownDelay class
 class SpinDownDelay(IntEnum):
     """Unraid disk spin down delay settings."""
-    NEVER = 0
+    NEVER = 0  # Default in Unraid
     MINUTES_15 = 15
-    MINUTES_30 = 30 
+    MINUTES_30 = 30
     MINUTES_45 = 45
     HOUR_1 = 60
     HOURS_2 = 120
@@ -94,13 +97,14 @@ class SpinDownDelay(IntEnum):
             return 0
         return self.value * 60  # Convert minutes to seconds
 
-# Disk Status Constants
+# DiskStatus class
 class DiskStatus(str, Enum):
     """Disk status enum."""
     ACTIVE = "active"
     STANDBY = "standby"
     UNKNOWN = "unknown"
 
+# DiskHealth class
 class DiskHealth(str, Enum):
     """Disk health status enum."""
     PASSED = "PASSED"

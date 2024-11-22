@@ -9,6 +9,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -20,68 +21,37 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from homeassistant.util import dt as dt_util
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import (
+    UnitOfTemperature,
+    UnitOfPower,
+    UnitOfFrequency,
+    PERCENTAGE,
+)
 
 from .const import DOMAIN, UPS_METRICS
 from .coordinator import UnraidDataUpdateCoordinator
+from .helpers import get_pool_info, format_bytes
 
 _LOGGER = logging.getLogger(__name__)
 
-def format_size(size_in_bytes: float) -> str:
-    """Format size to appropriate unit."""
-    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
-    size = float(size_in_bytes)
-    unit_index = 0
-    while size >= 1024 and unit_index < len(units) - 1:
-        size /= 1024
-        unit_index += 1
-    return f"{size:.2f} {units[unit_index]}"
+UNIT_WATTS = UnitOfPower.WATT
+UNIT_HERTZ = UnitOfFrequency.HERTZ
+UNIT_CELSIUS = UnitOfTemperature.CELSIUS
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Set up Unraid sensor based on a config entry."""
-    coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-
-    sensors: List[SensorEntity] = [
-        UnraidCPUUsageSensor(coordinator),
-        UnraidRAMUsageSensor(coordinator),
-        UnraidArrayUsageSensor(coordinator),
-        UnraidCacheUsageSensor(coordinator),
-        UnraidBootUsageSensor(coordinator),
-        UnraidUptimeSensor(coordinator),
-        UnraidCPUTemperatureSensor(coordinator),
-        UnraidMotherboardTemperatureSensor(coordinator),
-        UnraidLogFilesystemSensor(coordinator),
-        UnraidDockerVDiskSensor(coordinator),
-    ]
-    
-    # Add UPS power sensors if UPS is connected
-    if coordinator.has_ups:
-        sensors.extend([
-            UnraidUPSPowerSensor(coordinator, "current_power"),
-            UnraidUPSPowerSensor(coordinator, "energy_consumption"),
-            UnraidUPSPowerSensor(coordinator, "load_percentage"),
-        ])
-
-    # Add individual disk sensors
-    for disk in coordinator.data["system_stats"].get("individual_disks", []):
-        if disk["name"].startswith("disk") or disk["name"] == "cache":
-            sensors.append(UnraidIndividualDiskSensor(coordinator, disk["name"]))
-
-    # Add network sensors for active interfaces
-    if "network_stats" in coordinator.data.get("system_stats", {}):
-        network_stats = coordinator.data["system_stats"]["network_stats"]
-        for interface, stats in network_stats.items():
-            if stats.get("connected", False):
-                sensors.extend([
-                    UnraidNetworkSensor(coordinator, interface, "inbound"),
-                    UnraidNetworkSensor(coordinator, interface, "outbound")
-                ])
-    
-    async_add_entities(sensors)
+def format_size(size_in_bytes: Optional[int]) -> str:
+    """Format size to appropriate unit with None handling."""
+    if size_in_bytes is None:
+        return "0 B"
+        
+    try:
+        size = float(size_in_bytes)
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB', 'PB']:
+            if size < 1024.0:
+                return f"{size:.2f} {unit}"
+            size /= 1024.0
+        return f"{size:.2f} PB"
+    except (TypeError, ValueError):
+        return "0 B"
 
 class UnraidSensorBase(CoordinatorEntity, SensorEntity):
     """Base class for Unraid sensors."""
@@ -118,6 +88,57 @@ class UnraidSensorBase(CoordinatorEntity, SensorEntity):
     def native_value(self) -> Any:
         """Return the state of the sensor."""
         return self.coordinator.data["system_stats"].get(self._key)
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Unraid sensor based on a config entry."""
+    coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    sensors: List[SensorEntity] = [
+        UnraidCPUUsageSensor(coordinator),
+        UnraidRAMUsageSensor(coordinator),
+        UnraidArrayUsageSensor(coordinator),
+        UnraidCacheUsageSensor(coordinator),
+        UnraidBootUsageSensor(coordinator),
+        UnraidUptimeSensor(coordinator),
+        UnraidCPUTemperatureSensor(coordinator),
+        UnraidMotherboardTemperatureSensor(coordinator),
+        UnraidLogFilesystemSensor(coordinator),
+        UnraidDockerVDiskSensor(coordinator),
+    ]
+    
+    # Add UPS power sensors if UPS is connected
+    if coordinator.has_ups:
+        sensors.extend([
+            UnraidUPSPowerSensor(coordinator, "current_power"),
+            UnraidUPSPowerSensor(coordinator, "energy_consumption"),
+            UnraidUPSPowerSensor(coordinator, "load_percentage"),
+        ])
+
+    # Add individual disk sensors
+    for disk in coordinator.data["system_stats"].get("individual_disks", []):
+        if disk["name"].startswith("disk") or disk["name"] == "cache":
+            sensors.append(UnraidIndividualDiskSensor(coordinator, disk["name"]))
+
+    # Add pool sensors
+    pool_info = get_pool_info(coordinator.data.get("system_stats", {}))
+    for pool_name in pool_info:
+        sensors.append(UnraidPoolSensor(coordinator, pool_name))
+
+    # Add network sensors for active interfaces
+    if "network_stats" in coordinator.data.get("system_stats", {}):
+        network_stats = coordinator.data["system_stats"]["network_stats"]
+        for interface, stats in network_stats.items():
+            if stats.get("connected", False):
+                sensors.extend([
+                    UnraidNetworkSensor(coordinator, interface, "inbound"),
+                    UnraidNetworkSensor(coordinator, interface, "outbound")
+                ])
+    
+    async_add_entities(sensors)
     
 class UnraidCPUUsageSensor(UnraidSensorBase):
     """Representation of Unraid CPU usage sensor."""
@@ -183,6 +204,7 @@ class UnraidArrayUsageSensor(UnraidSensorBase):
             device_class=SensorDeviceClass.POWER_FACTOR,
             state_class=SensorStateClass.MEASUREMENT,
         )
+        self._attr_suggested_display_precision = 1
 
     @property
     def native_value(self) -> Optional[float]:
@@ -204,7 +226,73 @@ class UnraidArrayUsageSensor(UnraidSensorBase):
             "used_space": format_size(array_usage.get("used", 0)),
             "free_space": format_size(array_usage.get("free", 0)),
         }
-    
+
+class UnraidPoolSensor(UnraidSensorBase):
+    """Representation of an Unraid storage pool sensor."""
+
+    def __init__(self, coordinator: UnraidDataUpdateCoordinator, pool_name: str) -> None:
+        """Initialize the pool usage sensor."""
+        pretty_name = pool_name.title().replace('_', ' ')  # Make name pretty for display
+        super().__init__(
+            coordinator,
+            f"pool_{pool_name}_usage",
+            f"{pretty_name} Pool Usage",
+            "mdi:folder-multiple",
+            device_class=SensorDeviceClass.POWER_FACTOR,
+            state_class=SensorStateClass.MEASUREMENT,
+        )
+        self._pool_name = pool_name
+        self._attr_suggested_display_precision = 1
+        self._attr_native_unit_of_measurement = "%"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon based on pool type."""
+        if "cache" in self._pool_name.lower():
+            return "mdi:flash"
+        elif "nvme" in self._pool_name.lower():
+            return "mdi:solid-state-drive"
+        return "mdi:folder-multiple"
+
+    @property
+    def native_value(self) -> Optional[float]:
+        """Return the current pool usage percentage."""
+        pool_info = get_pool_info(self.coordinator.data.get("system_stats", {}))
+        if self._pool_name in pool_info:
+            return round(pool_info[self._pool_name]["usage_percent"], 1)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return additional pool attributes."""
+        pool_info = get_pool_info(self.coordinator.data.get("system_stats", {}))
+        if self._pool_name not in pool_info:
+            return {}
+
+        info = pool_info[self._pool_name]
+        attrs = {
+            "filesystem": info["filesystem"],
+            "total_size": format_bytes(info["total_size"]),
+            "used_space": format_bytes(info["used_size"]),
+            "free_space": format_bytes(info["free_size"]),
+            "mount_point": info["mount_point"],
+            "usage_percentage": f"{info['usage_percent']:.1f}%",
+        }
+
+        # Add device information
+        for i, device in enumerate(info["devices"], 1):
+            attrs[f"device_{i}"] = device
+
+        return attrs
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        if not self.coordinator.last_update_success:
+            return False
+        pool_info = get_pool_info(self.coordinator.data.get("system_stats", {}))
+        return self._pool_name in pool_info
+
 class UnraidIndividualDiskSensor(UnraidSensorBase):
     """Representation of an individual Unraid disk usage sensor."""
 
@@ -220,35 +308,85 @@ class UnraidIndividualDiskSensor(UnraidSensorBase):
             state_class=SensorStateClass.MEASUREMENT,
         )
         self._disk_name = disk_name
+        # Add display precision and unit of measurement
+        self._attr_suggested_display_precision = 1
+        self._attr_native_unit_of_measurement = "%"
+
+        # Get the initial disk mapping
+        self._device = self._get_disk_device()
+        
+        _LOGGER.debug(
+            "Initialized disk sensor for %s (device: %s)", 
+            disk_name, 
+            self._device or "unknown"
+        )
+
+    def _get_disk_device(self) -> Optional[str]:
+        """Get the device name from the current disk mapping."""
+        disk_mapping = self.coordinator.data.get("system_stats", {}).get("disk_mapping", {})
+        return disk_mapping.get(self._disk_name)
 
     @property
     def native_value(self) -> Optional[float]:
         """Return the current disk usage percentage."""
         for disk in self.coordinator.data["system_stats"].get("individual_disks", []):
             if disk["name"] == self._disk_name:
+                # Update device mapping in case it changed
+                self._device = self._get_disk_device()
                 return disk["percentage"]
         return None
 
     @property
-    def native_unit_of_measurement(self) -> str:
-        """Return the unit of measurement."""
-        return "%"
-
-    @property
     def extra_state_attributes(self) -> Dict[str, str]:
         """Return the state attributes."""
-        attributes = {}
         for disk in self.coordinator.data["system_stats"].get("individual_disks", []):
             if disk["name"] == self._disk_name:
-                attributes = {
+                # Get current device mapping
+                self._device = self._get_disk_device()
+                
+                attrs = {
                     "total_size": format_size(disk["total"]),
                     "used_space": format_size(disk["used"]),
                     "free_space": format_size(disk["free"]),
                     "mount_point": disk["mount_point"],
+                    "current_usage": f"{disk['percentage']}%"
                 }
-                break
-        
-        return attributes
+
+                # Add device name if we have it
+                if self._device:
+                    attrs["device"] = self._device
+                
+                # Add additional disk info if available
+                disk_info = self.coordinator.data["system_stats"].get("disk_info", {})
+                if self._device in disk_info:
+                    info = disk_info[self._device]
+                    attrs.update({
+                        "model": info.get("model", "Unknown"),
+                        "status": info.get("status", "Unknown"),
+                        "health": info.get("health", "Unknown"),
+                    })
+                    if "temperature" in info:
+                        attrs["temperature"] = f"{info['temperature']}°C"
+
+                return attrs
+        return {}
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        if not self.coordinator.last_update_success:
+            return False
+        return any(
+            disk["name"] == self._disk_name 
+            for disk in self.coordinator.data["system_stats"].get("individual_disks", [])
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        # Update device mapping on each update
+        self._device = self._get_disk_device()
+        super()._handle_coordinator_update()
 
 class UnraidLogFilesystemSensor(UnraidSensorBase):
     """Representation of Unraid Log Filesystem usage sensor."""
@@ -319,7 +457,7 @@ class UnraidDockerVDiskSensor(UnraidSensorBase):
             "used_space": format_size(docker_vdisk.get("used", 0)),
             "free_space": format_size(docker_vdisk.get("free", 0)),
         }
-    
+
 class UnraidCacheUsageSensor(UnraidSensorBase):
     """Representation of Unraid Cache usage sensor."""
 
@@ -741,18 +879,21 @@ class UnraidMotherboardTemperatureSensor(UnraidSensorBase):
             temp_data = self.coordinator.data["system_stats"].get("temperature_data", {})
             sensors_data = temp_data.get("sensors", {})
 
-            # Common motherboard temperature patterns
+            # Common motherboard temperature patterns in priority order
             mb_patterns = [
                 'mb temp', 'board temp', 'system temp',
                 'motherboard', 'systin', 'temp1'
             ]
 
-            for sensor_data in sensors_data.values():
-                for key, value in sensor_data.items():
-                    if isinstance(value, (str, float)):
-                        if any(pattern in key.lower() for pattern in mb_patterns):
-                            if temp := self._parse_temperature(str(value)):
-                                return temp
+            # Iterate through each pattern in the specified order
+            for pattern in mb_patterns:
+                pattern_lower = pattern.lower()
+                for sensor_data in sensors_data.values():
+                    for key, value in sensor_data.items():
+                        if isinstance(value, (str, float)) and pattern_lower in key.lower():
+                            temp = self._parse_temperature(str(value))
+                            if temp is not None:
+                                    return temp
 
             return None
 
@@ -764,7 +905,7 @@ class UnraidMotherboardTemperatureSensor(UnraidSensorBase):
     def native_unit_of_measurement(self) -> str:
         """Return the unit of measurement."""
         return UnitOfTemperature.CELSIUS
-    
+
 class UnraidNetworkSensor(UnraidSensorBase):
     """Representation of Unraid network traffic sensor."""
 
@@ -832,9 +973,7 @@ class UnraidNetworkSensor(UnraidSensorBase):
             stats = self.coordinator.data.get("system_stats", {}).get("network_stats", {}).get(self._interface, {})
             
             return {
-                "interface_info": stats.get("interface_info", "Unknown"),
-                "bytes_per_second": stats.get("rx_speed" if self._direction == "inbound" else "tx_speed", 0),
-                "total_bytes": stats.get("rx_bytes" if self._direction == "inbound" else "tx_bytes", 0),
+                "interface_info": stats.get("interface_info", "Unknown")
             }
             
         except Exception as err:

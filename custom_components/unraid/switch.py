@@ -152,7 +152,12 @@ class UnraidVMSwitch(CoordinatorEntity, SwitchEntity):
         """Return if the switch is available."""
         if not self.coordinator.last_update_success:
             return False
-        return any(vm["name"] == self._vm_name for vm in self.coordinator.data.get("vms", []))
+            
+        # Check if VMs are enabled by checking if we have any VM data
+        vms_enabled = "vms" in self.coordinator.data and isinstance(self.coordinator.data["vms"], list)
+        
+        # Only consider the switch available if VMs are enabled and this specific VM exists
+        return vms_enabled and any(vm["name"] == self._vm_name for vm in self.coordinator.data.get("vms", []))
 
     @property
     def is_on(self) -> bool:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
-from typing import Final, Any, Callable
+from typing import Final, Any, Callable, Dict
 import logging
 
 from homeassistant.components.binary_sensor import (
@@ -22,6 +22,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, SpinDownDelay
 from .coordinator import UnraidDataUpdateCoordinator
+from .helpers import format_bytes, get_unraid_disk_mapping
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,7 +41,6 @@ class UnraidBinarySensorEntityDescription(BinarySensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], bool | None] = field(default=lambda x: None)
     has_warning_threshold: bool = False
     warning_threshold: float | None = None
-
 
 SENSOR_DESCRIPTIONS: tuple[UnraidBinarySensorEntityDescription, ...] = (
     UnraidBinarySensorEntityDescription(
@@ -117,7 +117,6 @@ class UnraidBinarySensorEntity(CoordinatorEntity, BinarySensorEntity):
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
     """Binary sensor for individual disk health."""
 
@@ -132,7 +131,7 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
             coordinator,
             UnraidBinarySensorEntityDescription(
                 key=f"disk_health_{disk_name}",
-                name=f"{pretty_name} Health",  # Base class will add Unraid prefix
+                name=f"{pretty_name} Health",
                 device_class=BinarySensorDeviceClass.PROBLEM,
                 entity_category=EntityCategory.DIAGNOSTIC,
                 icon="mdi:harddisk",
@@ -140,9 +139,98 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
             ),
         )
         self._disk_name = disk_name
+        self._disk_num = int(disk_name.replace("disk", "")) if disk_name.startswith("disk") else None
         self._last_smart_check = None
         self._smart_status = None
-        self._spin_down_delay = SpinDownDelay.MINUTES_30  # Default to 30 minutes
+        self._spin_down_delay = self._get_spin_down_delay()
+        self._last_temperature = None
+        self._problem_attributes: Dict[str, Any] = {}
+
+        # Use coordinator's cached mapping
+        disk_mapping = get_unraid_disk_mapping(self.coordinator.data.get("system_stats", {}))
+        self._device = disk_mapping.get(disk_name)
+        
+        _LOGGER.debug(
+            "Initialized disk health sensor for %s (device: %s)", 
+            disk_name, 
+            self._device or "unknown"
+        )
+
+    def _get_spin_down_delay(self) -> SpinDownDelay:
+        """Get spin down delay for this disk."""
+        try:
+            disk_cfg = self.coordinator.data.get("disk_config", {})
+            
+            # Get global setting (default to NEVER/0 if not specified)
+            global_delay = int(disk_cfg.get("spindownDelay", "0"))
+            
+            # Check for disk-specific setting if this is an array disk
+            if self._disk_num is not None:
+                disk_delay = disk_cfg.get(f"diskSpindownDelay.{self._disk_num}")
+                if disk_delay and disk_delay != "-1":  # -1 means use global setting
+                    global_delay = int(disk_delay)
+            
+            # Convert to SpinDownDelay enum
+            return SpinDownDelay(global_delay)
+            
+        except (ValueError, TypeError) as err:
+            _LOGGER.warning(
+                "Error getting spin down delay for %s: %s. Using default Never.",
+                self._disk_name,
+                err
+            )
+            return SpinDownDelay.NEVER
+
+    def _analyze_smart_status(self, disk_data: Dict[str, Any]) -> bool:
+        """Analyze SMART status and attributes for actual problems.
+        
+        Returns True if there's a real problem, False otherwise.
+        """
+        self._problem_attributes = {}
+        has_problem = False
+
+        # Check basic SMART status
+        smart_status = disk_data.get("health")
+        if smart_status not in ["PASSED", "Standby"]:
+            if smart_status != "Unknown":  # Don't treat Unknown as a problem
+                self._problem_attributes["smart_status"] = smart_status
+                has_problem = True
+
+        # Check critical attributes if available
+        if reallocated := int(disk_data.get("reallocated_sectors", 0)):
+            self._problem_attributes["reallocated_sectors"] = reallocated
+            has_problem = True
+
+        if pending := int(disk_data.get("pending_sectors", 0)):
+            self._problem_attributes["pending_sectors"] = pending
+            has_problem = True
+
+        if uncorrectable := int(disk_data.get("offline_uncorrectable", 0)):
+            self._problem_attributes["offline_uncorrectable"] = uncorrectable
+            has_problem = True
+
+        # Temperature check - handle both string and integer values
+        try:
+            temp = disk_data.get("temperature")
+            if isinstance(temp, str) and '°C' in temp:
+                temp = int(temp.rstrip('°C'))
+            elif isinstance(temp, (int, float)):
+                temp = int(temp)
+                
+            if temp > 55:  # Warning threshold at 55°C
+                self._problem_attributes["temperature"] = f"{temp}°C"
+                has_problem = True
+        except (ValueError, TypeError, AttributeError):
+            pass
+
+        # Only consider UDMA errors if they're increasing
+        current_udma = int(disk_data.get("udma_crc_errors", 0))
+        previous_udma = int(disk_data.get("udma_crc_errors_prev", 0))
+        if current_udma > previous_udma:
+            self._problem_attributes["udma_crc_errors"] = f"{current_udma} (increased from {previous_udma})"
+            has_problem = True
+
+        return has_problem
 
     @property
     def is_on(self) -> bool | None:
@@ -177,15 +265,12 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
                     if should_check_smart:
                         self._smart_status = disk.get("health")
                         self._last_smart_check = current_time
-                        _LOGGER.debug(
-                            "Updated SMART status for %s: %s", 
-                            self._disk_name, 
-                            self._smart_status
-                        )
+                        return self._analyze_smart_status(disk)
 
                     return self._smart_status != "PASSED"
             return None
-        except Exception:
+        except Exception as err:
+            _LOGGER.error("Error checking disk health for %s: %s", self._disk_name, err)
             return None
 
     @property
@@ -199,8 +284,7 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
                     # Disk information
                     attrs.update({
                         "mount_point": disk["mount_point"],
-                        "device": disk.get("device", "unknown"),
-                        "model": disk.get("model", "unknown"),
+                        "device": self._device or disk.get("device", "unknown"),
                         "temperature": f"{disk.get('temperature', '0')}°C",
                     })
                     
@@ -217,8 +301,11 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
                         "smart_status": disk.get("health", "Unknown"),
                         "disk_status": disk.get("status", "unknown"),
                         "spin_down_delay": self._spin_down_delay.to_human_readable(),
-                        "last_smart_check": self._last_smart_check,
                     })
+
+                    # Add problem details if any exist
+                    if self._problem_attributes:
+                        attrs["problem_details"] = self._problem_attributes
                     
                     break
         except Exception as err:
