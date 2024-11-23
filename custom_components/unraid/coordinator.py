@@ -22,6 +22,8 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_HOSTNAME,
+    DEFAULT_NAME,
     DOMAIN,
     CONF_GENERAL_INTERVAL,
     CONF_DISK_INTERVAL,
@@ -96,6 +98,12 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             name=DOMAIN,
             update_interval=timedelta(minutes=self._general_interval),
         )
+
+    @property
+    def hostname(self) -> str:
+        """Get the hostname for entity naming."""
+        raw_hostname = self.entry.data.get(CONF_HOSTNAME, DEFAULT_NAME)
+        return raw_hostname.capitalize()
 
     @property
     def disk_update_due(self) -> bool:

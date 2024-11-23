@@ -14,6 +14,11 @@ from homeassistant.const import (
 DOMAIN = "unraid"
 DEFAULT_PORT = 22
 
+# Unraid Server Hostname
+CONF_HOSTNAME = "hostname"
+MAX_HOSTNAME_LENGTH = 32
+DEFAULT_NAME = "unraid"  # Fallback name if no hostname
+
 # Update intervals
 MIN_UPDATE_INTERVAL = 1          # minutes
 MAX_GENERAL_INTERVAL = 60        # minutes

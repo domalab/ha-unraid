@@ -12,6 +12,7 @@ from async_timeout import timeout
 from enum import Enum
 import shlex
 
+from .const import MAX_HOSTNAME_LENGTH
 from homeassistant.exceptions import HomeAssistantError
 
 _LOGGER = logging.getLogger(__name__)
@@ -155,6 +156,59 @@ class UnraidAPI:
         except Exception as e:
             _LOGGER.error("Failed to ping Unraid server at %s: %s", self.host, e)
             return False
+    
+    async def get_hostname(self) -> str:
+        """Get the Unraid server hostname.
+        
+        Returns:
+            Sanitized hostname string or None if unable to retrieve
+        """
+        try:
+            # Try multiple commands in case one fails
+            commands = [
+                "hostname -f",
+                "uname -n"
+            ]
+            
+            for cmd in commands:
+                result = await self.execute_command(cmd)
+                if result.exit_status == 0:
+                    hostname = result.stdout.strip()
+                    if hostname:
+                        # Sanitize hostname
+                        sanitized = self._sanitize_hostname(hostname)
+                        if sanitized:
+                            _LOGGER.debug("Retrieved hostname: %s (sanitized: %s)", hostname, sanitized)
+                            return sanitized
+                            
+            _LOGGER.warning("Could not retrieve valid hostname, using default name")
+            return None
+            
+        except Exception as err:
+            _LOGGER.error("Error getting hostname: %s", err)
+            return None
+
+    def _sanitize_hostname(self, hostname: str) -> str:
+        """Sanitize hostname for entity ID compatibility.
+        
+        Args:
+            hostname: Raw hostname string
+            
+        Returns:
+            Sanitized hostname string or None if invalid
+        """
+        import re
+        # Remove invalid characters
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', hostname.lower())
+        # Replace consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # Trim to max length
+        sanitized = sanitized[:MAX_HOSTNAME_LENGTH]
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        # Capitalize first letter
+        sanitized = sanitized.capitalize() if sanitized else None
+        return sanitized
 
     async def _parse_array_state(self) -> ArrayState:
             """Parse detailed array state from mdcmd output."""

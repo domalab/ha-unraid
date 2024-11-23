@@ -79,14 +79,39 @@ class UnraidBinarySensorEntity(CoordinatorEntity, BinarySensorEntity):
         coordinator: UnraidDataUpdateCoordinator,
         description: UnraidBinarySensorEntityDescription,
     ) -> None:
-        """Initialize the binary sensor."""
+        """Initialize the binary sensor.
+        
+        Args:
+            coordinator: The data update coordinator
+            description: Entity description containing key and name
+        """
         super().__init__(coordinator)
         self.entity_description = description
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_{description.key}"
-        self._attr_name = f"Unraid {description.name}"  # Add Unraid prefix here
+        
+        hostname = coordinator.hostname.capitalize()
+        
+        # Clean the key of any existing hostname instances
+        clean_key = description.key
+        hostname_variations = [hostname.lower(), hostname.capitalize(), hostname.upper()]
+        
+        for variation in hostname_variations:
+            clean_key = clean_key.replace(f"{variation}_", "")
+        
+        # Validate the cleaned key
+        if not clean_key:
+            _LOGGER.error("Invalid empty key after cleaning hostname")
+            clean_key = description.key
+        
+        # Construct unique_id with guaranteed single hostname instance
+        self._attr_unique_id = f"unraid_server_{hostname}_{clean_key}"
+        
+        # Keep the name simple and human-readable
+        self._attr_name = f"{hostname} {description.name}"
+        
+        # Consistent device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": f"Unraid Server ({coordinator.entry.data['host']})",
+            "name": f"Unraid Server ({hostname})",
             "manufacturer": "Lime Technology",
             "model": "Unraid Server",
         }

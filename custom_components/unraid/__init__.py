@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import (
+    CONF_HOSTNAME,
     DOMAIN,
     PLATFORMS,
     CONF_GENERAL_INTERVAL,
@@ -24,6 +25,7 @@ from .const import (
 from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
 from .services import async_setup_services, async_unload_services
+from .migrations import async_migrate_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         options.update({
             CONF_GENERAL_INTERVAL: minutes,
-            CONF_DISK_INTERVAL: DEFAULT_DISK_INTERVAL,  # Start with default disk interval in hours
+            CONF_DISK_INTERVAL: DEFAULT_DISK_INTERVAL,
             CONF_PORT: entry.data.get(CONF_PORT, DEFAULT_PORT),
             CONF_HAS_UPS: entry.data.get(CONF_HAS_UPS, False),
         })
@@ -48,12 +50,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(entry, options=options)
 
     try:
+        # Create the API instance
         api = UnraidAPI(
             host=entry.data[CONF_HOST],
             username=entry.data[CONF_USERNAME],
             password=entry.data[CONF_PASSWORD],
             port=entry.options.get(CONF_PORT, DEFAULT_PORT),
         )
+
+        # Get hostname during setup if not already stored
+        if CONF_HOSTNAME not in entry.data:
+            try:
+                hostname = await api.get_hostname()
+                if hostname:
+                    data = dict(entry.data)
+                    data[CONF_HOSTNAME] = hostname
+                    hass.config_entries.async_update_entry(entry, data=data)
+                    _LOGGER.info("Updated configuration with hostname: %s", hostname)
+            except Exception as hostname_err:
+                _LOGGER.warning("Could not get hostname: %s", hostname_err)
+
+        # Run entity migrations before setting up new entities
+        await async_migrate_entities(hass, entry)
 
         coordinator = UnraidDataUpdateCoordinator(hass, api, entry)
         
