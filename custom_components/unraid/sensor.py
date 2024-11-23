@@ -738,7 +738,31 @@ class UnraidNetworkSensor(UnraidSensorBase):
         return (round(value, 2), "bit/s")
     
 class UnraidUPSPowerSensor(UnraidSensorBase):
-    """Enhanced representation of Unraid UPS Power sensor."""
+    """Representation of Unraid UPS Power sensor.
+    
+    Supports power and energy monitoring for UPS devices with or without NOMPOWER reporting.
+    Power can be derived from model numbers when NOMPOWER isn't available.
+    
+    Attributes:
+        POWER_FACTOR_ESTIMATE: Conservative estimate for VA to W conversion
+        MODEL_PATTERNS: Dictionary mapping UPS model patterns to their power factors
+    """
+
+    POWER_FACTOR_ESTIMATE = 0.9  # Conservative estimate for VA to W conversion
+    
+    # Known UPS model patterns for power calculation
+    MODEL_PATTERNS = {
+        r'smart-ups.*?(\d{3,4})': 1.0,       # Smart-UPS models use direct VA rating
+        r'back-ups.*?(\d{3,4})': 0.9,        # Back-UPS models typically 90% of VA
+        r'back-ups pro.*?(\d{3,4})': 0.95,   # Back-UPS Pro models ~95% of VA
+        r'smart-ups\s*x.*?(\d{3,4})': 1.0,   # Smart-UPS X series
+        r'smart-ups\s*xl.*?(\d{3,4})': 1.0,  # Smart-UPS XL series
+        r'smart-ups\s*rt.*?(\d{3,4})': 1.0,  # Smart-UPS RT series
+        r'symmetra.*?(\d{3,4})': 1.0,        # Symmetra models
+        r'sua\d{3,4}': 1.0,                  # Smart-UPS alternative model format
+        r'smx\d{3,4}': 1.0,                  # Smart-UPS SMX model format
+        r'smt\d{3,4}': 1.0,                  # Smart-UPS SMT model format
+    }
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator, sensor_type: str) -> None:
         """Initialize the UPS Power sensor."""
@@ -751,7 +775,7 @@ class UnraidUPSPowerSensor(UnraidSensorBase):
                 device_class=self._get_device_class(sensor_type),
                 state_class=self._get_state_class(sensor_type),
                 native_unit_of_measurement=self._get_unit_measurement(sensor_type),
-                value_fn=lambda data: self._compute_value(data)  # Will use instance method for value calculation
+                value_fn=lambda data: self._compute_value(data)
             ),
         )
         self._sensor_type = sensor_type
@@ -761,7 +785,9 @@ class UnraidUPSPowerSensor(UnraidSensorBase):
         self._last_calculation_time: datetime | None = None
         self._accumulated_energy: float = 0.0
         self._error_count = 0
+        self._last_power_value: float | None = None
         self._suggested_display_precision = 2
+        self._power_source: str = "direct"
 
     @staticmethod
     def _get_device_class(sensor_type: str) -> SensorDeviceClass | None:
@@ -792,6 +818,72 @@ class UnraidUPSPowerSensor(UnraidSensorBase):
             "load_percentage": "%",
             "apparent_power": "VA",
         }.get(sensor_type)
+    
+    def _validate_derived_power(self, va_rating: int, factor: float) -> float | None:
+        """Validate derived power values.
+        
+        Args:
+            va_rating: VA rating from UPS model number
+            factor: Power factor to convert VA to Watts
+            
+        Returns:
+            float: Validated power value in Watts
+            None: If validation fails
+        """
+        try:
+            power = va_rating * factor
+            if 0 < power <= 10000:  # Reasonable range for UPS power
+                return power
+            _LOGGER.warning("Derived power %sW outside reasonable range", power)
+            return None
+        except Exception as err:
+            _LOGGER.error("Error validating derived power: %s", err)
+            return None
+    
+    def _get_nominal_power(self, ups_info: dict) -> float | None:
+        """Get nominal power either directly or derived from model."""
+        try:
+            # First try direct NOMPOWER
+            if "NOMPOWER" in ups_info:
+                nominal_power = self._validate_value(ups_info.get("NOMPOWER"), "NOMPOWER")
+                if nominal_power is not None:
+                    self._last_power_value = nominal_power
+                    self._power_source = "direct"
+                    return nominal_power
+
+            # Try to derive from model if no NOMPOWER
+            model = ups_info.get("MODEL", "").strip().lower()
+            if not model:
+                return self._last_power_value  # Return last known value if available
+
+            # Try each model pattern
+            import re
+            for pattern, factor in self.MODEL_PATTERNS.items():
+                if match := re.search(pattern, model):
+                    va_rating = int(match.group(1))
+                    nominal_power = self._validate_derived_power(va_rating, factor)
+                    if nominal_power:
+                        _LOGGER.debug(
+                            "Derived power for model %s: %sVA * %s = %sW",
+                            model,
+                            va_rating,
+                            factor,
+                            nominal_power
+                        )
+                        self._last_power_value = nominal_power
+                        self._power_source = "derived"
+                        return nominal_power
+
+            # If we have a last known value, use it
+            if self._last_power_value is not None:
+                return self._last_power_value
+
+            _LOGGER.warning("Could not determine power rating for UPS model: %s", model)
+            return None
+
+        except Exception as err:
+            _LOGGER.error("Error calculating nominal power: %s", err)
+            return self._last_power_value
 
     def _compute_value(self, data: dict) -> float | None:
         """Calculate the sensor value based on type."""
@@ -799,8 +891,7 @@ class UnraidUPSPowerSensor(UnraidSensorBase):
         
         try:
             if self._sensor_type == "current_power":
-                # Calculate current power from nominal power and load percentage
-                nominal_power = self._validate_value(ups_info.get("NOMPOWER"), "NOMPOWER")
+                nominal_power = self._get_nominal_power(ups_info)
                 load_percent = self._validate_value(ups_info.get("LOADPCT"), "LOADPCT")
                 
                 if nominal_power is None or load_percent is None:
@@ -809,8 +900,7 @@ class UnraidUPSPowerSensor(UnraidSensorBase):
                 return round((nominal_power * load_percent) / 100.0, 2)
                 
             elif self._sensor_type == "energy_consumption":
-                # Get current power consumption
-                nominal_power = self._validate_value(ups_info.get("NOMPOWER"), "NOMPOWER")
+                nominal_power = self._get_nominal_power(ups_info)
                 load_percent = self._validate_value(ups_info.get("LOADPCT"), "LOADPCT")
                 
                 if nominal_power is None or load_percent is None:
@@ -819,22 +909,22 @@ class UnraidUPSPowerSensor(UnraidSensorBase):
                 current_power = (nominal_power * load_percent) / 100.0
                 current_time = datetime.now(timezone.utc)
                 
-                # Initialize last calculation time if not set
                 if self._last_calculation_time is None:
                     self._last_calculation_time = current_time
                     return self._accumulated_energy
                 
-                # Calculate time difference in hours
                 time_diff = (current_time - self._last_calculation_time).total_seconds() / 3600
+                if time_diff > 24:  # Detect large gaps (e.g., HA restart)
+                    _LOGGER.warning("Large time gap detected (%s hours), resetting energy calculation", time_diff)
+                    self._reset_energy_counter()
+                    return 0.0
                 
-                # Calculate energy consumed since last update
                 energy_increment = (current_power * time_diff) / 1000
-                
                 self._accumulated_energy += energy_increment
                 self._last_calculation_time = current_time
                 
                 _LOGGER.debug(
-                    "Energy calculation - Power: %.2fW, Time diff: %.4fh, Increment: %.4fkWh, Total: %.4fkWh",
+                    "Energy calculation - Power: %.2fW, Time: %.4fh, Increment: %.4fkWh, Total: %.4fkWh",
                     current_power,
                     time_diff,
                     energy_increment,
@@ -910,6 +1000,10 @@ class UnraidUPSPowerSensor(UnraidSensorBase):
             "nominal_power": ("NOMPOWER", "W"),
             "line_voltage": ("LINEV", "V"),
             "last_transfer_reason": ("LASTXFER", None),
+            "battery_voltage": ("BATTV", "V"),
+            "battery_charge": ("BCHARGE", "%"),
+            "time_on_battery": ("TONBATT", "seconds"),
+            "temperature": ("ITEMP", "°C"),
         }
         
         for attr_name, (metric, unit) in base_metrics.items():
@@ -920,8 +1014,17 @@ class UnraidUPSPowerSensor(UnraidSensorBase):
                     attributes[attr_name] = f"{validated_value}{unit}"
             else:
                 attributes[attr_name] = value if value else "Unknown"
-
-        # Add sensor-specific attributes
+        
+        # Add model information and power derivation method
+        model = ups_info.get("MODEL")
+        if model:
+            attributes["ups_model"] = model
+            if self._power_source == "derived":
+                nominal_power = self._get_nominal_power(ups_info)
+                if nominal_power:
+                    attributes["derived_power"] = f"{nominal_power}W"
+                    attributes["power_derivation"] = "Calculated from model rating"
+        
         if self._sensor_type == "current_power":
             power_factor = self._validate_value(ups_info.get("POWERFACTOR"), "POWERFACTOR")
             apparent_power = self._validate_value(ups_info.get("LOADAPNT"), "LOADAPNT")
@@ -931,11 +1034,23 @@ class UnraidUPSPowerSensor(UnraidSensorBase):
             if apparent_power is not None:
                 attributes["apparent_power"] = f"{apparent_power}VA"
 
-        # Add error tracking
+            attributes["power_source"] = self._power_source
+            
+        elif self._sensor_type == "energy_consumption":
+            attributes["last_reset"] = self._last_reset.isoformat() if self._last_reset else "Never"
+            if time_diff := self._get_time_since_last_calculation():
+                attributes["calculation_age"] = f"{time_diff:.1f}h"
+
         if self._error_count > 0:
             attributes["error_count"] = self._error_count
 
         return attributes
+    
+    def _get_time_since_last_calculation(self) -> float | None:
+        """Get time since last energy calculation in hours."""
+        if self._last_calculation_time:
+            return (datetime.now(timezone.utc) - self._last_calculation_time).total_seconds() / 3600
+        return None
 
     @callback
     def _handle_coordinator_update(self) -> None:
