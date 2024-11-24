@@ -1,10 +1,16 @@
-"""Services for the Unraid integration."""
+"""Services for the Unraid integration.
+
+This module handles the registration and unregistration of all Unraid integration services.
+It includes comprehensive error handling, service state tracking, and proper cleanup routines.
+All services are typed and documented according to Home Assistant best practices.
+"""
+
 from functools import partial
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.exceptions import HomeAssistantError
 import voluptuous as vol
-from typing import Any
+from typing import Any, Set
 import logging
 import json
 from datetime import datetime
@@ -298,58 +304,41 @@ async def system_shutdown(hass: HomeAssistant, call: ServiceCall) -> dict[str, A
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
 
+_REGISTERED_SERVICES: Set[str] = set()
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Set up services for Unraid integration."""
     
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_FORCE_UPDATE,
-        partial(handle_force_update, hass),
-        schema=SERVICE_FORCE_UPDATE_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_EXECUTE_COMMAND,
-        partial(execute_command, hass),
-        schema=SERVICE_EXECUTE_COMMAND_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_EXECUTE_IN_CONTAINER,
-        partial(execute_in_container, hass),
-        schema=SERVICE_EXECUTE_IN_CONTAINER_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_EXECUTE_USER_SCRIPT,
-        partial(execute_user_script, hass),
-        schema=SERVICE_EXECUTE_USER_SCRIPT_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_STOP_USER_SCRIPT,
-        partial(stop_user_script, hass),
-        schema=SERVICE_STOP_USER_SCRIPT_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SYSTEM_REBOOT,
-        partial(system_reboot, hass),
-        schema=SERVICE_SYSTEM_REBOOT_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SYSTEM_SHUTDOWN,
-        partial(system_shutdown, hass),
-        schema=SERVICE_SYSTEM_SHUTDOWN_SCHEMA
-    )
+    # Define service mappings
+    services = {
+        SERVICE_FORCE_UPDATE: (handle_force_update, SERVICE_FORCE_UPDATE_SCHEMA),
+        SERVICE_EXECUTE_COMMAND: (execute_command, SERVICE_EXECUTE_COMMAND_SCHEMA),
+        SERVICE_EXECUTE_IN_CONTAINER: (execute_in_container, SERVICE_EXECUTE_IN_CONTAINER_SCHEMA),
+        SERVICE_EXECUTE_USER_SCRIPT: (execute_user_script, SERVICE_EXECUTE_USER_SCRIPT_SCHEMA),
+        SERVICE_STOP_USER_SCRIPT: (stop_user_script, SERVICE_STOP_USER_SCRIPT_SCHEMA),
+        SERVICE_SYSTEM_REBOOT: (system_reboot, SERVICE_SYSTEM_REBOOT_SCHEMA),
+        SERVICE_SYSTEM_SHUTDOWN: (system_shutdown, SERVICE_SYSTEM_SHUTDOWN_SCHEMA),
+    }
+    
+    # Register each service
+    for service_name, (handler, schema) in services.items():
+        if service_name not in _REGISTERED_SERVICES:
+            hass.services.async_register(
+                DOMAIN,
+                service_name,
+                partial(handler, hass),
+                schema=schema
+            )
+            _REGISTERED_SERVICES.add(service_name)
+            _LOGGER.debug("Registered service: %s", service_name)
 
 async def async_unload_services(hass: HomeAssistant) -> None:
     """Unload Unraid services."""
-    hass.services.async_remove(DOMAIN, SERVICE_FORCE_UPDATE)
-    hass.services.async_remove(DOMAIN, SERVICE_EXECUTE_COMMAND)
-    hass.services.async_remove(DOMAIN, SERVICE_EXECUTE_IN_CONTAINER)
-    hass.services.async_remove(DOMAIN, SERVICE_EXECUTE_USER_SCRIPT)
-    hass.services.async_remove(DOMAIN, SERVICE_STOP_USER_SCRIPT)
-    hass.services.async_remove(DOMAIN, SERVICE_SYSTEM_REBOOT)
-    hass.services.async_remove(DOMAIN, SERVICE_SYSTEM_SHUTDOWN)
+    # Only attempt to remove services we know we registered
+    for service in _REGISTERED_SERVICES.copy():
+        try:
+            hass.services.async_remove(DOMAIN, service)
+            _REGISTERED_SERVICES.remove(service)
+            _LOGGER.debug("Unregistered service: %s", service)
+        except Exception as err:
+            _LOGGER.debug("Error removing service %s: %s", service, err)
