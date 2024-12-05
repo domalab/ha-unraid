@@ -177,7 +177,7 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
                 name=f"{pretty_name} Health",
                 device_class=BinarySensorDeviceClass.PROBLEM,
                 entity_category=EntityCategory.DIAGNOSTIC,
-                icon="mdi:harddisk" if not disk_name == "cache" else "mdi:flash",  # Different icon for cache
+                icon="mdi:harddisk" if not disk_name == "cache" else "mdi:harddisk",
                 has_warning_threshold=True,
             ),
         )
