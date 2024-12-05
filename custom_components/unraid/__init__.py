@@ -1,17 +1,20 @@
 """The Unraid integration."""
 from __future__ import annotations
+
 import logging
 import warnings
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
+from typing import Any
+
+from homeassistant.config_entries import ConfigEntry  # type: ignore
+from homeassistant.const import (  # type: ignore
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PORT,
     CONF_USERNAME,
 )
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
-from cryptography.utils import CryptographyDeprecationWarning
+from homeassistant.core import HomeAssistant  # type: ignore
+from homeassistant.exceptions import ConfigEntryNotReady  # type: ignore
+from cryptography.utils import CryptographyDeprecationWarning # type: ignore
 
 from .const import (
     CONF_HOSTNAME,
@@ -28,6 +31,14 @@ from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
 from .services import async_setup_services, async_unload_services
 from .migrations import async_migrate_entities
+
+# Pre-load all platform modules to avoid blocking imports
+from . import (
+    binary_sensor,
+    sensor,
+    switch,
+    config_flow,
+)
 
 # Suppress deprecation warnings for paramiko
 warnings.filterwarnings(
@@ -105,7 +116,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await async_setup_services(hass)
 
         # Add update listener
-        entry.async_on_unload(entry.add_update_listener(update_listener))
+        entry.async_on_unload(entry.add_update_listener(async_update_listener))
         
         return True
 
@@ -115,7 +126,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
     
     # Stop coordinator and cleanup connections
     await coordinator.async_unload()
@@ -127,8 +138,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     return unload_ok
 
-async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Update listener."""
+async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle options update."""
+    await coordinator.async_update_ups_status(entry.options.get(CONF_HAS_UPS, False))
     await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -34,7 +34,7 @@ from .const import (
 )
 from .unraid import UnraidAPI
 from .helpers import get_unraid_disk_mapping
-from .docker_insights import DockerInsights
+from .insights import get_docker_insights
 from .disk_mapping import get_disk_info
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,16 +95,17 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
         self._disk_update_interval = timedelta(hours=self._disk_interval)
 
-        # Docker Insights
+        # Docker Insights initialization
         self.docker_insights = entry.options.get(CONF_DOCKER_INSIGHTS, False)
         self.docker_monitor = None
         _LOGGER.debug("Docker Insights enabled: %s", self.docker_insights)
 
         if self.docker_insights:
             try:
+                DockerInsights = get_docker_insights()  # Get the class only when needed
                 self.docker_monitor = DockerInsights(self.api)
                 _LOGGER.debug("Created Docker monitor instance")
-            except (KeyError, ValueError, TypeError) as err:
+            except Exception as err:
                 _LOGGER.error("Failed to initialize Docker monitoring: %s", err)
                 self.docker_monitor = None
 
@@ -537,9 +538,10 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self.docker_insights = enabled
         if enabled and not self.docker_monitor:
             try:
+                DockerInsights = get_docker_insights()
                 self.docker_monitor = DockerInsights(self.api)
                 await self.docker_monitor.connect()
-            except (ConnectionError, TimeoutError, ValueError, OSError) as err:
+            except Exception as err:
                 _LOGGER.error("Failed to initialize Docker monitoring: %s", err)
                 self.docker_monitor = None
         elif not enabled and self.docker_monitor:

@@ -15,6 +15,7 @@ from homeassistant.const import PERCENTAGE, EntityCategory # type: ignore
 
 from .base import UnraidSensorBase, UnraidDiagnosticMixin
 from .const import DOMAIN, UnraidSensorEntityDescription
+from ..coordinator import UnraidDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,15 +113,13 @@ class UnraidDockerSensor(UnraidSensorBase, UnraidDiagnosticMixin):
         UnraidDiagnosticMixin.__init__(self)
         self._attr_has_entity_name = True
 
-        hostname = coordinator.hostname  # Get the hostname
-        
         # Update device_info to create Docker parent device
         self._attr_device_info = {
-            "identifiers": {("unraid_docker", coordinator.entry.entry_id)},
-            "name": f"Unraid Docker ({hostname})",
+            "identifiers": {(DOMAIN, f"{coordinator.entry.entry_id}_docker")},
+            "name": f"Unraid Docker ({coordinator.hostname or 'Unknown'})",
             "manufacturer": "Docker",
             "model": "Container Engine",
-            "via_device": ("unraid", coordinator.entry.entry_id),
+            "via_device": (DOMAIN, coordinator.entry.entry_id),
         }
 
     @property
@@ -153,10 +152,10 @@ class UnraidDockerContainerSensor(UnraidSensorBase, DockerMetricsMixin, UnraidDi
         UnraidDiagnosticMixin.__init__(self)
         self._attr_has_entity_name = True
         
-        # Link container sensors to the Docker device instead of creating new devices
+        # Link container sensors to the Docker service with consistent naming
         self._attr_device_info = {
-            "identifiers": {("unraid_docker", coordinator.entry.entry_id)},
-            "name": "Unraid Docker",
+            "identifiers": {(DOMAIN, f"{coordinator.entry.entry_id}_docker")},
+            "name": f"Unraid Docker ({coordinator.hostname})",
             "manufacturer": "Docker",
             "model": "Container Engine",
             "via_device": (DOMAIN, coordinator.entry.entry_id),

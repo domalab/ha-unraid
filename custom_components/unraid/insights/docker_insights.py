@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Any, Optional, Callable
 from contextlib import suppress
 
-from .unraid import UnraidAPI
+from ..unraid import UnraidAPI
 
 _LOGGER = logging.getLogger(__name__)
 

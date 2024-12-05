@@ -1,13 +1,16 @@
 """Config flow for Unraid integration."""
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Final
+from dataclasses import dataclass
 
-import voluptuous as vol
+import voluptuous as vol # type: ignore
 from homeassistant import config_entries # type: ignore
 from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PORT # type: ignore
 from homeassistant.data_entry_flow import FlowResult # type: ignore
-from homeassistant.exceptions import HomeAssistantError # type: ignore
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError # type: ignore
+from homeassistant.core import callback # type: ignore
 
 from .const import (
     CONF_DOCKER_INSIGHTS,
@@ -25,6 +28,22 @@ from .const import (
 )
 from .unraid import UnraidAPI
 
+_LOGGER = logging.getLogger(__name__)
+
+@dataclass
+class UnraidConfigFlowData:
+    """Unraid Config Flow Data class."""
+
+    host: str
+    username: str
+    password: str
+    port: int = DEFAULT_PORT
+    general_interval: int = DEFAULT_GENERAL_INTERVAL
+    disk_interval: int = DEFAULT_DISK_INTERVAL
+    has_ups: bool = False
+    docker_insights: bool = False
+
+@callback
 def get_schema_base(
     general_interval: int,
     disk_interval: int,
@@ -96,10 +115,12 @@ def get_schema_base(
 
     return vol.Schema(schema)
 
+@callback
 def get_init_schema(general_interval: int, disk_interval: int) -> vol.Schema:
     """Get schema for initial setup."""
     return get_schema_base(general_interval, disk_interval, include_auth=True)
 
+@callback
 def get_options_schema(
     general_interval: int,
     disk_interval: int,
@@ -115,13 +136,16 @@ def get_options_schema(
     )
 
 async def validate_input(data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect."""
+    """Validate the user input allows us to connect.
+    
+    Data has already been validated through schema.
+    """
     api = UnraidAPI(data[CONF_HOST], data[CONF_USERNAME], data[CONF_PASSWORD], data[CONF_PORT])
 
     try:
         async with api:
             if not await api.ping():
-                raise CannotConnect
+                raise CannotConnect("Failed to connect to Unraid server")
     except Exception as err:
         raise CannotConnect from err
 
@@ -132,17 +156,55 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the config flow."""
         self._general_interval = DEFAULT_GENERAL_INTERVAL
         self._disk_interval = DEFAULT_DISK_INTERVAL
-        self._host = None
+        self._host: str | None = None
+        self.reauth_entry: config_entries.ConfigEntry | None = None
 
-    def is_matching(self, other_flow: dict[str, Any]) -> bool:
-        """Determine if config flow matches the other flow dictionary."""
-        if not self._host:
-            return False
-        return other_flow.get(CONF_HOST, "") == self._host
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
+        """Handle reauthorization request."""
+        self.reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+        self._host = entry_data[CONF_HOST]
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle reauthorization confirmation."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None and self.reauth_entry:
+            try:
+                data = {**self.reauth_entry.data, **user_input}
+                await validate_input(data)
+
+                self.hass.config_entries.async_update_entry(
+                    self.reauth_entry, data=data
+                )
+                await self.hass.config_entries.async_reload(self.reauth_entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except Exception:  # pylint: disable=broad-except
+                errors["base"] = "unknown"
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({
+                vol.Required(CONF_USERNAME): str,
+                vol.Required(CONF_PASSWORD): str,
+            }),
+            errors=errors,
+        )
+
+    @callback
+    def _async_get_schema(self) -> vol.Schema:
+        """Get a schema using the default or already configured options."""
+        return get_init_schema(self._general_interval, self._disk_interval)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -154,35 +216,38 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 self._host = user_input[CONF_HOST]
                 info = await validate_input(user_input)
+                
+                await self.async_set_unique_id(
+                    self._host.lower(),
+                    raise_on_progress=True
+                )
+                self._abort_if_unique_id_configured()
+                
                 return self.async_create_entry(title=info["title"], data=user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
 
-        schema = get_init_schema(
-            self._general_interval,
-            self._disk_interval
-        )
-
-        descriptions = {
-            "host_description": "IP address or hostname of your Unraid server",
-            "username_description": "Username for SSH access",
-            "password_description": "Password for SSH access",
-            "port_description": f"SSH port (default: {DEFAULT_PORT})",
-            "general_interval_description": (
-            "How often to update non-disk sensors (1-60 minutes)"
-            ),
-            "disk_interval_description": (
-            "How often to update disk information (1-24 hours)"
-            ),
-        }
+        schema = self._async_get_schema()
 
         return self.async_show_form(
             step_id="user",
             data_schema=schema,
             errors=errors,
-            description_placeholders=descriptions,
+            description_placeholders={
+                "host_description": "IP address or hostname of your Unraid server",
+                "username_description": "Username for SSH access",
+                "password_description": "Password for SSH access",
+                "port_description": f"SSH port (default: {DEFAULT_PORT})",
+                "general_interval_description": (
+                    "How often to update non-disk sensors (1-60 minutes)"
+                ),
+                "disk_interval_description": (
+                    "How often to update disk information (1-24 hours)"
+                ),
+            },
         )
 
     async def async_step_import(self, import_data: dict[str, Any]) -> FlowResult:
@@ -190,11 +255,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return await self.async_step_user(import_data)
 
     @staticmethod
-    def async_get_options_flow(config_entry):
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> UnraidOptionsFlowHandler:
         """Get the options flow for this handler."""
-        return OptionsFlowHandler(config_entry)
+        return UnraidOptionsFlowHandler(config_entry)
 
-class OptionsFlowHandler(config_entries.OptionsFlow):
+class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for Unraid."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
@@ -221,17 +288,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            options = {
-                CONF_PORT: user_input[CONF_PORT],
-                CONF_GENERAL_INTERVAL: user_input[CONF_GENERAL_INTERVAL],
-                CONF_DISK_INTERVAL: user_input[CONF_DISK_INTERVAL],
-                CONF_HAS_UPS: user_input[CONF_HAS_UPS],
-                CONF_DOCKER_INSIGHTS: user_input[CONF_DOCKER_INSIGHTS],
-            }
+            return self.async_create_entry(
+                title="",
+                data={
+                    CONF_PORT: user_input[CONF_PORT],
+                    CONF_GENERAL_INTERVAL: user_input[CONF_GENERAL_INTERVAL],
+                    CONF_DISK_INTERVAL: user_input[CONF_DISK_INTERVAL],
+                    CONF_HAS_UPS: user_input[CONF_HAS_UPS],
+                    CONF_DOCKER_INSIGHTS: user_input[CONF_DOCKER_INSIGHTS],
+                },
+            )
 
-            return self.async_create_entry(title="", data=options)
-
-        schema = {
+        schema = vol.Schema({
             vol.Optional(CONF_PORT, default=self._port): vol.Coerce(int),
             vol.Required(
                 CONF_GENERAL_INTERVAL,
@@ -255,17 +323,21 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             ),
             vol.Required(CONF_HAS_UPS, default=self._has_ups): bool,
             vol.Required(CONF_DOCKER_INSIGHTS, default=self._docker_insights): bool,
-        }
+        })
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(schema),
+            data_schema=schema,
             description_placeholders={
-                "general_interval_description": "How often to update non-disk sensors (1-60 minutes)",
-                "disk_interval_description": "How often to update disk information (1-24 hours)",
+                "general_interval_description": (
+                    "How often to update non-disk sensors (1-60 minutes)"
+                ),
+                "disk_interval_description": (
+                    "How often to update disk information (1-24 hours)"
+                ),
                 "docker_insights_description": "Enable detailed Docker container monitoring"
             },
         )
 
 class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
+    """Error raised when we cannot connect to the Unraid server."""
