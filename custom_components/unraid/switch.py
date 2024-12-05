@@ -238,17 +238,31 @@ async def async_setup_entry(
 
     switches = []
 
-    if "docker_containers" in coordinator.data:
+    # Add Docker container switches
+    if "docker_containers" in coordinator.data:  # This checks base Docker container data, not docker_insights
+        _LOGGER.debug("Setting up Docker container switches")
         switches.extend([
-            UnraidDockerContainerSwitch(coordinator, container["name"])
+            UnraidDockerContainerSwitch(
+                coordinator=coordinator,
+                container_name=container["name"]
+            )
             for container in coordinator.data["docker_containers"]
         ])
+    else:
+        _LOGGER.debug("No Docker containers found for switches")
 
+    # Add VM switches
     if "vms" in coordinator.data:
+        _LOGGER.debug("Setting up VM switches")
         switches.extend([
-            UnraidVMSwitch(coordinator, vm["name"])
+            UnraidVMSwitch(
+                coordinator=coordinator,
+                vm_name=vm["name"]
+            )
             for vm in coordinator.data["vms"]
         ])
+    else:
+        _LOGGER.debug("No VMs found for switches")
 
     if switches:
         async_add_entities(switches)

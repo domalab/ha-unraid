@@ -4,14 +4,13 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
-from homeassistant import config_entries
-from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PORT
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv
+from homeassistant import config_entries # type: ignore
+from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PORT # type: ignore
+from homeassistant.data_entry_flow import FlowResult # type: ignore
+from homeassistant.exceptions import HomeAssistantError # type: ignore
 
 from .const import (
+    CONF_DOCKER_INSIGHTS,
     DOMAIN,
     DEFAULT_PORT,
     CONF_GENERAL_INTERVAL,
@@ -31,46 +30,70 @@ def get_schema_base(
     disk_interval: int,
     include_auth: bool = False,
     has_ups: bool = False,
+    docker_insights: bool = False
 ) -> vol.Schema:
     """Get base schema with sliders for both intervals."""
-    schema = {
-        vol.Required(
-            CONF_GENERAL_INTERVAL,
-            default=general_interval
-        ): vol.All(
-            vol.Coerce(int),
-            vol.Range(
-                min=MIN_UPDATE_INTERVAL,
-                max=MAX_GENERAL_INTERVAL,
-                msg=f"General interval must be between {MIN_UPDATE_INTERVAL} and {MAX_GENERAL_INTERVAL} minutes"
-            )
-        ),
-        vol.Required(
-            CONF_DISK_INTERVAL,
-            default=disk_interval
-        ): vol.All(
-            vol.Coerce(int),
-            vol.Range(
-                min=MIN_DISK_INTERVAL,
-                max=MAX_DISK_INTERVAL,
-                msg=f"Disk interval must be between {MIN_DISK_INTERVAL} and {MAX_DISK_INTERVAL} hours"
-            )
-        ),
-    }
-
     if include_auth:
-        auth_schema = {
+        # Initial setup schema with correct field order
+        schema = {
             vol.Required(CONF_HOST): str,
             vol.Required(CONF_USERNAME): str,
             vol.Required(CONF_PASSWORD): str,
             vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
+            vol.Required(
+            CONF_GENERAL_INTERVAL,
+            default=general_interval
+            ): vol.All(
+            vol.Coerce(int),
+            vol.Range(
+                min=MIN_UPDATE_INTERVAL,
+                max=MAX_GENERAL_INTERVAL,
+                msg="General interval must be between "
+                f"{MIN_UPDATE_INTERVAL} and {MAX_GENERAL_INTERVAL} minutes"
+            )
+            ),
+            vol.Required(
+            CONF_DISK_INTERVAL,
+            default=disk_interval
+            ): vol.All(
+            vol.Coerce(int),
+            vol.Range(
+                min=MIN_DISK_INTERVAL,
+                max=MAX_DISK_INTERVAL,
+                msg="Disk interval must be between "
+                f"{MIN_DISK_INTERVAL} and {MAX_DISK_INTERVAL} hours"
+            )
+            ),
+            vol.Required(CONF_HAS_UPS, default=has_ups): bool,
         }
-        schema = {**auth_schema, **schema}
     else:
-        schema[vol.Optional(CONF_PORT, default=DEFAULT_PORT)] = vol.Coerce(int)
+        # Options schema remains unchanged
+        schema = {
+            vol.Optional(CONF_PORT, default=DEFAULT_PORT): vol.Coerce(int),
+            vol.Required(
+                CONF_GENERAL_INTERVAL,
+                default=general_interval
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(
+                    min=MIN_UPDATE_INTERVAL,
+                    max=MAX_GENERAL_INTERVAL
+                )
+            ),
+            vol.Required(
+                CONF_DISK_INTERVAL,
+                default=disk_interval
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(
+                    min=MIN_DISK_INTERVAL,
+                    max=MAX_DISK_INTERVAL
+                )
+            ),
+            vol.Required(CONF_HAS_UPS, default=has_ups): bool,
+            vol.Required(CONF_DOCKER_INSIGHTS, default=docker_insights): bool,
+        }
 
-    schema[vol.Required(CONF_HAS_UPS, default=has_ups)] = bool
-    
     return vol.Schema(schema)
 
 def get_init_schema(general_interval: int, disk_interval: int) -> vol.Schema:
@@ -80,13 +103,18 @@ def get_init_schema(general_interval: int, disk_interval: int) -> vol.Schema:
 def get_options_schema(
     general_interval: int,
     disk_interval: int,
-    port: int,
     has_ups: bool,
+    docker_insights: bool = False,
 ) -> vol.Schema:
     """Get schema for options flow."""
-    return get_schema_base(general_interval, disk_interval, has_ups=has_ups)
+    return get_schema_base(
+        general_interval,
+        disk_interval,
+        has_ups=has_ups,
+        docker_insights=docker_insights
+    )
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+async def validate_input(data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
     api = UnraidAPI(data[CONF_HOST], data[CONF_USERNAME], data[CONF_PASSWORD], data[CONF_PORT])
 
@@ -103,21 +131,29 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Unraid."""
 
     VERSION = 1
-    
+
     def __init__(self):
         """Initialize the config flow."""
         self._general_interval = DEFAULT_GENERAL_INTERVAL
         self._disk_interval = DEFAULT_DISK_INTERVAL
+        self._host = None
+
+    def is_matching(self, other_flow: dict[str, Any]) -> bool:
+        """Determine if config flow matches the other flow dictionary."""
+        if not self._host:
+            return False
+        return other_flow.get(CONF_HOST, "") == self._host
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
-        
+
         if user_input is not None:
             try:
-                info = await validate_input(self.hass, user_input)
+                self._host = user_input[CONF_HOST]
+                info = await validate_input(user_input)
                 return self.async_create_entry(title=info["title"], data=user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -129,22 +165,31 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._disk_interval
         )
 
+        descriptions = {
+            "host_description": "IP address or hostname of your Unraid server",
+            "username_description": "Username for SSH access",
+            "password_description": "Password for SSH access",
+            "port_description": f"SSH port (default: {DEFAULT_PORT})",
+            "general_interval_description": (
+            "How often to update non-disk sensors (1-60 minutes)"
+            ),
+            "disk_interval_description": (
+            "How often to update disk information (1-24 hours)"
+            ),
+        }
+
         return self.async_show_form(
             step_id="user",
             data_schema=schema,
             errors=errors,
-            description_placeholders={
-                "host_description": "IP address or hostname of your Unraid server",
-                "username_description": "Username for SSH access",
-                "password_description": "Password for SSH access",
-                "port_description": f"SSH port (default: {DEFAULT_PORT})",
-                "general_interval_description": "How often to update non-disk sensors (1-60 minutes)",
-                "disk_interval_description": "How often to update disk information (1-24 hours)",
-            },
+            description_placeholders=descriptions,
         )
 
+    async def async_step_import(self, import_data: dict[str, Any]) -> FlowResult:
+        """Handle import from configuration.yaml."""
+        return await self.async_step_user(import_data)
+
     @staticmethod
-    @callback
     def async_get_options_flow(config_entry):
         """Get the options flow for this handler."""
         return OptionsFlowHandler(config_entry)
@@ -154,7 +199,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        self._config_entry = config_entry
         self._general_interval = config_entry.options.get(
             CONF_GENERAL_INTERVAL, DEFAULT_GENERAL_INTERVAL
         )
@@ -163,8 +208,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
         self._port = config_entry.options.get(CONF_PORT, DEFAULT_PORT)
         self._has_ups = config_entry.options.get(
-            CONF_HAS_UPS, 
+            CONF_HAS_UPS,
             config_entry.data.get(CONF_HAS_UPS, False)
+        )
+        self._docker_insights = config_entry.options.get(
+            CONF_DOCKER_INSIGHTS,
+            config_entry.data.get(CONF_DOCKER_INSIGHTS, False)
         )
 
     async def async_step_init(
@@ -172,28 +221,49 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(
-                title="",
-                data={
-                    **self.config_entry.options,
-                    **user_input,
-                    CONF_HAS_UPS: user_input.get(CONF_HAS_UPS, self._has_ups),
-                }
-            )
+            options = {
+                CONF_PORT: user_input[CONF_PORT],
+                CONF_GENERAL_INTERVAL: user_input[CONF_GENERAL_INTERVAL],
+                CONF_DISK_INTERVAL: user_input[CONF_DISK_INTERVAL],
+                CONF_HAS_UPS: user_input[CONF_HAS_UPS],
+                CONF_DOCKER_INSIGHTS: user_input[CONF_DOCKER_INSIGHTS],
+            }
 
-        schema = get_options_schema(
-            self._general_interval,
-            self._disk_interval,
-            self._port,
-            self._has_ups,
-        )
+            return self.async_create_entry(title="", data=options)
+
+        schema = {
+            vol.Optional(CONF_PORT, default=self._port): vol.Coerce(int),
+            vol.Required(
+                CONF_GENERAL_INTERVAL,
+                default=self._general_interval
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(
+                    min=MIN_UPDATE_INTERVAL,
+                    max=MAX_GENERAL_INTERVAL
+                )
+            ),
+            vol.Required(
+                CONF_DISK_INTERVAL,
+                default=self._disk_interval
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(
+                    min=MIN_DISK_INTERVAL,
+                    max=MAX_DISK_INTERVAL
+                )
+            ),
+            vol.Required(CONF_HAS_UPS, default=self._has_ups): bool,
+            vol.Required(CONF_DOCKER_INSIGHTS, default=self._docker_insights): bool,
+        }
 
         return self.async_show_form(
             step_id="init",
-            data_schema=schema,
+            data_schema=vol.Schema(schema),
             description_placeholders={
                 "general_interval_description": "How often to update non-disk sensors (1-60 minutes)",
-                "disk_interval_description": "How often to update disk information (1-24 hours)"
+                "disk_interval_description": "How often to update disk information (1-24 hours)",
+                "docker_insights_description": "Enable detailed Docker container monitoring"
             },
         )
 

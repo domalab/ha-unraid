@@ -8,7 +8,9 @@
   "homekit": {},
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/domalab/ha-unraid/issues",
-  "requirements": [],
+  "requirements": [
+  "aiodocker>=0.24.0"
+  ],
   "ssdp": [],
   "version": "2024.11.24",
   "zeroconf": []

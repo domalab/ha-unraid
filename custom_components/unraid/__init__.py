@@ -1,6 +1,7 @@
 """The Unraid integration."""
 from __future__ import annotations
 import logging
+import warnings
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_HOST,
@@ -10,6 +11,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from cryptography.utils import CryptographyDeprecationWarning
 
 from .const import (
     CONF_HOSTNAME,
@@ -26,6 +28,13 @@ from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
 from .services import async_setup_services, async_unload_services
 from .migrations import async_migrate_entities
+
+# Suppress deprecation warnings for paramiko
+warnings.filterwarnings(
+    "ignore",
+    category=CryptographyDeprecationWarning,
+    message="TripleDES has been moved"
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +116,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    
+    # Stop coordinator and cleanup connections
+    await coordinator.async_unload()
     
     # Unload platforms
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
