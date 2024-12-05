@@ -10,12 +10,39 @@ import aiodocker # type: ignore
 import asyncio
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, TYPE_CHECKING, Type
 from contextlib import suppress
 
 from ..unraid import UnraidAPI
 
+if TYPE_CHECKING:
+    from . import UnraidDockerInsights
+
 _LOGGER = logging.getLogger(__name__)
+
+@dataclass
+class DockerContainerStats:
+    """Docker container statistics."""
+    state: str
+    status: str
+    health: str
+    image: str
+    version: str
+    
+    cpu_percentage: float
+    cpu_1core_percentage: float
+    memory_usage: float  # MB
+    memory_limit: float  # MB
+    memory_percentage: float
+    
+    network_speed_up: float  # KB/s
+    network_speed_down: float  # KB/s
+    network_total_up: float  # MB
+    network_total_down: float  # MB
+    
+    uptime: Optional[datetime]
+    created: Optional[datetime]
+    last_updated: datetime
 
 class DockerSessionManager:
     """Manages Docker client sessions with automatic cleanup and reconnection."""
@@ -158,31 +185,7 @@ class DockerSessionManager:
                 else:
                     raise
 
-@dataclass
-class DockerContainerStats:
-    """Docker container statistics."""
-    state: str
-    status: str
-    health: str
-    image: str
-    version: str
-    
-    cpu_percentage: float
-    cpu_1core_percentage: float
-    memory_usage: float  # MB
-    memory_limit: float  # MB
-    memory_percentage: float
-    
-    network_speed_up: float  # KB/s
-    network_speed_down: float  # KB/s
-    network_total_up: float  # MB
-    network_total_down: float  # MB
-    
-    uptime: Optional[datetime]
-    created: Optional[datetime]
-    last_updated: datetime
-
-class DockerInsights:
+class UnraidDockerInsights:
     """Class to monitor Docker containers on Unraid using HTTP API."""
 
     def __init__(self, api: "UnraidAPI") -> None:
@@ -194,6 +197,7 @@ class DockerInsights:
         self._docker_proxy_port = 2375
         self._closed = False
         self._proxy_url: Optional[str] = None
+        self._monitor_ready = asyncio.Event()
 
         # Initialize session manager
         self._session_manager: Optional[DockerSessionManager] = None
@@ -270,7 +274,7 @@ class DockerInsights:
         """Check if Docker client is connected."""
         return bool(self._session_manager and self._session_manager.is_connected())
 
-    async def __aenter__(self) -> 'DockerInsights':
+    async def __aenter__(self) -> 'UnraidDockerInsights':
         """Enter async context."""
         await self.connect()
         return self
@@ -342,6 +346,11 @@ class DockerInsights:
 
     async def get_container_stats(self) -> Dict[str, Any]:
         """Get Docker container statistics."""
+        # Check if monitor is ready
+        if not self._monitor_ready.is_set():
+            _LOGGER.debug("Docker monitor not yet ready, skipping stats collection")
+            return {"containers": {}, "summary": {}}
+
         if not self._session_manager:
             await self.connect()
             

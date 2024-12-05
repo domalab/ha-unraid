@@ -64,6 +64,10 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self._disk_update_lock = asyncio.Lock()
         self._metrics_lock = asyncio.Lock()
 
+        # Docker Insights
+        self._docker_connect_task = None
+        self._docker_monitor_ready = asyncio.Event()
+
         # Update tracking
         self._last_disk_update: datetime | None = None
         self._update_metrics: deque[DiskUpdateMetrics] = deque(maxlen=10)
@@ -152,6 +156,14 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
     async def async_stop(self) -> None:
         """Stop the coordinator and cleanup resources."""
         try:
+            # Cancel Docker connection task if running
+            if self._docker_connect_task and not self._docker_connect_task.done():
+                self._docker_connect_task.cancel()
+                try:
+                    await self._docker_connect_task
+                except asyncio.CancelledError:
+                    pass
+
             if self.docker_monitor:
                 await self.docker_monitor.close()
                 self.docker_monitor = None
@@ -514,19 +526,54 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
             # Initialize Docker monitoring if enabled
             if self.docker_insights:
-                try:
-                    self.docker_monitor = DockerInsights(self.api)
-                    await self.docker_monitor.connect()
-                    _LOGGER.debug("Connected to Docker monitor")
-                except Exception as err:
-                    _LOGGER.error("Failed to initialize Docker monitoring: %s", err)
-                    self.docker_monitor = None
+                await self.async_setup_docker_monitoring()
 
             return True
 
         except Exception as err:
             _LOGGER.error("Failed to connect to Unraid server: %s", err)
             raise ConfigEntryNotReady from err
+
+    async def async_setup_docker_monitoring(self) -> None:
+        """Set up Docker monitoring in a non-blocking way."""
+        try:
+            DockerInsights = get_docker_insights()
+            self.docker_monitor = DockerInsights(self.api)
+            
+            # Create connection task but don't wait for it
+            self._docker_connect_task = asyncio.create_task(
+                self._establish_docker_connection()
+            )
+            
+        except Exception as err:
+            _LOGGER.error("Failed to initialize Docker monitoring: %s", err)
+            self.docker_monitor = None
+
+    async def _establish_docker_connection(self, retry_count: int = 3, retry_delay: float = 2.0) -> None:
+        """Establish Docker connection with retry logic."""
+        if not self.docker_monitor:
+            return
+            
+        for attempt in range(retry_count):
+            try:
+                await self.docker_monitor.connect()
+                _LOGGER.debug("Successfully connected to Docker monitor")
+                self.docker_monitor._monitor_ready.set() # Update this line
+                return
+                
+            except Exception as err:
+                if attempt < retry_count - 1:
+                    _LOGGER.warning(
+                        "Docker connection attempt %d/%d failed: %s. Retrying in %s seconds",
+                        attempt + 1, 
+                        retry_count,
+                        err,
+                        retry_delay
+                    )
+                    await asyncio.sleep(retry_delay)
+                else:
+                    _LOGGER.error("Failed to establish Docker connection after %d attempts", retry_count)
+                    self.docker_monitor = None
 
     async def async_update_ups_status(self, has_ups: bool) -> None:
         """Update the UPS status and trigger a refresh."""
@@ -535,17 +582,27 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
     async def async_update_docker_insights(self, enabled: bool) -> None:
         """Update Docker insights status."""
-        self.docker_insights = enabled
-        if enabled and not self.docker_monitor:
-            try:
-                DockerInsights = get_docker_insights()
-                self.docker_monitor = DockerInsights(self.api)
-                await self.docker_monitor.connect()
-            except Exception as err:
-                _LOGGER.error("Failed to initialize Docker monitoring: %s", err)
-                self.docker_monitor = None
-        elif not enabled and self.docker_monitor:
-            await self.docker_monitor.close()
-            self.docker_monitor = None
+        try:
+            # If enabling and no monitor exists
+            if enabled and not self.docker_monitor:
+                await self._setup_docker_monitoring()
+            
+            # If disabling and monitor exists
+            elif not enabled and self.docker_monitor:
+                try:
+                    await self.docker_monitor.close()
+                except Exception as err:
+                    _LOGGER.warning("Error closing Docker monitor: %s", err)
+                finally:
+                    self.docker_monitor = None
 
-        await self.async_request_refresh()
+            # Update status
+            self.docker_insights = enabled
+            
+            # Request refresh
+            await self.async_request_refresh()
+
+        except Exception as err:
+            _LOGGER.error("Error updating Docker insights: %s", err)
+            self.docker_monitor = None
+            self.docker_insights = False
