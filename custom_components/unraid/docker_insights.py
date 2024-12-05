@@ -6,10 +6,8 @@ per container, including state, resource usage, and network statistics.
 from __future__ import annotations
 
 import logging
-import aiodocker
+import aiodocker # type: ignore
 import asyncio
-import os
-import aiofiles
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional, Callable
@@ -86,15 +84,35 @@ class DockerSessionManager:
 
     async def _cleanup_client(self, client: aiodocker.Docker) -> None:
         """Clean up a Docker client instance."""
-        with suppress(Exception):
+        try:
+            # Close client first
             if hasattr(client, 'close'):
                 await client.close()
             
+            # Ensure the Docker client's session is closed
+            if hasattr(client, 'docker') and hasattr(client.docker, 'session'):
+                await client.docker.session.close()
+            
+            # Close connector
             if hasattr(client, 'connector') and client.connector:
                 await client.connector.close()
                 
+            # Close session explicitly
             if hasattr(client, 'session') and client.session:
                 await client.session.close()
+            
+            # Force cleanup of any remaining sessions
+            for attr in dir(client):
+                if 'session' in attr.lower():
+                    session = getattr(client, attr)
+                    if session and hasattr(session, 'close'):
+                        await session.close()
+                
+        except Exception as err:
+            _LOGGER.debug("Error during Docker client cleanup: %s", err)
+        finally:
+            # Clear references
+            self._client = None
 
     async def close(self) -> None:
         """Close the session manager and cleanup resources."""
@@ -109,7 +127,10 @@ class DockerSessionManager:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context."""
-        await self.close()
+        try:
+            await self.close()
+        except Exception as err:
+            _LOGGER.error("Error during context exit cleanup: %s", err)
 
     def is_connected(self) -> bool:
         """Check if currently connected."""
@@ -161,90 +182,6 @@ class DockerContainerStats:
     created: Optional[datetime]
     last_updated: datetime
 
-async def detect_environment() -> dict[str, bool]:
-    """Detect the environment Home Assistant is running in."""
-    try:
-        env = {
-            "in_docker": False,
-            "on_unraid": False,
-            "socket_mounted": False
-        }
-        
-        # Check if running in Docker
-        env["in_docker"] = os.path.exists('/.dockerenv')
-        
-        if env["in_docker"]:
-            # Check if Docker socket is mounted
-            env["socket_mounted"] = os.path.exists('/var/run/docker.sock')
-            
-            # Check if running on Unraid
-            if os.environ.get('UNRAID_VERSION'):
-                env["on_unraid"] = True
-            else:
-                try:
-                    async with aiofiles.open('/etc/unraid-version', 'r') as f:
-                        env["on_unraid"] = True
-                except FileNotFoundError:
-                    if env["socket_mounted"]:
-                        docker = aiodocker.Docker()
-                        try:
-                            container = await docker.containers.get_container_by_name('homeassistant')
-                            labels = container.get('Config', {}).get('Labels', {})
-                            env["on_unraid"] = any(
-                                label for label in labels 
-                                if 'unraid' in label.lower()
-                            )
-                        except Exception:
-                            pass
-                        finally:
-                            await docker.close()
-                except Exception as err:
-                    _LOGGER.debug("Error checking Unraid environment: %s", err)
-
-        _LOGGER.debug(
-            "Environment detection results: %s",
-            {k: v for k, v in env.items()}
-        )
-        return env
-        
-    except Exception as err:
-        _LOGGER.error("Error detecting environment: %s", err)
-        return {
-            "in_docker": False,
-            "on_unraid": False,
-            "socket_mounted": False
-        }
-
-async def verify_docker_access(socket_path: str = '/var/run/docker.sock') -> bool:
-    """Verify Docker socket exists and is accessible."""
-    docker = None
-    try:
-        if not os.path.exists(socket_path):
-            _LOGGER.error(
-                "Docker socket not found at %s. Please mount it in your "
-                "Home Assistant container", socket_path
-            )
-            return False
-            
-        if not os.access(socket_path, os.R_OK):
-            _LOGGER.error(
-                "Docker socket exists but is not readable. Check permissions "
-                "on %s", socket_path
-            )
-            return False
-            
-        # Try to make a test connection
-        docker = aiodocker.Docker(url=f"unix://{socket_path}")
-        await docker.containers.list()
-        return True
-        
-    except Exception as err:
-        _LOGGER.error("Cannot connect to Docker socket: %s", err)
-        return False
-    finally:
-        if docker:
-            await docker.close()
-
 class DockerInsights:
     """Class to monitor Docker containers on Unraid using HTTP API."""
 
@@ -255,17 +192,11 @@ class DockerInsights:
         self._prev_network: dict[str, dict] = {}
         self._prev_time: dict[str, datetime] = {}
         self._docker_proxy_port = 2375
-        self._environment: dict[str, bool] = {}
-        self._connection_type: str = "unknown"
         self._closed = False
         self._proxy_url: Optional[str] = None
 
         # Initialize session manager
         self._session_manager: Optional[DockerSessionManager] = None
-
-    def _create_socket_client(self) -> aiodocker.Docker:  
-        """Create a Docker client using local socket."""
-        return aiodocker.Docker(url='unix:///var/run/docker.sock')
 
     def _create_proxy_client(self) -> aiodocker.Docker:  
         """Create a Docker client using proxy."""
@@ -274,45 +205,29 @@ class DockerInsights:
         return aiodocker.Docker(url=self._proxy_url)
 
     async def _detect_and_connect(self) -> None:
-        """Detect and establish the best available Docker connection."""
+        """Detect and establish Docker connection through proxy."""
         try:
-            # Get environment info
-            env = await detect_environment()
-            self._environment = env
+            # First verify proxy is available
+            if not await self._verify_docker_proxy():
+                raise ConnectionError("Docker socket proxy not found or not accessible")
             
-            # Initialize session manager with appropriate connection factory
-            if env["in_docker"] and env["socket_mounted"]:
-                self._session_manager = DockerSessionManager(
-                    connection_factory=self._create_socket_client,
-                    max_retries=3,
-                    retry_delay=1.0,
-                    session_timeout=3600
-                )
-                self._connection_type = "socket"
-            else:
-                # First verify proxy is available
-                if not await self._verify_docker_proxy():
-                    raise ConnectionError("Docker socket proxy not found or not accessible")
-                
-                self._proxy_url = await self._get_docker_proxy_url()  # Store proxy URL
-                self._session_manager = DockerSessionManager(
-                    connection_factory=self._create_proxy_client,
-                    max_retries=3,
-                    retry_delay=1.0,
-                    session_timeout=3600
-                )
-                self._connection_type = "proxy"
-                
+            self._proxy_url = await self._get_docker_proxy_url()
+            self._session_manager = DockerSessionManager(
+                connection_factory=self._create_proxy_client,
+                max_retries=3,
+                retry_delay=1.0,
+                session_timeout=3600
+            )
+            
             # Test connection
             await self._session_manager.get_client()
-            _LOGGER.info("Successfully established Docker connection via %s", self._connection_type)
+            _LOGGER.info("Successfully established Docker connection via proxy")
 
         except Exception as err:
             self._session_manager = None
             raise ConnectionError(
-                "Could not establish Docker connection. Make sure either:\n"
-                "1. Home Assistant container has access to Docker socket\n"
-                "2. Docker socket proxy container is running"
+                "Could not establish Docker connection. Make sure Docker socket "
+                "proxy container is running"
             ) from err
 
     async def connect(self) -> None:
@@ -328,11 +243,27 @@ class DockerInsights:
     async def close(self) -> None:
         """Close the Docker connection and cleanup resources."""
         self._closed = True
-        if self._session_manager:
-            await self._session_manager.close()
+        await self.cleanup()
+
+    async def cleanup(self) -> None:
+        """Clean up all resources."""
+        try:
+            if self._session_manager:
+                await self._session_manager.close()
+                self._session_manager = None
+
+            # Force cleanup any remaining sessions
+            tasks = [
+                task for task in asyncio.all_tasks()
+                if 'aiodocker' in str(task) and not task.done()
+            ]
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                
+        except Exception as err:
+            _LOGGER.error("Error during Docker insights cleanup: %s", err)
+        finally:
             self._session_manager = None
-        self._connection_type = "unknown"
-        self._proxy_url = None
 
     @property
     def is_connected(self) -> bool:
