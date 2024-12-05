@@ -2,21 +2,11 @@
 from __future__ import annotations
 
 import logging
-import re
-
+from typing import Dict, List, Any, Optional
 from enum import Enum
 
 import asyncio
-import asyncssh
-from typing import Dict, List, Any, Optional
-
-from datetime import datetime, timezone
-import re
-from typing import Dict, List, Any, Optional
-from enum import Enum
-from datetime import datetime, timezone
-
-import asyncssh
+import asyncssh # type: ignore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,7 +100,7 @@ class DockerOperationsMixin:
         except (asyncssh.Error, asyncio.TimeoutError, OSError) as e:
             _LOGGER.error("Error stopping container %s: %s", container_name, str(e))
             return False
-
+            
     async def get_docker_proxy_url(self) -> str:
         """Get the URL for connecting to Docker socket proxy."""
         try:

@@ -12,6 +12,6 @@
   "aiodocker>=0.24.0"
   ],
   "ssdp": [],
-  "version": "2024.11.24",
+  "version": "2024.12.05",
   "zeroconf": []
 }
