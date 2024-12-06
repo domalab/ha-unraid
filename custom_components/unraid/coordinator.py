@@ -1,11 +1,12 @@
 """Data Update Coordinator for Unraid."""
 from __future__ import annotations
 
+from contextlib import suppress
 import logging
 import asyncio
 import hashlib
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Self
 
 from datetime import datetime, timedelta
 from collections import deque
@@ -81,6 +82,10 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self._last_valid_mapping: Optional[Dict[str, str]] = None
         self._mapping_error_count: int = 0
 
+        # State management
+        self._busy = False
+        self._closed = False
+
         # Get update intervals from options with validation
         self._general_interval = max(
             1,
@@ -96,7 +101,6 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 entry.options.get(CONF_DISK_INTERVAL, DEFAULT_DISK_INTERVAL)
             )
         )
-
         self._disk_update_interval = timedelta(hours=self._disk_interval)
 
         # Docker Insights initialization
@@ -139,7 +143,6 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         """Check if a disk update is due."""
         if self._last_disk_update is None:
             return True
-
         next_update = self._last_disk_update + self._disk_update_interval
         return dt_util.utcnow() >= next_update
 
@@ -155,41 +158,42 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
     async def async_stop(self) -> None:
         """Stop the coordinator and cleanup resources."""
-        try:
-            # Cancel Docker connection task if running
-            if self._docker_connect_task and not self._docker_connect_task.done():
-                self._docker_connect_task.cancel()
-                try:
-                    await self._docker_connect_task
-                except asyncio.CancelledError:
-                    pass
-
-            if self.docker_monitor:
-                await self.docker_monitor.close()
-                self.docker_monitor = None
-
-            # Ensure API connection is closed
-            if hasattr(self.api, 'conn') and self.api.conn:
-                await self.api.disconnect()
-
-            # Close any remaining sessions
-            if hasattr(self, '_session') and self._session:
-                await self._session.close()
-                
-        except Exception as err:
-            _LOGGER.error("Error during coordinator shutdown: %s", err)
+        self._closed = True
+        await self.async_unload()
 
     async def async_unload(self) -> None:
         """Unload the coordinator and cleanup all resources."""
-        await self.async_stop()
-        
         try:
-            # Clean up any remaining unclosed connectors
-            for task in asyncio.all_tasks():
-                if 'connector' in str(task) and not task.done():
-                    task.cancel()
+            self._busy = True
+            
+            # Stop Docker monitoring if enabled
+            if self.docker_monitor:
+                try:
+                    await self.docker_monitor.disable()
+                    await self.docker_monitor.cleanup()
+                except Exception as err:
+                    _LOGGER.debug("Error disabling Docker monitor: %s", err)
+                finally:
+                    self.docker_monitor = None
+
+            # Cancel any pending tasks
+            if self._docker_connect_task and not self._docker_connect_task.done():
+                self._docker_connect_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self._docker_connect_task
+
+            # Final cleanup
+            try:
+                if hasattr(self.api, 'session') and self.api.session:
+                    await self.api.session.close()
+            except Exception as err:
+                _LOGGER.debug("Error closing API session: %s", err)
+
         except Exception as err:
-            _LOGGER.error("Error cleaning up tasks: %s", err)
+            _LOGGER.debug("Error during unload: %s", err)
+        finally:
+            self._busy = False
+            self._closed = True
 
     def _get_disk_config_hash(self, system_stats: dict) -> str:
         """Generate a hash of current disk configuration to detect changes."""
@@ -440,19 +444,40 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     except (ConnectionError, TimeoutError, OSError, ValueError) as err:
                         _LOGGER.error("Error getting UPS info: %s", err)
 
-                # Step 5: Docker data (Only if Docker insights is enabled)
-                if self.docker_insights and self.docker_monitor:
+                # Step 5: Docker data (Only if Docker insights is enabled) 
+                if self.docker_insights:
                     try:
+                        # Verify docker monitor exists and is ready
+                        if not self.docker_monitor:
+                            _LOGGER.debug("Docker monitor not initialized, attempting setup")
+                            await self.async_setup_docker_monitoring()
+                            # Early return if setup fails
+                            if not self.docker_monitor:
+                                data["docker_stats"] = {"containers": {}, "summary": {}}
+                                return data
+
                         # Get basic container list first
                         containers = await self.api.get_docker_containers()
                         data["docker_containers"] = containers
 
-                        # Then get detailed stats if available
-                        docker_stats = await self.docker_monitor.get_container_stats()
-                        _LOGGER.debug("Got Docker stats: %s", docker_stats)
-                        data["docker_stats"] = docker_stats
+                        # Then get detailed stats if monitor is ready
+                        if hasattr(self.docker_monitor, 'get_container_stats'):
+                            docker_stats = await self.docker_monitor.get_container_stats()
+                            if docker_stats:
+                                _LOGGER.debug("Got Docker stats: %s", docker_stats)
+                                data["docker_stats"] = docker_stats
+                            else:
+                                _LOGGER.debug("No Docker stats returned")
+                                data["docker_stats"] = {"containers": {}, "summary": {}}
+                        else:
+                            _LOGGER.warning("Docker monitor missing get_container_stats method")
+                            data["docker_stats"] = {"containers": {}, "summary": {}}
+                                
                     except Exception as err:
-                        _LOGGER.error("Error getting Docker stats: %s", err)
+                        _LOGGER.error("Error getting Docker stats: %s", err, exc_info=True)
+                        if "NoneType" in str(err) or "Session is closed" in str(err):
+                            _LOGGER.info("Docker connection lost, will retry on next update")
+                            self.docker_monitor = None
                         # Don't let Docker errors affect other data
                         data["docker_containers"] = []
                         data["docker_stats"] = {"containers": {}, "summary": {}}
@@ -468,51 +493,46 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self,
         system_stats: dict[str, Any]
     ) -> None:
-        """Update network statistics with proper rate calculation."""
+        """Update network statistics asynchronously."""
         try:
             network_stats = await self.api.get_network_stats()
-            current_time = dt_util.utcnow()
-
-            if (hasattr(self, '_previous_network_stats') and
-                hasattr(self, '_last_network_update')):
-
-                time_diff = (
-                    current_time - self._last_network_update
-                ).total_seconds()
-
-                if time_diff > 0:
+            
+            if network_stats:
+                # Store network stats in system_stats
+                system_stats['network_stats'] = network_stats
+                
+                # Log debug info for significant changes
+                if self._previous_network_stats:
                     for interface, stats in network_stats.items():
                         if interface in self._previous_network_stats:
                             prev_stats = self._previous_network_stats[interface]
+                            rx_change = abs(stats['rx_speed'] - prev_stats.get('rx_speed', 0))
+                            tx_change = abs(stats['tx_speed'] - prev_stats.get('tx_speed', 0))
+                            
+                            # Log significant changes (more than 20% difference)
+                            if rx_change > prev_stats.get('rx_speed', 0) * 0.2:
+                                _LOGGER.debug(
+                                    "Significant RX speed change for %s: %.2f -> %.2f",
+                                    interface,
+                                    prev_stats.get('rx_speed', 0),
+                                    stats['rx_speed']
+                                )
+                            if tx_change > prev_stats.get('tx_speed', 0) * 0.2:
+                                _LOGGER.debug(
+                                    "Significant TX speed change for %s: %.2f -> %.2f",
+                                    interface,
+                                    prev_stats.get('tx_speed', 0),
+                                    stats['tx_speed']
+                                )
+                
+                # Update previous stats for next comparison
+                self._previous_network_stats = network_stats
 
-                            # Calculate rates with overflow protection
-                            for direction in ['rx', 'tx']:
-                                current = stats[f'{direction}_bytes']
-                                previous = prev_stats[f'{direction}_bytes']
-
-                                if current >= previous:
-                                    rate = (current - previous) / time_diff
-                                else:
-                                    # Handle counter overflow
-                                    rate = 0
-                                    _LOGGER.debug(
-                                        "Network counter overflow detected for %s %s",
-                                        interface,
-                                        direction
-                                    )
-
-                                stats[f'{direction}_speed'] = rate
-
-            # Update previous stats
-            self._previous_network_stats = network_stats
-            self._last_network_update = current_time
-
-            # Add network stats to system_stats
-            system_stats['network_stats'] = network_stats
-
-        except (ConnectionError, TimeoutError, OSError, ValueError) as err:
+        except Exception as err:
             _LOGGER.error("Error updating network stats: %s", err)
-            # Don't re-raise - network stats are non-critical
+            # Keep previous stats in case of error
+            if self._previous_network_stats:
+                system_stats['network_stats'] = self._previous_network_stats
 
     async def async_setup(self) -> bool:
         """Verify we can connect to the Unraid server and setup monitoring."""
@@ -538,13 +558,17 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         """Set up Docker monitoring in a non-blocking way."""
         try:
             DockerInsights = get_docker_insights()
-            self.docker_monitor = DockerInsights(self.api)
-            
-            # Create connection task but don't wait for it
-            self._docker_connect_task = asyncio.create_task(
-                self._establish_docker_connection()
-            )
-            
+            if DockerInsights:
+                self.docker_monitor = DockerInsights(self.api)
+                
+                # Create connection task but don't wait for it
+                self._docker_connect_task = asyncio.create_task(
+                    self._establish_docker_connection()
+                )
+            else:
+                _LOGGER.error("Docker insights class not available")
+                self.docker_monitor = None
+                
         except Exception as err:
             _LOGGER.error("Failed to initialize Docker monitoring: %s", err)
             self.docker_monitor = None
@@ -581,28 +605,83 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         await self.async_refresh()
 
     async def async_update_docker_insights(self, enabled: bool) -> None:
-        """Update Docker insights status."""
-        try:
-            # If enabling and no monitor exists
-            if enabled and not self.docker_monitor:
-                await self._setup_docker_monitoring()
-            
-            # If disabling and monitor exists
-            elif not enabled and self.docker_monitor:
-                try:
-                    await self.docker_monitor.close()
-                except Exception as err:
-                    _LOGGER.warning("Error closing Docker monitor: %s", err)
-                finally:
-                    self.docker_monitor = None
+        """Update Docker insights status and manage monitor lifecycle."""
+        # Store previous state for rollback
+        previous_state = self.docker_insights
+        previous_monitor = self.docker_monitor
 
-            # Update status
+        try:
+            _LOGGER.debug("Updating Docker insights state: enabled=%s", enabled)
             self.docker_insights = enabled
-            
-            # Request refresh
+
+            if enabled and not self.docker_monitor:
+                _LOGGER.debug("Enabling Docker monitoring")
+                await self.async_setup_docker_monitoring()
+                if not self.docker_monitor:
+                    raise RuntimeError("Failed to initialize Docker monitoring")
+                    
+            elif not enabled and self.docker_monitor:
+                _LOGGER.debug("Disabling Docker monitoring")
+                try:
+                    # Gracefully shut down monitoring
+                    monitor = self.docker_monitor
+                    self.docker_monitor = None  # Prevent new operations
+
+                    # Disable stats collection first
+                    if hasattr(monitor, 'disable'):
+                        try:
+                            await monitor.disable()
+                        except Exception as err:
+                            _LOGGER.warning("Error disabling Docker monitor: %s", err)
+
+                    # Then close all connections
+                    if hasattr(monitor, 'cleanup'):
+                        await monitor.cleanup()
+                    elif hasattr(monitor, 'close'):
+                        await monitor.close()
+
+                    # Cancel any remaining tasks
+                    tasks = [
+                        task for task in asyncio.all_tasks()
+                        if 'docker' in str(task).lower() and not task.done()
+                    ]
+                    for task in tasks:
+                        task.cancel()
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+
+                except Exception as err:
+                    _LOGGER.error("Error during Docker monitor shutdown: %s", err)
+                    # Continue with cleanup despite errors
+
+            # Request data refresh
             await self.async_request_refresh()
+            _LOGGER.info(
+                "Successfully %s Docker insights", 
+                "enabled" if enabled else "disabled"
+            )
 
         except Exception as err:
-            _LOGGER.error("Error updating Docker insights: %s", err)
-            self.docker_monitor = None
-            self.docker_insights = False
+            _LOGGER.error("Failed to %s Docker insights: %s", 
+                        "enable" if enabled else "disable", 
+                        err)
+            
+            # Rollback to previous state
+            self.docker_insights = previous_state
+            self.docker_monitor = previous_monitor
+            
+            # Ensure cleanup if we failed during enable
+            if enabled and self.docker_monitor and self.docker_monitor != previous_monitor:
+                try:
+                    await self.docker_monitor.cleanup()
+                except Exception as cleanup_err:
+                    _LOGGER.error("Error during rollback cleanup: %s", cleanup_err)
+                finally:
+                    self.docker_monitor = previous_monitor
+
+            raise RuntimeError(f"Failed to update Docker insights: {err}") from err
+
+        finally:
+            # Ensure we're in a consistent state
+            if not enabled and self.docker_monitor:
+                self.docker_monitor = None

@@ -11,8 +11,8 @@
                     "port": "Port",
                     "general_interval": "General Update Interval (Minutes)",
                     "disk_interval": "Disk Update Interval (Hours)",
-                    "has_ups": "UPS Connected",
-                    "docker_insights": "Docker Insights"
+                    "has_ups": "UPS Insights",
+                    "docker_insights": "Docker Insights(Beta)"
                 },
                 "data_description": {
                     "host": "{host_description}",
@@ -44,8 +44,8 @@
                     "general_interval": "General Update Interval (Minutes)",
                     "disk_interval": "Disk Update Interval (Hours)",
                     "port": "SSH Port",
-                    "has_ups": "UPS Connected",
-                    "docker_insights": "Enable Docker Insights"
+                    "has_ups": "UPS Insights",
+                    "docker_insights": "Docker Insights(Beta)"
                 },
                 "data_description": {
                     "general_interval": "How often to update non-disk sensors (1-60 minutes)",

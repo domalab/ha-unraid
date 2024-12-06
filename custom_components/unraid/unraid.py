@@ -5,8 +5,9 @@ import logging
 import asyncio
 from typing import Optional
 
-import asyncssh
+import asyncssh # type: ignore
 
+from .api.network_operations import NetworkOperationsMixin
 from .api.disk_operations import DiskOperationsMixin
 from .api.docker_operations import DockerOperationsMixin
 from .api.vm_operations import VMOperationsMixin
@@ -17,6 +18,7 @@ from .api.userscript_operations import UserScriptOperationsMixin
 _LOGGER = logging.getLogger(__name__)
 
 class UnraidAPI(
+    NetworkOperationsMixin,
     DiskOperationsMixin,
     DockerOperationsMixin,
     VMOperationsMixin,
@@ -26,16 +28,24 @@ class UnraidAPI(
 ):
     """API client for interacting with Unraid servers."""
 
-    def __init__(self, host: str, username: str, password: str, port: int = 22):
-        """Initialize the Unraid API client.
+    def __init__(self, host: str, username: str, password: str, port: int = 22) -> None:
+        """Initialize the Unraid API client."""
         
-        Args:
-            host: Hostname or IP of the Unraid server
-            username: SSH username
-            password: SSH password
-            port: SSH port (default: 22)
-        """
-        super().__init__()
+        # Initialize Network Operations
+        NetworkOperationsMixin.__init__(self)
+
+        # Initialize other mixins
+        DiskOperationsMixin.__init__(self)
+        DockerOperationsMixin.__init__(self)
+        VMOperationsMixin.__init__(self)
+        SystemOperationsMixin.__init__(self)
+        UPSOperationsMixin.__init__(self)
+        UserScriptOperationsMixin.__init__(self)
+
+        # Set up network ops reference
+        if isinstance(self, SystemOperationsMixin):
+            self.set_network_ops(self)
+
         self.host = host
         self.username = username
         self.password = password
@@ -63,20 +73,7 @@ class UnraidAPI(
         command: str,
         timeout: Optional[int] = None
     ) -> asyncssh.SSHCompletedProcess:
-        """Execute a command on the Unraid server.
-        
-        Args:
-            command: Command to execute
-            timeout: Command timeout in seconds
-            
-        Returns:
-            SSHCompletedProcess containing exit status and output
-            
-        Raises:
-            asyncssh.Error: SSH connection issues
-            asyncio.TimeoutError: Command timeout
-            OSError: System-level errors
-        """
+        """Execute a command on the Unraid server."""
         await self.ensure_connection()
         try:
             if timeout is None:

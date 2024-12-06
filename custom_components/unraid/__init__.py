@@ -17,6 +17,7 @@ from homeassistant.exceptions import ConfigEntryNotReady  # type: ignore
 from cryptography.utils import CryptographyDeprecationWarning # type: ignore
 
 from .const import (
+    CONF_DOCKER_INSIGHTS,
     CONF_HOSTNAME,
     DOMAIN,
     PLATFORMS,
@@ -140,8 +141,32 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
-    await coordinator.async_update_ups_status(entry.options.get(CONF_HAS_UPS, False))
-    await hass.config_entries.async_reload(entry.entry_id)
+    try:
+        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    except KeyError:
+        _LOGGER.error("Could not find coordinator for config entry %s", entry.entry_id)
+        return
+
+    try:
+        # Handle UPS status updates
+        if CONF_HAS_UPS in entry.options:
+            try:
+                await coordinator.async_update_ups_status(entry.options[CONF_HAS_UPS])
+            except Exception as err:
+                _LOGGER.error("Error updating UPS status: %s", err)
+        
+        # Handle Docker Insights updates
+        if CONF_DOCKER_INSIGHTS in entry.options:
+            try:
+                await coordinator.async_update_docker_insights(entry.options[CONF_DOCKER_INSIGHTS])
+            except Exception as err:
+                _LOGGER.error("Error updating Docker Insights: %s", err)
+        
+        # Reload the config entry
+        await hass.config_entries.async_reload(entry.entry_id)
+        
+    except Exception as err:
+        _LOGGER.error("Error handling options update: %s", err)
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Update options."""

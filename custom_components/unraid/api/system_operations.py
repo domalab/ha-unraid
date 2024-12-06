@@ -8,7 +8,9 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
 import asyncio
-import asyncssh
+import asyncssh # type: ignore
+
+from .network_operations import NetworkOperationsMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,6 +29,14 @@ class ArrayState:
 
 class SystemOperationsMixin:
     """Mixin for system-related operations."""
+
+    def __init__(self) -> None:
+        """Initialize system operations."""
+        self._network_ops = None
+
+    def set_network_ops(self, network_ops: NetworkOperationsMixin) -> None:
+        """Set network operations instance."""
+        self._network_ops = network_ops
 
     async def get_system_stats(self) -> Dict[str, Any]:
         """Fetch system statistics from the Unraid server."""
@@ -321,109 +331,6 @@ class SystemOperationsMixin:
             _LOGGER.error("Error getting thermal zone data: %s", str(e))
 
         return temp_data
-
-    async def get_network_stats(self) -> Dict[str, Any]:
-            """Fetch network statistics from the Unraid system."""
-            try:
-                _LOGGER.debug("Fetching network statistics")
-
-                network_stats = {}
-
-                # Get active interfaces, include eth and bond interfaces
-                result = await self.execute_command(
-                    "ip -br link show | grep -E '^(eth|bond)' | awk '{print $1, $2}'"  # Match eth and bond interfaces
-                )
-
-                if result.exit_status != 0:
-                    return {}
-
-                for line in result.stdout.splitlines():
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        interface = parts[0]
-                        state = parts[1].lower()
-
-                        # Only process interfaces that are UP and have carrier
-                        if "up" in state and "no-carrier" not in state:
-                            try:
-                                # Get traffic stats
-                                stats_result = await self.execute_command(
-                                    f"cat /sys/class/net/{interface}/statistics/{{rx,tx}}_bytes"
-                                )
-
-                                if stats_result.exit_status == 0:
-                                    rx_bytes, tx_bytes = map(int, stats_result.stdout.splitlines())
-
-                                    # Get interface info and mode
-                                    info_result = await self.execute_command(
-                                        f"ethtool {interface} 2>/dev/null || echo 'No ethtool info'"
-                                    )
-
-                                    # For bond interfaces, get the bond mode
-                                    if interface.startswith('bond'):
-                                        mode_result = await self.execute_command(
-                                            f"cat /sys/class/net/{interface}/bonding/mode"
-                                        )
-                                        if mode_result.exit_status == 0:
-                                            speed_info = f"Bond Mode: {mode_result.stdout.strip()}, mtu 1500"
-                                        else:
-                                            speed_info = "Bond interface, mtu 1500"
-                                    else:
-                                        # For ethernet interfaces
-                                        speed_info = "1000Mbps, full duplex, mtu 1500"
-                                        if info_result.exit_status == 0 and "Speed: " in info_result.stdout:
-                                            speed_info = info_result.stdout.split("Speed: ")[1].split("\n")[0]
-                                            speed_info += ", full duplex, mtu 1500"
-
-                                    network_stats[interface] = {
-                                        "rx_bytes": rx_bytes,
-                                        "tx_bytes": tx_bytes,
-                                        "rx_speed": 0,  # Will be calculated in coordinator
-                                        "tx_speed": 0,  # Will be calculated in coordinator
-                                        "connected": True,
-                                        "interface_info": speed_info
-                                    }
-                                    _LOGGER.debug(
-                                        "Added network interface %s (state: %s, info: %s)",
-                                        interface,
-                                        state,
-                                        speed_info
-                                    )
-                            except (asyncssh.Error, OSError, asyncio.TimeoutError, ValueError) as err:
-                                _LOGGER.debug(
-                                    "Error getting stats for interface %s: %s", 
-                                    interface,
-                                    err
-                                )
-                                continue
-
-                return network_stats
-
-            except (asyncssh.Error, asyncio.TimeoutError, OSError, ValueError) as err:
-                _LOGGER.error("Error getting network stats: %s", str(err))
-                return {}
-
-    async def get_interface_info(self, interface: str) -> str:
-        """Get detailed interface info."""
-        try:
-            # Get interface details
-            result = await self.execute_command(f"ip link show {interface}")
-            if result.exit_status != 0:
-                return "Interface Down"
-
-            if "NO-CARRIER" in result.stdout:
-                return "Interface Down"
-            elif "state UP" in result.stdout:
-                # Get speed and duplex info
-                ethtool_result = await self.execute_command(f"ethtool {interface}")
-                if ethtool_result.exit_status == 0 and "Speed: 1000Mb/s" in ethtool_result.stdout:
-                    return "1000Mbps, full duplex, mtu 1500"
-                return "Interface Up"
-            else:
-                return "Interface Down"
-        except (asyncssh.Error, asyncio.TimeoutError, OSError, ValueError) as err:
-            _LOGGER.error("Error getting interface info for %s: %s", interface, err)
-            return "Interface Down"
 
     def _parse_sensors_output(self, output: str) -> Dict[str, Dict[str, str]]:
         """Parse the output of the sensors command."""

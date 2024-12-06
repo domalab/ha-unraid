@@ -1,8 +1,10 @@
 """Disk operations for Unraid."""
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Dict, Any, List, Optional
+import aiofiles # type: ignore
+from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass
 from enum import Enum
 import re
@@ -126,14 +128,18 @@ class DiskOperationsMixin:
     async def get_disk_spin_down_settings(self) -> dict[str, int]:
         """Fetch disk spin down delay settings with validation."""
         try:
-            settings = await self.execute_command("cat /boot/config/disk.cfg")
-            if settings.exit_status != 0:
-                raise OSError("Failed to read disk config")
-
+            config_path = "/boot/config/disk.cfg"
             default_delay = 0
             disk_delays = {}
 
-            for line in settings.stdout.splitlines():
+            try:
+                async with aiofiles.open(config_path, mode='r') as f:
+                    settings = await f.read()
+            except FileNotFoundError:
+                _LOGGER.warning("Disk config file not found: %s", config_path)
+                return {"default": default_delay}
+
+            for line in settings.splitlines():
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
@@ -168,6 +174,31 @@ class DiskOperationsMixin:
         except (OSError, ValueError) as err:
             _LOGGER.error("Error getting spin down settings: %s", err)
             return {"default": 0}
+        
+    async def _read_disk_smart_data(self, device: str) -> Dict[str, Any]:
+        """Read SMART data for a disk asynchronously."""
+        try:
+            result = await self.execute_command(f"smartctl -A /dev/{device}")
+            if result.exit_status != 0:
+                return {}
+
+            smart_data = {}
+            async with self._disk_update_lock:
+                # Process SMART data asynchronously
+                lines = result.stdout.splitlines()
+                for line in lines:
+                    if "Temperature" in line:
+                        try:
+                            temp = int(line.split()[9])
+                            smart_data["temperature"] = temp
+                        except (IndexError, ValueError):
+                            pass
+
+            return smart_data
+
+        except Exception as err:
+            _LOGGER.error("Error reading SMART data for %s: %s", device, err)
+            return {}
 
     async def get_array_usage(self) -> Dict[str, Any]:
         """Fetch Array usage with enhanced error handling and status reporting."""
@@ -239,49 +270,59 @@ class DiskOperationsMixin:
             }
 
     async def _get_array_sync_status(self) -> Optional[Dict[str, Any]]:
-        """Get detailed array sync status."""
+        """Get detailed array sync status asynchronously."""
         try:
             result = await self.execute_command("mdcmd status")
             if result.exit_status != 0:
                 return None
 
             sync_info = {}
-            for line in result.stdout.splitlines():
+            lines = result.stdout.splitlines()
+            
+            # Process lines asynchronously
+            tasks = []
+            for line in lines:
                 if '=' not in line:
                     continue
-
+                    
                 key, value = line.split('=', 1)
                 key = key.strip()
                 value = value.strip()
-
-                if key == "mdResyncPos":
-                    sync_info["position"] = int(value)
-                elif key == "mdResyncSize":
-                    sync_info["total_size"] = int(value)
+                
+                if key in ["mdResyncPos", "mdResyncSize", "mdResyncSpeed", "mdResyncCorr"]:
+                    tasks.append(self._process_sync_value(key, value))
                 elif key == "mdResyncAction":
                     sync_info["action"] = value
-                elif key == "mdResyncSpeed":
-                    sync_info["speed"] = int(value)
-                elif key == "mdResyncCorr":
-                    sync_info["errors"] = int(value)
 
-            if sync_info:
-                if sync_info.get("total_size", 0) > 0:
-                    progress = (sync_info["position"] / sync_info["total_size"]) * 100
-                    sync_info["progress"] = round(progress, 2)
+            # Gather all processed values
+            processed_values = await asyncio.gather(*tasks, return_exceptions=True)
+            for key, value in processed_values:
+                if not isinstance(value, Exception):
+                    sync_info[key] = value
 
-                if sync_info.get("speed", 0) > 0:
-                    remaining_bytes = sync_info["total_size"] - sync_info["position"]
-                    remaining_seconds = remaining_bytes / (sync_info["speed"] * 1024)
-                    sync_info["estimated_time"] = round(remaining_seconds)
+            if sync_info and sync_info.get("total_size", 0) > 0:
+                progress = (sync_info["position"] / sync_info["total_size"]) * 100
+                sync_info["progress"] = round(progress, 2)
 
-                return sync_info
-
-            return None
+            return sync_info
 
         except (ValueError, TypeError, OSError) as err:
             _LOGGER.debug("Error getting sync status: %s", err)
             return None
+        
+    async def _process_sync_value(self, key: str, value: str) -> Tuple[str, Union[int, Exception]]:
+        """Process sync values asynchronously."""
+        try:
+            value_int = int(value)
+            key_map = {
+                "mdResyncPos": "position",
+                "mdResyncSize": "total_size",
+                "mdResyncSpeed": "speed",
+                "mdResyncCorr": "errors"
+            }
+            return key_map[key], value_int
+        except ValueError as err:
+            return key, err
 
     async def get_individual_disk_usage(self) -> List[Dict[str, Any]]:
         """Get usage information for individual disks."""
