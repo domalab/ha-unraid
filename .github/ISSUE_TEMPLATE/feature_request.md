@@ -16,7 +16,7 @@ A clear and concise description of what you want to happen.
 **Use Case or Why Do You Want This?**
 Describe a specific scenario where this feature would be helpful or explain why you think it's necessary.
 
-**Priority of Request
+**Priority of Request**
 How important is this feature to you?  
 - [ ] High
 - [ ] Medium

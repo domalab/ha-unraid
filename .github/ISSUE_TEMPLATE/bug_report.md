@@ -19,5 +19,18 @@ If applicable, add screenshots to help explain your problem.
 **Unraid (please complete the following information):**
  - Version [e.g. 6.12]
 
+**Home Assistant (please complete the following information):**
+ - Version [e.g. 2024.12]
+
+**Home Assistant installation type (please complete the following information):**
+- [ ] Docker / Container  
+- [ ] Virtual Machine
+- [ ] Raspberry Pi
+
+**Priority of Request**
+- [ ] High  
+- [ ] Medium  
+- [ ] Low  
+
 **Additional context**
 Add any other context about the problem here.
