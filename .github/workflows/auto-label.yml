@@ -1,30 +1,38 @@
-name: Auto Label Issues
+name: Auto Label Issues Based on Priority
 on:
   issues:
     types: [opened, edited]
 permissions:
   issues: write
+
 jobs:
   triage:
     runs-on: ubuntu-latest
     steps:
-    - name: Label Issues Based on Content
+    - name: Label Issues Based on Priority
       uses: actions/github-script@v6
       with:
         script: |
           const labelsToAdd = [];
-          const issueBody = context.payload.issue.body;
+          const issueBody = context.payload.issue.body || "";
 
-          // Check for priority in the issue body
-          if (issueBody.includes("High")) {
-            labelsToAdd.push("priority-high");
-          } else if (issueBody.includes("Medium")) {
-            labelsToAdd.push("priority-medium");
-          } else if (issueBody.includes("Low")) {
-            labelsToAdd.push("priority-low");
+          // Check for Priority of Request section
+          const priorityMatch = issueBody.match(/### Priority of Request[\s\S]*?- \[x\] (High|Medium|Low)/i);
+
+          if (priorityMatch) {
+            const priority = priorityMatch[1].toLowerCase(); // Extracts the priority (High, Medium, Low)
+            if (priority === "high") {
+              labelsToAdd.push("priority-high");
+            } else if (priority === "medium") {
+              labelsToAdd.push("priority-medium");
+            } else if (priority === "low") {
+              labelsToAdd.push("priority-low");
+            }
+          } else {
+            console.log("No priority detected in the issue body.");
           }
 
-          // Apply the labels
+          // Apply the labels if any are found
           if (labelsToAdd.length > 0) {
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
@@ -32,4 +40,7 @@ jobs:
               issue_number: context.payload.issue.number,
               labels: labelsToAdd,
             });
+            console.log(`Labels applied: ${labelsToAdd.join(", ")}`);
+          } else {
+            console.log("No labels to apply.");
           }
