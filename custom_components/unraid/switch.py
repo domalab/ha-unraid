@@ -5,14 +5,16 @@ from typing import Any, Dict, Callable
 import logging
 from dataclasses import dataclass, field
 
-from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription # type: ignore
+from homeassistant.config_entries import ConfigEntry # type: ignore
+from homeassistant.core import HomeAssistant, callback # type: ignore
+from homeassistant.helpers.entity_platform import AddEntitiesCallback # type: ignore
+from homeassistant.helpers.update_coordinator import CoordinatorEntity # type: ignore
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+)
+
 from .coordinator import UnraidDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,12 +36,7 @@ class UnraidSwitchEntity(CoordinatorEntity, SwitchEntity):
         coordinator: UnraidDataUpdateCoordinator,
         description: UnraidSwitchEntityDescription,
     ) -> None:
-        """Initialize the switch.
-        
-        Args:
-            coordinator: The data update coordinator
-            description: Entity description containing key and name
-        """
+        """Initialize the switch."""
         super().__init__(coordinator)
         self.entity_description = description
         
@@ -48,14 +45,8 @@ class UnraidSwitchEntity(CoordinatorEntity, SwitchEntity):
         # Clean the key of any existing hostname instances
         clean_key = description.key
         hostname_variations = [hostname.lower(), hostname.capitalize(), hostname.upper()]
-        
         for variation in hostname_variations:
             clean_key = clean_key.replace(f"{variation}_", "")
-        
-        # Validate the cleaned key
-        if not clean_key:
-            _LOGGER.error("Invalid empty key after cleaning hostname")
-            clean_key = description.key
         
         # Construct unique_id with guaranteed single hostname instance
         self._attr_unique_id = f"unraid_server_{hostname}_{clean_key}"
@@ -63,7 +54,7 @@ class UnraidSwitchEntity(CoordinatorEntity, SwitchEntity):
         # Keep the name simple and human-readable
         self._attr_name = f"{hostname} {description.name}"
         
-        # Consistent device info
+        # All switches belong to main server device
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
             "name": f"Unraid Server ({hostname})",
@@ -105,7 +96,6 @@ class UnraidDockerContainerSwitch(UnraidSwitchEntity):
     ) -> None:
         """Initialize the Docker container switch."""
         self._container_name = container_name
-        hostname = coordinator.hostname.capitalize()
         super().__init__(
             coordinator,
             UnraidSwitchEntityDescription(
@@ -156,7 +146,7 @@ class UnraidVMSwitch(UnraidSwitchEntity):
         """Initialize the VM switch."""
         self._vm_name = vm_name
         self._last_known_state = None
-        hostname = coordinator.hostname.capitalize()
+        
         # Remove any leading numbers and spaces for the entity ID
         cleaned_name = ''.join(c for c in vm_name if not c.isdigit()).strip()
         
@@ -169,6 +159,12 @@ class UnraidVMSwitch(UnraidSwitchEntity):
             )
         )
         self._attr_entity_registry_enabled_default = True
+        
+        # Get OS type for specific model info
+        for vm in coordinator.data.get("vms", []):
+            if vm["name"] == vm_name and "os_type" in vm:
+                self._attr_device_info["model"] = f"{vm['os_type'].capitalize()} Virtual Machine"
+                break
 
     def _get_vm_state(self, data: dict) -> bool:
         """Get VM state."""

@@ -5,7 +5,6 @@ import logging
 import re
 from typing import Any, Literal
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from homeassistant.components.sensor import ( # type: ignore
     SensorDeviceClass,
@@ -19,6 +18,8 @@ from .const import (
     VALID_INTERFACE_PATTERN,
     EXCLUDED_INTERFACES,
 )
+
+from  ..api.network_operations import NetworkRateSmoothingMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,61 +36,7 @@ NETWORK_UNITS = [
     NetworkSpeedUnit(1000000000, "Gbit/s"),
 ]
 
-class NetworkRatesMixin:
-    """Mixin for network rate calculations."""
-
-    def __init__(self) -> None:
-        """Initialize the mixin."""
-        self._last_bytes: int | None = None
-        self._last_update: datetime | None = None
-        self._current_rate: float = 0.0
-
-    def _calculate_rate(
-        self,
-        current_bytes: int,
-        current_time: datetime | None = None
-    ) -> float:
-        """Calculate network transfer rate."""
-        if current_time is None:
-            current_time = datetime.now(timezone.utc)
-
-        if self._last_bytes is None or self._last_update is None:
-            self._last_bytes = current_bytes
-            self._last_update = current_time
-            return 0.0
-
-        try:
-            time_diff = (current_time - self._last_update).total_seconds()
-            if time_diff <= 0:
-                return self._current_rate
-
-            byte_diff = current_bytes - self._last_bytes
-
-            # Handle counter overflow
-            if byte_diff < 0:
-                _LOGGER.debug("Network counter overflow detected")
-                byte_diff = current_bytes
-
-            rate = (byte_diff / time_diff) * 8  # Convert to bits/second
-
-            self._last_bytes = current_bytes
-            self._last_update = current_time
-            self._current_rate = rate
-
-            return rate
-
-        except (ArithmeticError, TypeError, ValueError) as err:
-            _LOGGER.debug("Error calculating network rate: %s", err)
-            return self._current_rate
-
-    def _get_unit(self, bits_per_sec: float) -> NetworkSpeedUnit:
-        """Get the most appropriate unit for a network speed."""
-        for unit in reversed(NETWORK_UNITS):
-            if bits_per_sec >= unit.multiplier:
-                return unit
-        return NETWORK_UNITS[0]
-
-class UnraidNetworkSensor(UnraidSensorBase, NetworkRatesMixin):
+class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
     """Network interface sensor for Unraid."""
 
     def __init__(
@@ -114,15 +61,54 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRatesMixin):
             available_fn=self._is_interface_available,
         )
 
-        super().__init__(coordinator, description)
-        NetworkRatesMixin.__init__(self)
+        # Initialize both parent classes properly
+        UnraidSensorBase.__init__(self, coordinator, description)
+        NetworkRateSmoothingMixin.__init__(self)
+
+        _LOGGER.debug(
+            "UnraidNetworkSensor initialized for %s %s. Has smoothing methods: rx=%s, tx=%s",
+            interface,
+            direction,
+            hasattr(self, 'calculate_rx_rate'),
+            hasattr(self, 'calculate_tx_rate')
+        )
+
+    def _get_unit(self, bits_per_sec: float) -> NetworkSpeedUnit:
+        """Get the most appropriate unit for a network speed."""
+        old_unit = getattr(self, '_unit', NetworkSpeedUnit(1, "bit/s"))
+        
+        for unit in reversed(NETWORK_UNITS):
+            if bits_per_sec >= unit.multiplier:
+                _LOGGER.debug(
+                    "Unit conversion - rate: %.2f bits/s, selected unit: %s (multiplier: %d), "
+                    "converted value: %.2f %s (changed from %s)",
+                    bits_per_sec,
+                    unit.symbol,
+                    unit.multiplier,
+                    bits_per_sec / unit.multiplier,
+                    unit.symbol,
+                    old_unit.symbol
+                )
+                return unit
+                
+        _LOGGER.debug(
+            "Using minimum unit - rate: %.2f bits/s, unit: %s",
+            bits_per_sec,
+            NETWORK_UNITS[0].symbol
+        )
+        return NETWORK_UNITS[0]
 
     def _get_network_rate(self, data: dict) -> float | None:
-        """Calculate current network rate."""
+        """Calculate current network rate with smoothing."""
         try:
             network_stats = data.get("system_stats", {}).get("network_stats", {})
             if self._interface not in network_stats:
-                return None
+                _LOGGER.debug(
+                    "No stats found for interface %s. Available interfaces: %s",
+                    self._interface,
+                    list(network_stats.keys())
+                )
+                return 0.0
 
             stats = network_stats[self._interface]
             current_bytes = (
@@ -131,23 +117,52 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRatesMixin):
                 else stats.get("tx_bytes", 0)
             )
 
-            rate = self._calculate_rate(current_bytes)
-            if rate is not None:
-                # Update unit based on current rate
-                self._unit = self._get_unit(rate)
-                # Convert to chosen unit
-                return round(rate / self._unit.multiplier, 2)
-
-            return None
-
-        except (TypeError, ValueError, AttributeError) as err:
             _LOGGER.debug(
-                "Error getting network rate for %s %s: %s",
+                "%s %s: Processing bytes=%d",
                 self._interface,
                 self._direction,
-                err
+                current_bytes
             )
-            return None
+
+            rate = (
+                self.calculate_rx_rate(current_bytes)
+                if self._direction == "inbound"
+                else self.calculate_tx_rate(current_bytes)
+            )
+
+            _LOGGER.debug(
+                "%s %s: Raw rate=%.2f bits/s",
+                self._interface,
+                self._direction,
+                rate
+            )
+
+            if rate > 0:
+                self._unit = self._get_unit(rate)
+                converted_rate = round(rate / self._unit.multiplier, 2)
+                
+                _LOGGER.debug(
+                    "%s %s: Final conversion %.2f bits/s → %.2f %s",
+                    self._interface,
+                    self._direction,
+                    rate,
+                    converted_rate,
+                    self._unit.symbol
+                )
+                
+                return converted_rate
+
+            return 0.0
+
+        except Exception as err:
+            _LOGGER.error(
+                "Error calculating rate for %s %s: %s",
+                self._interface,
+                self._direction,
+                err,
+                exc_info=True
+            )
+            return 0.0
 
     def _is_interface_available(self, data: dict) -> bool:
         """Check if network interface is available."""

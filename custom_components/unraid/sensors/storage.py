@@ -262,26 +262,102 @@ class UnraidDiskSensor(UnraidSensorBase):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         try:
-            disks = self.coordinator.data.get("system_stats", {}).get("individual_disks", [])
+            _LOGGER.debug(
+                "Getting attributes for disk %s - Starting attribute collection",
+                self._disk_name
+            )
+            
+            # Log available system stats
+            system_stats = self.coordinator.data.get("system_stats", {})
+            _LOGGER.debug(
+                "System stats available keys for %s: %s",
+                self._disk_name,
+                list(system_stats.keys()) if system_stats else "No system stats"
+            )
+
+            disks = system_stats.get("individual_disks", [])
+            _LOGGER.debug(
+                "Found %d disks in system stats. Looking for disk %s",
+                len(disks),
+                self._disk_name
+            )
+
             if not disks:
+                _LOGGER.warning(
+                    "No disks found in system stats for %s",
+                    self._disk_name
+                )
                 return {}
 
             for disk in disks:
                 if disk.get("name") == self._disk_name:
-                    # Update device mapping
+                    _LOGGER.debug(
+                        "Found disk %s in system stats. Raw disk data: %s",
+                        self._disk_name,
+                        disk
+                    )
+
+                    # Update and log device mapping
+                    previous_device = self._device
                     self._device = self._get_disk_device()
+                    _LOGGER.debug(
+                        "Device mapping for %s: previous=%s, current=%s",
+                        self._disk_name,
+                        previous_device,
+                        self._device
+                    )
+
+                    # Get and log current disk state
+                    state = disk.get("state", "unknown")
+                    _LOGGER.debug(
+                        "Current state for %s: %s",
+                        self._disk_name,
+                        state
+                    )
+
+                    # Temperature processing
+                    raw_temp = disk.get("temperature")
+                    temp_str = "0°C" if state == "standby" else f"{raw_temp}°C"
+                    _LOGGER.debug(
+                        "Temperature processing for %s: raw=%s, state=%s, final=%s",
+                        self._disk_name,
+                        raw_temp,
+                        state,
+                        temp_str
+                    )
 
                     # Basic attributes
                     attrs = {
                         "mount_point": disk.get("mount_point", "unknown"),
                         "device": self._device or disk.get("device", "unknown"),
-                        "status": disk.get("status", "unknown"),
+                        "status": state,
+                        "temperature": temp_str,
                     }
+                    _LOGGER.debug(
+                        "Basic attributes for %s: %s",
+                        self._disk_name,
+                        attrs
+                    )
 
                     # Usage information
-                    if all(k in disk for k in ["total", "used", "free"]):
+                    required_keys = ["total", "used", "free"]
+                    has_usage_keys = all(k in disk for k in required_keys)
+                    _LOGGER.debug(
+                        "Usage keys check for %s: required=%s, present=%s",
+                        self._disk_name,
+                        required_keys,
+                        [k for k in required_keys if k in disk]
+                    )
+
+                    if has_usage_keys:
                         current_usage = self._get_disk_usage(self.coordinator.data)
-                        attrs.update({
+                        _LOGGER.debug(
+                            "Usage calculation for %s: %s",
+                            self._disk_name,
+                            current_usage
+                        )
+
+                        usage_attrs = {
                             "total_size": format_bytes(disk["total"]),
                             "used_space": format_bytes(disk["used"]),
                             "free_space": format_bytes(disk["free"]),
@@ -290,25 +366,95 @@ class UnraidDiskSensor(UnraidSensorBase):
                                 if current_usage is not None
                                 else "unknown"
                             ),
-                        })
+                        }
+                        attrs.update(usage_attrs)
+                        _LOGGER.debug(
+                            "Added usage attributes for %s: %s",
+                            self._disk_name,
+                            usage_attrs
+                        )
 
-                    # Add disk model and other device info
-                    for extra in ["model", "health", "temperature"]:
+                    # Device info
+                    for extra in ["model", "health"]:
                         if extra in disk:
-                            if extra == "temperature":
-                                attrs[extra] = f"{disk[extra]}°C"
-                            else:
-                                attrs[extra] = disk[extra]
+                            attrs[extra] = disk[extra]
+                            _LOGGER.debug(
+                                "Added %s info for %s: %s",
+                                extra,
+                                self._disk_name,
+                                disk[extra]
+                            )
 
+                    # SMART status
+                    smart_data = disk.get("smart_data", {})
+                    if smart_data:
+                        _LOGGER.debug(
+                            "SMART data available for %s: %s",
+                            self._disk_name,
+                            smart_data
+                        )
+                        attrs["smart_status"] = (
+                            "Passed" if smart_data.get("smart_status", True) else "Failed"
+                        )
+
+                    # Spin down delay
+                    if "spin_down_delay" in disk:
+                        attrs["spin_down_delay"] = disk["spin_down_delay"]
+                        _LOGGER.debug(
+                            "Spin down delay for %s: %s",
+                            self._disk_name,
+                            disk["spin_down_delay"]
+                        )
+
+                    # NVMe specific attributes
+                    if "nvme" in str(self._device).lower():
+                        _LOGGER.debug(
+                            "Processing NVMe attributes for %s",
+                            self._disk_name
+                        )
+                        nvme_attrs = disk.get("nvme_smart_data", {})
+                        _LOGGER.debug(
+                            "NVMe SMART data for %s: %s",
+                            self._disk_name,
+                            nvme_attrs
+                        )
+                        
+                        if nvme_attrs:
+                            nvme_specific = {
+                                "nvme_available_spare": nvme_attrs.get("available_spare", "unknown"),
+                                "nvme_temperature": nvme_attrs.get("temperature", "unknown"),
+                                "nvme_critical_warning": nvme_attrs.get("critical_warning", "none"),
+                            }
+                            attrs.update(nvme_specific)
+                            _LOGGER.debug(
+                                "Added NVMe attributes for %s: %s",
+                                self._disk_name,
+                                nvme_specific
+                            )
+
+                    _LOGGER.debug(
+                        "Final attributes for %s: %s",
+                        self._disk_name,
+                        attrs
+                    )
                     return attrs
 
+            _LOGGER.warning(
+                "Disk %s not found in system stats",
+                self._disk_name
+            )
             return {}
 
         except (KeyError, AttributeError, ValueError, TypeError) as err:
-            _LOGGER.debug(
-                "Error getting attributes for disk %s: %s",
+            _LOGGER.error(
+                "Error getting attributes for disk %s: %s. Coordinator data: %s",
                 self._disk_name,
-                err
+                err,
+                {
+                    k: v for k, v in self.coordinator.data.items() 
+                    if k != "system_stats"  # Exclude full system stats for brevity
+                },
+                exc_info=True
             )
             return {}
 

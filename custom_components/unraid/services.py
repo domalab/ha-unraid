@@ -6,13 +6,12 @@ All services are typed and documented according to Home Assistant best practices
 """
 
 from functools import partial
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import config_validation as cv
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.core import HomeAssistant, ServiceCall # type: ignore
+from homeassistant.helpers import config_validation as cv # type: ignore
+from homeassistant.exceptions import HomeAssistantError # type: ignore
 import voluptuous as vol
 from typing import Any, Set
 import logging
-import json
 from datetime import datetime
 
 from .const import DOMAIN

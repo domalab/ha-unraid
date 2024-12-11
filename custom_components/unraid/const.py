@@ -1,12 +1,7 @@
 """Constants for the Unraid integration."""
-from dataclasses import dataclass
 from enum import Enum, IntEnum
 from typing import Final
-from homeassistant.const import (
-    CONF_HOST,
-    CONF_PASSWORD,
-    CONF_PORT,
-    CONF_USERNAME,
+from homeassistant.const import ( # type: ignore
     Platform,
 )
 
@@ -41,6 +36,7 @@ PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.SENSOR,
     Platform.SWITCH,
+    Platform.BUTTON,
 ]
 
 # Signals
@@ -54,6 +50,10 @@ ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 
 # Units
 UNIT_PERCENTAGE = "%"
+
+# CPU Temperature monitoring thresholds (Celsius)
+TEMP_WARN_THRESHOLD: Final = 80  # Temperature above which warning state is triggered
+TEMP_CRIT_THRESHOLD: Final = 90  # Temperature above which critical state is triggered
 
 # UPS Configuration
 UPS_METRICS = {
@@ -135,3 +135,26 @@ CONTAINER_STATS_NETWORK_SPEED_UP = "network_speed_up"
 CONTAINER_STATS_NETWORK_SPEED_DOWN = "network_speed_down"
 CONTAINER_STATS_NETWORK_TOTAL_UP = "network_total_up"
 CONTAINER_STATS_NETWORK_TOTAL_DOWN = "network_total_down"
+
+# Device identifier patterns
+DEVICE_ID_SERVER = "{}_server_{}"  # DOMAIN, entry_id
+DEVICE_ID_DOCKER = "{}_docker_{}_{}"  # DOMAIN, container_name, entry_id
+DEVICE_ID_VM = "{}_vm_{}_{}"  # DOMAIN, vm_name, entry_id
+DEVICE_ID_DISK = "{}_disk_{}_{}"  # DOMAIN, disk_name, entry_id
+DEVICE_ID_UPS = "{}_ups_{}"  # DOMAIN, entry_id
+
+# Device info defaults
+DEVICE_INFO_SERVER = {
+    "manufacturer": "Lime Technology",
+    "model": "Unraid Server",
+}
+
+DEVICE_INFO_DOCKER = {
+    "manufacturer": "Docker",
+    "model": "Container Engine",
+}
+
+DEVICE_INFO_VM = {
+    "manufacturer": "Unraid",
+    "model": "Virtual Machine",
+}

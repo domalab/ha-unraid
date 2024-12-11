@@ -1,13 +1,25 @@
 """Network operations for Unraid."""
 from __future__ import annotations
 
+from collections import deque
 import logging
 import asyncio
-from typing import Dict, Any, Optional, Tuple
+from typing import Deque, Dict, Any, Optional
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 _LOGGER = logging.getLogger(__name__)
+
+@dataclass
+class SmoothingStats:
+    """Network rate smoothing statistics."""
+    # Recent measurements for EMA calculation
+    history: Deque[tuple[datetime, float]] = field(
+        default_factory=lambda: deque(maxlen=30)  # 1-minute history at 2s intervals
+    )
+    ema_value: float = 0.0  # Current EMA value
+    last_raw_rate: float = 0.0  # Last calculated raw rate
+    last_update: Optional[datetime] = None
 
 @dataclass
 class NetworkStats:
@@ -18,11 +30,130 @@ class NetworkStats:
     tx_speed: float = 0.0
     last_update: Optional[datetime] = None
 
-class NetworkOperationsMixin:
+class NetworkRateSmoothingMixin:
+    """Mixin for enhanced network rate smoothing."""
+
+    def __init__(self) -> None:
+        """Initialize smoothing mixin."""
+        self._rx_smoothing = SmoothingStats()
+        self._tx_smoothing = SmoothingStats()
+        # Adjustable parameters
+        self._ema_alpha = 0.4  # Increased for faster response
+        self._spike_threshold = 5.0  # Increased to allow more variation
+        self._min_rate = 0.001  # Lowered to catch smaller traffic
+        self._min_time_diff = 1.0  # Minimum seconds between updates
+
+    def _smooth_rate(
+        self,
+        current_bytes: int,
+        smoothing_stats: SmoothingStats,
+        current_time: Optional[datetime] = None
+    ) -> float:
+        """Calculate smoothed network rate using EMA."""
+        if current_time is None:
+            current_time = datetime.now(timezone.utc)
+
+        if smoothing_stats.last_update is None:
+            _LOGGER.debug(
+                "First measurement - storing bytes=%d at %s",
+                current_bytes,
+                current_time.isoformat()
+            )
+            smoothing_stats.last_raw_rate = current_bytes
+            smoothing_stats.last_update = current_time
+            return 0.0
+
+        try:
+            time_diff = (current_time - smoothing_stats.last_update).total_seconds()
+            if time_diff < self._min_time_diff:
+                _LOGGER.debug(
+                    "Update too frequent (%.3fs < %.3fs) - keeping previous rate: %.2f bits/s",
+                    time_diff,
+                    self._min_time_diff,
+                    smoothing_stats.ema_value
+                )
+                return smoothing_stats.ema_value
+
+            byte_diff = current_bytes - smoothing_stats.last_raw_rate
+            current_raw_rate = (byte_diff * 8) / time_diff  # bits/second
+
+            _LOGGER.debug(
+                "Rate calculation - bytes: %d → %d (%+d), time: %.3fs, raw_rate: %.2f bits/s",
+                smoothing_stats.last_raw_rate,
+                current_bytes,
+                byte_diff,
+                time_diff,
+                current_raw_rate
+            )
+
+            # Handle counter overflow or reset
+            if byte_diff < 0:
+                _LOGGER.debug(
+                    "Counter reset detected - previous: %d, current: %d",
+                    smoothing_stats.last_raw_rate,
+                    current_bytes
+                )
+                current_raw_rate = (current_bytes * 8) / time_diff
+
+            # Update EMA and history
+            if current_raw_rate >= self._min_rate:
+                previous_ema = smoothing_stats.ema_value
+                smoothing_stats.ema_value = (
+                    self._ema_alpha * current_raw_rate +
+                    (1 - self._ema_alpha) * previous_ema
+                )
+                _LOGGER.debug(
+                    "Updated EMA: %.2f → %.2f bits/s (alpha=%.2f)",
+                    previous_ema,
+                    smoothing_stats.ema_value,
+                    self._ema_alpha
+                )
+            else:
+                previous_ema = smoothing_stats.ema_value
+                smoothing_stats.ema_value *= (1 - self._ema_alpha)
+                _LOGGER.debug(
+                    "Rate below minimum (%.3f < %.3f) - decaying: %.2f → %.2f bits/s",
+                    current_raw_rate,
+                    self._min_rate,
+                    previous_ema,
+                    smoothing_stats.ema_value
+                )
+
+            smoothing_stats.history.append((current_time, current_raw_rate))
+            smoothing_stats.last_raw_rate = current_bytes
+            smoothing_stats.last_update = current_time
+
+            return max(smoothing_stats.ema_value, 0.0)
+
+        except Exception as err:
+            _LOGGER.error(
+                "Rate calculation error: %s (bytes=%d, last_bytes=%d)",
+                err,
+                current_bytes,
+                smoothing_stats.last_raw_rate,
+                exc_info=True
+            )
+            return smoothing_stats.ema_value
+
+    def calculate_rx_rate(self, current_bytes: int) -> float:
+        """Calculate smoothed RX rate."""
+        return self._smooth_rate(current_bytes, self._rx_smoothing)
+
+    def calculate_tx_rate(self, current_bytes: int) -> float:
+        """Calculate smoothed TX rate."""
+        return self._smooth_rate(current_bytes, self._tx_smoothing)
+
+    @property
+    def smoothing_window(self) -> float:
+        """Get effective smoothing window in seconds."""
+        return 1.0 / self._ema_alpha  # Approximate window size
+
+class NetworkOperationsMixin(NetworkRateSmoothingMixin):
     """Mixin for network-related operations."""
 
     def __init__(self) -> None:
         """Initialize network operations."""
+        super().__init__()
         self._network_lock = asyncio.Lock()
         self._network_stats = {}
         self._last_network_update = None
@@ -138,27 +269,17 @@ class NetworkOperationsMixin:
     ) -> Dict[str, float]:
         """Calculate network rates asynchronously."""
         try:
-            prev_stats = self._network_stats.get(interface)
-            if not prev_stats or not prev_stats.last_update:
-                return {"rx_speed": 0.0, "tx_speed": 0.0}
+            # Calculate smoothed rates using the enhanced mixin
+            rx_rate = self.calculate_rx_rate(current_stats["rx_bytes"])
+            tx_rate = self.calculate_tx_rate(current_stats["tx_bytes"])
 
-            time_diff = (current_time - prev_stats.last_update).total_seconds()
-            if time_diff <= 0:
-                return {"rx_speed": prev_stats.rx_speed, "tx_speed": prev_stats.tx_speed}
-
-            # Calculate rates with overflow protection
-            rx_diff = current_stats["rx_bytes"] - prev_stats.rx_bytes
-            tx_diff = current_stats["tx_bytes"] - prev_stats.tx_bytes
-
-            # Handle counter overflow
-            if rx_diff < 0:
-                rx_diff = current_stats["rx_bytes"]
-            if tx_diff < 0:
-                tx_diff = current_stats["tx_bytes"]
+            # Store smoothed rates in the stats
+            current_stats["rx_speed"] = rx_rate
+            current_stats["tx_speed"] = tx_rate
 
             return {
-                "rx_speed": rx_diff / time_diff,
-                "tx_speed": tx_diff / time_diff
+                "rx_speed": rx_rate,
+                "tx_speed": tx_rate
             }
 
         except Exception as err:
@@ -213,3 +334,4 @@ class NetworkOperationsMixin:
                 "duplex": "unknown",
                 "link_detected": False
             }
+        

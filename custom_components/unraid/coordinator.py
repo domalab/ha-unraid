@@ -6,10 +6,10 @@ import logging
 import asyncio
 import hashlib
 import json
-from typing import Any, Dict, Optional, Self
+from typing import Any, Dict, Optional
 
 from datetime import datetime, timedelta
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from homeassistant.core import callback # type: ignore
 
@@ -60,6 +60,11 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self.api = api
         self.entry = entry
         self.has_ups = entry.options.get(CONF_HAS_UPS, False)
+
+        # Device tracking
+        self._device_lock = asyncio.Lock()
+        self._known_devices: set[str] = set()
+        self._device_timeouts = defaultdict(int)
 
         # Thread safety locks
         self._disk_update_lock = asyncio.Lock()
@@ -214,15 +219,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         old_mapping: Dict[str, str],
         new_mapping: Dict[str, str],
     ) -> bool:
-        """Verify disk mapping consistency.
-        
-        Args:
-            old_mapping: Previous disk mapping
-            new_mapping: New disk mapping
-            
-        Returns:
-            bool: True if mapping is consistent, False otherwise
-        """
+        """Verify disk mapping consistency."""
         if not old_mapping:
             return True
 
@@ -357,6 +354,12 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     _LOGGER.debug("Fetching system stats...")
                     system_stats = await self.api.get_system_stats()
                     if system_stats:
+                        # Add CPU info explicitly
+                        cpu_info = await self.api._get_cpu_info()  # Note the underscore for the private method
+                        if cpu_info:
+                            _LOGGER.debug("Adding CPU info to system stats: %s", cpu_info)
+                            system_stats.update(cpu_info)
+                        
                         _LOGGER.debug(
                             "Got system stats: %s",
                             {

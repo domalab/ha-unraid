@@ -6,9 +6,11 @@ import logging
 import aiofiles # type: ignore
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass
-from enum import Enum
 import re
 from datetime import datetime
+
+from .smart_operations import SmartDataManager
+from .disk_state import DiskState, DiskStateManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,12 +24,6 @@ class DiskInfo:
     health: str = "Unknown"
     temperature: Optional[int] = None
     size: int = 0
-
-class DiskState(Enum):
-    """Disk power state."""
-    ACTIVE = "active"
-    STANDBY = "standby"
-    UNKNOWN = "unknown"
 
 class SmartAttribute:
     """SMART attribute with validation."""
@@ -62,6 +58,10 @@ class DiskOperationsMixin:
 
     def __init__(self):
         """Initialize disk operations."""
+        super().__init__()
+        _LOGGER.debug("Initializing DiskOperationsMixin")
+        self._disk_operations = self
+
         self._disk_cache: Dict[str, Dict[str, Any]] = {}
         self._smart_thresholds = {
             "Raw_Read_Error_Rate": {"warn": 50, "crit": 30},
@@ -71,6 +71,39 @@ class DiskOperationsMixin:
             "Temperature_Celsius": {"warn": 50, "crit": 60},
             "UDMA_CRC_Error_Count": {"warn": 100, "crit": 200},
         }
+
+        self._smart_manager = SmartDataManager(self)
+        self._state_manager = DiskStateManager(self)
+        _LOGGER.debug("Created SmartDataManager and DiskStateManager")
+        
+        self._disk_lock = asyncio.Lock()
+        self._cached_disk_info: Dict[str, DiskInfo] = {}
+        self._last_update: Dict[str, datetime] = {}
+        self._update_interval = 60  # seconds
+
+    @property
+    def disk_operations(self) -> 'DiskOperationsMixin':
+        """Return self as disk operations interface."""
+        return self
+    
+    async def initialize(self) -> None:
+        """Initialize disk operations."""
+        _LOGGER.debug("Starting disk operations initialization")
+        try:
+            await self._state_manager.update_spindown_delays()
+            _LOGGER.debug("Updated spin-down delays successfully")
+            
+            # Log the current disk states
+            for disk in await self.get_individual_disk_usage():
+                if disk_name := disk.get("name"):
+                    try:
+                        state = await self._state_manager.get_disk_state(disk_name)
+                        _LOGGER.debug("Initial state for disk %s: %s", disk_name, state.value)
+                    except Exception as err:
+                        _LOGGER.warning("Could not get initial state for disk %s: %s", disk_name, err)
+                        
+        except Exception as err:
+            _LOGGER.error("Error during disk operations initialization: %s", err)
 
     async def _get_array_status(self) -> str:
         """Get Unraid array status using mdcmd."""
@@ -99,29 +132,58 @@ class DiskOperationsMixin:
             _LOGGER.error("Error getting array status: %s", err)
             return "error"
 
+    async def update_disk_status(self, disk_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Update disk status information."""
+        try:
+            device = disk_info.get("device")
+            disk_name = disk_info.get("name")
+
+            if not disk_name:
+                return disk_info
+
+            # Map device name to proper device path 
+            if not device:
+                if disk_name.startswith("disk"):
+                    try:
+                        disk_num = int(''.join(filter(str.isdigit, disk_name)))
+                        device = f"sd{chr(ord('b') + disk_num - 1)}"
+                    except ValueError:
+                        _LOGGER.error("Invalid disk name format: %s", disk_name)
+                        return disk_info
+                elif disk_name == "cache":
+                    device = "nvme0n1"
+
+            disk_info["device"] = device
+
+            # Get disk state using mapped device
+            state = await self._state_manager.get_disk_state(disk_name)
+            disk_info["state"] = state.value
+
+            # Only get SMART data if disk is active
+            if state == DiskState.ACTIVE and device:
+                smart_data = await self._smart_manager.get_smart_data(device)
+                if smart_data:
+                    disk_info.update({
+                        "smart_status": "Passed" if smart_data.get("smart_status") else "Failed",
+                        "temperature": smart_data.get("temperature"),
+                        "power_on_hours": smart_data.get("power_on_hours"),
+                        "smart_data": smart_data
+                    })
+
+            return disk_info
+
+        except Exception as err:
+            _LOGGER.error("Error updating disk status: %s", err)
+            return disk_info
+
     async def get_disk_model(self, device: str) -> str:
         """Get disk model with enhanced error handling."""
         try:
-            if device in self._disk_cache:
-                smart_data = self._disk_cache[device].get("smart_data", {})
-                if model := smart_data.get("model"):
-                    return model
-
-            result = await self.execute_command(f"smartctl -i /dev/{device}")
-            if result.exit_status != 0:
-                raise OSError(f"smartctl failed with exit code {result.exit_status}")
-
-            for line in result.stdout.splitlines():
-                if "Device Model:" in line:
-                    return line.split("Device Model:", 1)[1].strip()
-                elif "Product:" in line:
-                    return line.split("Product:", 1)[1].strip()
-                elif "Model Number:" in line:
-                    return line.split("Model Number:", 1)[1].strip()
-
+            smart_data = await self._smart_manager.get_smart_data(device)
+            if smart_data:
+                return smart_data.get("model_name", "Unknown")
             return "Unknown"
-
-        except (OSError, ValueError) as err:
+        except Exception as err:
             _LOGGER.debug("Error getting model for %s: %s", device, err)
             return "Unknown"
 
@@ -174,31 +236,6 @@ class DiskOperationsMixin:
         except (OSError, ValueError) as err:
             _LOGGER.error("Error getting spin down settings: %s", err)
             return {"default": 0}
-        
-    async def _read_disk_smart_data(self, device: str) -> Dict[str, Any]:
-        """Read SMART data for a disk asynchronously."""
-        try:
-            result = await self.execute_command(f"smartctl -A /dev/{device}")
-            if result.exit_status != 0:
-                return {}
-
-            smart_data = {}
-            async with self._disk_update_lock:
-                # Process SMART data asynchronously
-                lines = result.stdout.splitlines()
-                for line in lines:
-                    if "Temperature" in line:
-                        try:
-                            temp = int(line.split()[9])
-                            smart_data["temperature"] = temp
-                        except (IndexError, ValueError):
-                            pass
-
-            return smart_data
-
-        except Exception as err:
-            _LOGGER.error("Error reading SMART data for %s: %s", device, err)
-            return {}
 
     async def get_array_usage(self) -> Dict[str, Any]:
         """Fetch Array usage with enhanced error handling and status reporting."""
@@ -327,37 +364,51 @@ class DiskOperationsMixin:
     async def get_individual_disk_usage(self) -> List[Dict[str, Any]]:
         """Get usage information for individual disks."""
         try:
-            result = await self.execute_command(
+            disks = []
+            # Get usage for mounted disks
+            usage_result = await self.execute_command(
                 "df -B1 /mnt/disk* /mnt/cache 2>/dev/null | "
                 "awk 'NR>1 {print $6,$2,$3,$4}'"
             )
 
-            if result.exit_status != 0:
-                _LOGGER.error("Failed to get disk usage: %s", result.stderr)
-                return []
+            if usage_result.exit_status == 0:
+                for line in usage_result.stdout.splitlines():
+                    try:
+                        mount_point, total, used, free = line.split()
+                        disk_name = mount_point.replace('/mnt/', '')
+                        
+                        # Get current disk state
+                        state = await self._state_manager.get_disk_state(disk_name)
+                        
+                        disk_info = {
+                            "name": disk_name,
+                            "mount_point": mount_point,
+                            "total": int(total),
+                            "used": int(used),
+                            "free": int(free),
+                            "percentage": round((int(used) / int(total) * 100), 1) if int(total) > 0 else 0,
+                            "state": state.value,
+                            "smart_data": {},  # Will be populated by update_disk_status
+                            "smart_status": "Unknown",
+                            "temperature": None,
+                            "device": None,
+                        }
+                        
+                        # Update disk status with SMART data if disk is active
+                        if state == DiskState.ACTIVE:
+                            disk_info = await self.update_disk_status(disk_info)
+                        
+                        disks.append(disk_info)
 
-            disks = []
-            for line in result.stdout.splitlines():
-                try:
-                    mount_point, total, used, free = line.split()
-                    disk_name = mount_point.replace('/mnt/', '')
+                    except (ValueError, IndexError) as err:
+                        _LOGGER.debug("Error parsing disk usage line '%s': %s", line, err)
+                        continue
 
-                    disks.append({
-                        "name": disk_name,
-                        "mount_point": mount_point,
-                        "total": int(total),
-                        "used": int(used),
-                        "free": int(free),
-                        "percentage": round((int(used) / int(total) * 100), 1) if int(total) > 0 else 0,
-                    })
+                return disks
 
-                except (ValueError, IndexError) as err:
-                    _LOGGER.debug("Error parsing disk usage line '%s': %s", line, err)
-                    continue
+            return []
 
-            return disks
-
-        except (OSError, ValueError) as err:
+        except Exception as err:
             _LOGGER.error("Error getting disk usage: %s", err)
             return []
 

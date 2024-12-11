@@ -11,8 +11,7 @@ import asyncio
 import time
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
-from typing import Dict, List, Any, Optional, Callable, TYPE_CHECKING, Type
-from contextlib import suppress
+from typing import Dict, Any, Optional, Callable, TYPE_CHECKING
 
 from ..unraid import UnraidAPI
 

@@ -43,11 +43,29 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         data = self.coordinator.data.get("system_stats", {})
-        return {
+        
+        attributes = {
             "last_update": dt_util.now().isoformat(),
-            "core_count": data.get("cpu_cores", "unknown"),
+            "core_count": data.get("cpu_cores", 0),
             "architecture": data.get("cpu_arch", "unknown"),
+            "model": data.get("cpu_model", "unknown"),
+            "threads_per_core": data.get("cpu_threads_per_core", 0),
+            "physical_sockets": data.get("cpu_sockets", 0),
+            "max_frequency": f"{data.get('cpu_max_freq', 0)} MHz",
+            "min_frequency": f"{data.get('cpu_min_freq', 0)} MHz",
         }
+
+        # Add temperature info if available
+        if "cpu_temp" in data:
+            attributes.update({
+                "temperature": f"{data['cpu_temp']}°C",
+                "temperature_warning": data.get("cpu_temp_warning", False),
+                "temperature_critical": data.get("cpu_temp_critical", False),
+            })
+        
+        # Only include non-zero/unknown values
+        return {k: v for k, v in attributes.items() 
+                if v not in (0, "unknown", "0 MHz")}
 
 class UnraidRAMUsageSensor(UnraidSensorBase):
     """RAM usage sensor for Unraid."""

@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Final
+from typing import Any
 from dataclasses import dataclass
 
 import voluptuous as vol # type: ignore
 from homeassistant import config_entries # type: ignore
 from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PORT # type: ignore
 from homeassistant.data_entry_flow import FlowResult # type: ignore
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError # type: ignore
+from homeassistant.exceptions import HomeAssistantError # type: ignore
 from homeassistant.core import callback # type: ignore
 
 from .const import (

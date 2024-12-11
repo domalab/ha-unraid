@@ -14,8 +14,7 @@ from homeassistant.components.sensor import ( # type: ignore
 from homeassistant.const import PERCENTAGE, EntityCategory # type: ignore
 
 from .base import UnraidSensorBase, UnraidDiagnosticMixin
-from .const import DOMAIN, UnraidSensorEntityDescription
-from ..coordinator import UnraidDataUpdateCoordinator
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,7 +112,7 @@ class UnraidDockerSensor(UnraidSensorBase, UnraidDiagnosticMixin):
         UnraidDiagnosticMixin.__init__(self)
         self._attr_has_entity_name = True
 
-        # Update device_info to create Docker parent device
+        # Update device info to create Docker parent device
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{coordinator.entry.entry_id}_docker")},
             "name": f"Unraid Docker ({coordinator.hostname or 'Unknown'})",

@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Final
 
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant # type: ignore
+from homeassistant.helpers import entity_registry as er # type: ignore
+from homeassistant.config_entries import ConfigEntry # type: ignore
 
 from .const import DOMAIN, CONF_HOSTNAME, DEFAULT_NAME
 

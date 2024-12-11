@@ -7,7 +7,6 @@ from typing import Dict, List, Any
 from enum import Enum
 
 import asyncio
-import asyncssh
 
 _LOGGER = logging.getLogger(__name__)
 

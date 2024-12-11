@@ -3,9 +3,11 @@ from .disk_operations import DiskOperationsMixin
 from .docker_operations import DockerOperationsMixin
 from .vm_operations import VMOperationsMixin
 from .system_operations import SystemOperationsMixin
-from .network_operations import NetworkOperationsMixin
+from .network_operations import NetworkOperationsMixin, NetworkRateSmoothingMixin
 from .ups_operations import UPSOperationsMixin
 from .userscript_operations import UserScriptOperationsMixin
+from .smart_operations import SmartDataManager
+from .disk_state import DiskStateManager, DiskState
 
 __all__ = [
     "DiskOperationsMixin",
@@ -13,6 +15,10 @@ __all__ = [
     "VMOperationsMixin",
     "SystemOperationsMixin",
     "NetworkOperationsMixin",
+    "NetworkRateSmoothingMixin",
     "UPSOperationsMixin",
     "UserScriptOperationsMixin",
+    "SmartDataManager",
+    "DiskStateManager",
+    "DiskState",
 ]

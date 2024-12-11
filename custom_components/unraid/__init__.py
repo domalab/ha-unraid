@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Any
 
 from homeassistant.config_entries import ConfigEntry  # type: ignore
 from homeassistant.const import (  # type: ignore
@@ -23,7 +22,6 @@ from .const import (
     PLATFORMS,
     CONF_GENERAL_INTERVAL,
     CONF_DISK_INTERVAL,
-    DEFAULT_GENERAL_INTERVAL,
     DEFAULT_DISK_INTERVAL,
     DEFAULT_PORT,
     CONF_HAS_UPS,
@@ -32,14 +30,6 @@ from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
 from .services import async_setup_services, async_unload_services
 from .migrations import async_migrate_entities
-
-# Pre-load all platform modules to avoid blocking imports
-from . import (
-    binary_sensor,
-    sensor,
-    switch,
-    config_flow,
-)
 
 # Suppress deprecation warnings for paramiko
 warnings.filterwarnings(
@@ -78,6 +68,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             password=entry.data[CONF_PASSWORD],
             port=entry.options.get(CONF_PORT, DEFAULT_PORT),
         )
+
+        # Initialize disk operations
+        await api.disk_operations.initialize()
 
         # Get hostname during setup if not already stored
         if CONF_HOSTNAME not in entry.data:

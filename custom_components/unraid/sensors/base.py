@@ -113,12 +113,7 @@ class UnraidSensorBase(CoordinatorEntity, SensorEntity, SensorUpdateMixin, Value
         coordinator: UnraidDataProtocol,
         description: UnraidSensorEntityDescription,
     ) -> None:
-        """Initialize the sensor.
-        
-        Args:
-            coordinator: The data update coordinator
-            description: Entity description containing key and name
-        """
+        """Initialize the sensor."""
         super().__init__(coordinator)
         SensorUpdateMixin.__init__(self)
 

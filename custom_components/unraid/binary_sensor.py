@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 import logging
 
 from homeassistant.components.binary_sensor import ( # type: ignore
@@ -18,9 +18,13 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback # type: ig
 from homeassistant.helpers.typing import StateType # type: ignore
 from homeassistant.helpers.update_coordinator import CoordinatorEntity # type: ignore
 
-from .const import DOMAIN, SpinDownDelay
+from .const import (
+    DOMAIN, 
+    SpinDownDelay,
+)
+
 from .coordinator import UnraidDataUpdateCoordinator
-from .helpers import format_bytes, get_unraid_disk_mapping
+from .helpers import format_bytes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,29 +81,24 @@ class UnraidBinarySensorEntity(CoordinatorEntity, BinarySensorEntity):
         coordinator: UnraidDataUpdateCoordinator,
         description: UnraidBinarySensorEntityDescription,
     ) -> None:
-        """Initialize the binary sensor.
-        
-        Args:
-            coordinator: The data update coordinator
-            description: Entity description containing key and name
-        """
+        """Initialize the binary sensor."""
         super().__init__(coordinator)
         self.entity_description = description
         hostname = coordinator.hostname.capitalize()
+        
         # Clean the key of any existing hostname instances
         clean_key = description.key
         hostname_variations = [hostname.lower(), hostname.capitalize(), hostname.upper()]
         for variation in hostname_variations:
             clean_key = clean_key.replace(f"{variation}_", "")
-        # Validate the cleaned key
-        if not clean_key:
-            _LOGGER.error("Invalid empty key after cleaning hostname")
-            clean_key = description.key
+        
         # Construct unique_id with guaranteed single hostname instance
         self._attr_unique_id = f"unraid_server_{hostname}_{clean_key}"
+        
         # Keep the name simple and human-readable
         self._attr_name = f"{hostname} {description.name}"
-        # Consistent device info
+        
+        # All binary sensors belong to main server device
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
             "name": f"Unraid Server ({hostname})",
@@ -107,6 +106,17 @@ class UnraidBinarySensorEntity(CoordinatorEntity, BinarySensorEntity):
             "model": "Unraid Server",
         }
         self._attr_has_entity_name = True
+
+        # Add sensor-specific model info
+        model = "System Sensor"
+        if "docker" in description.key:
+            model = "Docker Sensor"
+        elif "vm" in description.key:
+            model = "VM Sensor"
+        
+        self._attr_device_info.update({
+            "model": model
+        })
 
     @property
     def available(self) -> bool:
@@ -154,11 +164,21 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
         self,
         coordinator: UnraidDataUpdateCoordinator,
         disk_name: str,
-    ) -> None:
+        ) -> None:
         """Initialize the disk health sensor."""
+        # Initialise _disk_num first
+        self._disk_num = None
+        if disk_name.startswith("disk"):
+            try:
+                self._disk_num = int(''.join(filter(str.isdigit, disk_name)))
+            except ValueError:
+                _LOGGER.debug("Could not extract disk number from %s", disk_name)
+        
         # Handle naming for different disk types
         if disk_name == "cache":
             pretty_name = "Cache"
+        elif disk_name == "parity":
+            pretty_name = "Parity"
         else:
             # Add validation to ensure we have a valid disk number
             try:
@@ -175,57 +195,38 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
             UnraidBinarySensorEntityDescription(
                 key=f"disk_health_{disk_name}",
                 name=f"{pretty_name} Health",
-                device_class=BinarySensorDeviceClass.PROBLEM,
+                device_class=BinarySensorDeviceClass.PROBLEM, 
                 entity_category=EntityCategory.DIAGNOSTIC,
-                icon="mdi:harddisk" if not disk_name == "cache" else "mdi:harddisk",
+                icon="mdi:harddisk",
                 has_warning_threshold=True,
             ),
         )
+
         self._disk_name = disk_name
-        # Safer disk number extraction
-        self._disk_num = None
-        if disk_name.startswith("disk"):
+        
+        # Map device based on disk name
+        self._device = None
+        if disk_name == "cache":
+            self._device = "nvme0n1"
+        elif disk_name.startswith("disk"):
             try:
-                self._disk_num = int(''.join(filter(str.isdigit, disk_name)))
+                disk_num = int(''.join(filter(str.isdigit, disk_name)))
+                self._device = f"sd{chr(ord('b') + disk_num - 1)}"
+                self._disk_num = disk_num  # Store disk number if valid
             except ValueError:
                 _LOGGER.debug("Could not extract disk number from %s", disk_name)
-
+                self._disk_num = None
+        
+        # Initialize tracking variables
         self._last_smart_check = None
-        self._smart_status = None
+        self._smart_status = None 
         self._last_problem_state = None
         self._spin_down_delay = self._get_spin_down_delay()
         self._last_temperature = None
         self._problem_attributes: Dict[str, Any] = {}
 
-        # Get device mapping
-        try:
-            if disk_name == "cache":
-                # Get cache device info from system stats
-                cache_info = coordinator.data.get("system_stats", {}).get("cache_usage", {})
-                if cache_info and "device" in cache_info:
-                    self._device = cache_info["device"]
-                else:
-                    # Fallback to disk data
-                    for disk in coordinator.data.get("system_stats", {}).get("individual_disks", []):
-                        if disk.get("name") == "cache":
-                            self._device = disk.get("device")
-                            break
-                    if not self._device:
-                        self._device = "nvme0n1p1"  # Final fallback for cache device
-            else:
-                disk_mapping = get_unraid_disk_mapping(self.coordinator.data.get("system_stats", {}))
-                self._device = disk_mapping.get(disk_name)
-
-        except (KeyError, AttributeError, TypeError) as err:
-            _LOGGER.debug(
-                "Error getting device mapping for %s: %s",
-                disk_name,
-                err
-            )
-            self._device = None
-
         _LOGGER.debug(
-            "Initialized disk health sensor for %s (device: %s)", 
+            "Initialized disk health sensor for %s (device: %s)",
             disk_name,
             self._device or "unknown"
         )
@@ -254,72 +255,208 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
     def _analyze_smart_status(self, disk_data: Dict[str, Any]) -> bool:
         """Analyze SMART status and attributes for actual problems."""
         self._problem_attributes = {}
-
-        # First check disk status
-        disk_status = disk_data.get("status", "unknown").lower()
-        if disk_status == "standby":
-            # Use cached state for standby disks
-            return self._last_problem_state if self._last_problem_state is not None else False
-
-        has_problem = False
-        is_nvme = disk_data.get("transport") == "nvme"
-
-        # Check basic SMART status
-        smart_status = disk_data.get("health", "healthy")  # Default to healthy
-        if smart_status not in ["PASSED", "Standby", "healthy", "OK", "GOOD", "DISK_OK"]:
-            if smart_status.lower() != "unknown":  # Don't treat Unknown as a problem
-                self._problem_attributes["smart_status"] = smart_status
-                has_problem = True
-
-        # Check critical attributes if available
-        if not is_nvme:  # Traditional SMART attributes for non-NVMe
-            if reallocated := int(disk_data.get("reallocated_sectors", 0)):
-                self._problem_attributes["reallocated_sectors"] = reallocated
-                has_problem = True
-
-            if pending := int(disk_data.get("pending_sectors", 0)):
-                self._problem_attributes["pending_sectors"] = pending
-                has_problem = True
-
-            if uncorrectable := int(disk_data.get("offline_uncorrectable", 0)):
-                self._problem_attributes["offline_uncorrectable"] = uncorrectable
-                has_problem = True
-        else:
-            # NVMe specific checks
-            if media_errors := int(disk_data.get("media_errors", 0)):
-                self._problem_attributes["media_errors"] = media_errors
-                has_problem = True
-
-        # Temperature check - handle both string and integer values
+        
         try:
-            temp = disk_data.get("temperature")
-            if isinstance(temp, str) and '°C' in temp:
-                temp = int(temp.rstrip('°C'))
-            elif isinstance(temp, (int, float)):
-                temp = int(temp)
+            # Log sanitized disk data (exclude large data structures)
+            _LOGGER.debug(
+                "Starting SMART analysis for disk %s with data: %s",
+                self._disk_name,
+                {k: v for k, v in disk_data.items() if k not in ['smart_data']}
+            )
 
-            # NVMe drives typically have higher temperature thresholds
-            temp_threshold = 70 if is_nvme else 55
-            if temp > temp_threshold:
-                self._problem_attributes["temperature"] = f"{temp}°C"
-                has_problem = True
+            # Detailed initial state logging
+            _LOGGER.debug(
+                "Disk %s initial state - State: %s, Health: %s, Temperature: %s, Status: %s, Smart Status: %s",
+                self._disk_name,
+                disk_data.get("state", "unknown"),
+                disk_data.get("health", "unknown"),
+                disk_data.get("temperature", "unknown"),
+                disk_data.get("status", "unknown"),
+                disk_data.get("smart_status", "unknown")
+            )
 
-        except (ValueError, TypeError, AttributeError):
-            pass
-
-        # Only consider UDMA errors if they're increasing (for non-NVMe)
-        if not is_nvme:
-            current_udma = int(disk_data.get("udma_crc_errors", 0))
-            previous_udma = int(disk_data.get("udma_crc_errors_prev", 0))
-            if current_udma > previous_udma:
-                self._problem_attributes["udma_crc_errors"] = (
-                    f"{current_udma} (increased from {previous_udma})"
+            # Check disk state using proper standby detection
+            disk_state = disk_data.get("state", "unknown").lower()
+            _LOGGER.debug("Disk %s current state: %s", self._disk_name, disk_state)
+            
+            # Only return cached state for confirmed standby
+            if disk_state == "standby":
+                _LOGGER.debug(
+                    "Disk %s is in standby, using cached problem state: %s",
+                    self._disk_name,
+                    self._last_problem_state
                 )
-                has_problem = True
+                return self._last_problem_state if self._last_problem_state is not None else False
 
-        # Store state for standby usage
-        self._last_problem_state = has_problem
-        return has_problem
+            has_problem = False
+
+            # Get and validate SMART data
+            smart_data = disk_data.get("smart_data", {})
+            if not smart_data:
+                _LOGGER.debug("No SMART data available for %s", self._disk_name)
+                return self._last_problem_state if self._last_problem_state is not None else False
+
+            # Check overall SMART status
+            smart_status = smart_data.get("smart_status", True)
+            _LOGGER.debug("Disk %s SMART status: %s", self._disk_name, smart_status)
+            
+            if not smart_status:
+                self._problem_attributes["smart_status"] = "FAILED"
+                has_problem = True
+                _LOGGER.warning(
+                    "Disk %s has failed SMART status",
+                    self._disk_name
+                )
+
+            # Determine device type
+            device_type = "nvme" if smart_data.get("type") == "nvme" else "sata"
+            _LOGGER.debug(
+                "Processing %s disk %s",
+                device_type.upper(),
+                self._disk_name
+            )
+
+            # Device specific checks
+            if device_type == "nvme":
+                # NVMe specific health checks
+                nvme_health = smart_data.get("nvme_smart_health_information_log", {})
+                _LOGGER.debug(
+                    "NVMe health data for %s: %s",
+                    self._disk_name,
+                    nvme_health
+                )
+                
+                # Media errors check
+                media_errors = nvme_health.get("media_errors", 0)
+                if int(media_errors) > 0:
+                    self._problem_attributes["media_errors"] = media_errors
+                    has_problem = True
+                    _LOGGER.warning(
+                        "NVMe disk %s has %d media errors",
+                        self._disk_name,
+                        media_errors
+                    )
+                    
+                # Critical warning check
+                if warning := nvme_health.get("critical_warning"):
+                    if warning != 0:  # NVMe uses numeric warning flags
+                        self._problem_attributes["critical_warning"] = warning
+                        has_problem = True
+                        _LOGGER.warning(
+                            "NVMe disk %s has critical warning: %d",
+                            self._disk_name,
+                            warning
+                        )
+
+                # Temperature from NVMe health log
+                if temp := nvme_health.get("temperature"):
+                    _LOGGER.debug(
+                        "NVMe temperature for %s: %d°C",
+                        self._disk_name,
+                        temp
+                    )
+                    if temp > 70:  # NVMe temperature threshold
+                        self._problem_attributes["temperature"] = f"{temp}°C"
+                        has_problem = True
+                        _LOGGER.warning(
+                            "NVMe disk %s temperature is high: %d°C (threshold: 70°C)",
+                            self._disk_name,
+                            temp
+                        )
+
+            else:
+                # SATA disk checks
+                _LOGGER.debug(
+                    "Processing SATA attributes for %s",
+                    self._disk_name
+                )
+                
+                attributes = smart_data.get("ata_smart_attributes", {}).get("table", [])
+                
+                # Map of critical attributes and their thresholds
+                critical_attrs = {
+                    "Reallocated_Sector_Ct": 0,
+                    "Current_Pending_Sector": 0,
+                    "Offline_Uncorrectable": 0,
+                    "UDMA_CRC_Error_Count": 100,
+                    "Reallocated_Event_Count": 0,
+                    "Reported_Uncorrect": 0,
+                    "Command_Timeout": 100
+                }
+                
+                # Process each attribute
+                for attr in attributes:
+                    name = attr.get("name")
+                    if not name:
+                        continue
+
+                    # Check critical attributes
+                    if name in critical_attrs:
+                        raw_value = attr.get("raw", {}).get("value", 0)
+                        threshold = critical_attrs[name]
+                        
+                        _LOGGER.debug(
+                            "Checking %s for %s: value=%s, threshold=%s",
+                            name,
+                            self._disk_name,
+                            raw_value,
+                            threshold
+                        )
+                        
+                        if int(raw_value) > threshold:
+                            self._problem_attributes[name.lower()] = raw_value
+                            has_problem = True
+                            _LOGGER.warning(
+                                "Disk %s has high %s: %d (threshold: %d)",
+                                self._disk_name,
+                                name,
+                                raw_value,
+                                threshold
+                            )
+
+                    # Temperature check from attributes
+                    elif name == "Temperature_Celsius":
+                        temp = attr.get("raw", {}).get("value")
+                        if temp is not None:
+                            _LOGGER.debug(
+                                "SATA temperature for %s: %d°C",
+                                self._disk_name,
+                                temp
+                            )
+                            if temp > 55:  # SATA temperature threshold
+                                self._problem_attributes["temperature"] = f"{temp}°C"
+                                has_problem = True
+                                _LOGGER.warning(
+                                    "SATA disk %s temperature is high: %d°C (threshold: 55°C)",
+                                    self._disk_name,
+                                    temp
+                                )
+
+            # Store final state
+            self._last_problem_state = has_problem
+            
+            if has_problem:
+                _LOGGER.warning(
+                    "Disk %s has problems: %s",
+                    self._disk_name,
+                    self._problem_attributes
+                )
+            else:
+                _LOGGER.debug(
+                    "No problems found for disk %s",
+                    self._disk_name
+                )
+            
+            return has_problem
+
+        except Exception as err:
+            _LOGGER.error(
+                "SMART analysis failed for %s: %s",
+                self._disk_name,
+                err,
+                exc_info=True
+            )
+            return self._last_problem_state if self._last_problem_state is not None else False
 
     @property
     def is_on(self) -> bool | None:
@@ -337,8 +474,9 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
                             self._spin_down_delay.to_human_readable()
                         )
 
-                    # If disk is in standby, return cached state
-                    if disk.get("status") == "standby":
+                    # Get current state
+                    current_state = disk.get("state", "unknown").lower()
+                    if current_state == "standby":
                         return self._last_problem_state if self._last_problem_state is not None else False
 
                     current_time = datetime.now(timezone.utc)
@@ -354,16 +492,15 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
                     )
 
                     if should_check_smart:
-                        self._smart_status = disk.get("health")
+                        # Smart data will be updated by coordinator
                         self._last_smart_check = current_time
                         return self._analyze_smart_status(disk)
 
                     # Use cached status
-                    result = self._smart_status != "PASSED"
-                    self._last_problem_state = result
-                    return result
+                    return self._last_problem_state if self._last_problem_state is not None else False
 
             return None
+
         except (KeyError, AttributeError, TypeError, ValueError) as err:
             _LOGGER.debug("Error checking disk health: %s", err)
             return self._last_problem_state if self._last_problem_state is not None else None
@@ -375,21 +512,36 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
             # Get disk info from mapping
             for disk in self.coordinator.data["system_stats"]["individual_disks"]:
                 if disk["name"] == self._disk_name:
-                    # Disk information
+                    # Get current disk state and type
+                    disk_state = disk.get("state", "unknown")
+                    is_nvme = "nvme" in str(self._device).lower()
+                    
+                    # Basic attributes
                     attrs = {
                         "mount_point": disk["mount_point"],
                         "device": self._device or disk.get("device", "unknown"),
                     }
 
-                    # Handle temperature
+                    # Handle temperature based on disk type and state
                     temp = disk.get("temperature")
-                    if temp is not None:
-                        if isinstance(temp, str) and '°C' in temp:
-                            attrs["temperature"] = temp
-                        else:
-                            attrs["temperature"] = f"{temp}°C"
+                    if is_nvme:
+                        # NVMe drives always show actual temperature from SMART data
+                        smart_data = disk.get("smart_data", {})
+                        nvme_temp = (
+                            smart_data.get("temperature")
+                            or temp  # Fallback to disk temperature
+                            or smart_data.get("nvme_temperature")  # Additional fallback
+                        )
+                        attrs["temperature"] = f"{nvme_temp}°C" if nvme_temp is not None else "0°C"
+                        attrs["disk_status"] = "active"  # NVMe drives are always active
                     else:
-                        attrs["temperature"] = "0°C"
+                        # SATA drives show 0°C in standby
+                        if disk_state == "standby":
+                            attrs["temperature"] = "0°C"
+                            attrs["disk_status"] = "standby"
+                        else:
+                            attrs["temperature"] = f"{temp}°C" if temp is not None else "0°C"
+                            attrs["disk_status"] = disk_state
 
                     # Usage information
                     attrs.update({
@@ -402,37 +554,266 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
                     # Status information
                     attrs.update({
                         "smart_status": disk.get("health", "healthy"),  # Default to healthy
-                        "disk_status": disk.get("status", "unknown"),
                         "spin_down_delay": self._spin_down_delay.to_human_readable(),
+                        "power_state": disk_state,
                     })
+
+                    # Add SMART details
+                    smart_data = disk.get("smart_data", {})
+                    if smart_data:
+                        if is_nvme:
+                            nvme_health = {
+                                "available_spare": f"{smart_data.get('available_spare', 0)}%",
+                                "media_errors": smart_data.get('media_errors', 0),
+                                "critical_warning": smart_data.get('critical_warning', 'none'),
+                                "percentage_used": f"{smart_data.get('percentage_used', 0)}%",
+                            }
+                            # Add additional NVMe specific attributes if available
+                            if 'data_units_read' in smart_data:
+                                nvme_health["data_units_read"] = smart_data["data_units_read"]
+                            if 'data_units_written' in smart_data:
+                                nvme_health["data_units_written"] = smart_data["data_units_written"]
+                            if 'power_on_hours' in smart_data:
+                                nvme_health["power_on_hours"] = smart_data["power_on_hours"]
+                                
+                            attrs["nvme_health"] = nvme_health
+                        else:
+                            attrs["smart_details"] = {
+                                "power_on_hours": smart_data.get("power_on_hours"),
+                                "status": "Passed" if smart_data.get("smart_status", True) else "Failed",
+                            }
 
                     # Add problem details if any exist
                     if self._problem_attributes:
                         attrs["problem_details"] = self._problem_attributes
 
                     return attrs
+
             return {}
+
         except (KeyError, AttributeError, TypeError) as err:
             _LOGGER.debug("Missing key in disk data: %s", err)
             return {}
 
-class UnraidUPSBinarySensor(UnraidBinarySensorEntity):
-    """Binary sensor for UPS status."""
+class UnraidParityDiskSensor(UnraidDiskHealthSensor):
+    """Binary sensor for parity disk health."""
 
     def __init__(
         self,
         coordinator: UnraidDataUpdateCoordinator,
+        parity_info: Dict[str, Any]
     ) -> None:
-        """Initialize the UPS binary sensor."""
+        """Initialize the parity disk sensor."""
+        self._parity_info = parity_info
+        device = parity_info.get("rdevName.0", "").strip()
+        if device and not device.startswith("/dev/"):
+            device = f"/dev/{device}"
+            
+        super().__init__(
+            coordinator=coordinator,
+            disk_name="parity"
+        )
+        
+        # Override device info for parity disk
+        self._device = device
+        self._attr_name = f"{coordinator.hostname.capitalize()} Parity Health"
+        
+        # Initialize state variables
+        self._last_state = None
+        self._mount_point = "/mnt/parity"
+        self._disk_state = "unknown"
+        self._problem_attributes: Dict[str, Any] = {}
+        self._last_smart_check = None
+        self._smart_status = None
+        
+        # Get spin down delay from config
+        self._spin_down_delay = self._get_spin_down_delay()
+        
+        _LOGGER.debug(
+            "Initialized parity disk sensor with device: %s",
+            self._device
+        )
+
+    def _get_spin_down_delay(self) -> SpinDownDelay:
+        """Get spin down delay configuration."""
+        try:
+            # Check disk config for parity-specific setting
+            disk_cfg = self.coordinator.data.get("disk_config", {})
+            
+            # Try to get parity-specific spin down delay
+            delay = disk_cfg.get("diskSpindownDelay.0")  # Parity is disk0
+            if delay is None or delay == "-1":
+                # Use global setting if no parity-specific setting
+                delay = disk_cfg.get("spindownDelay", "0")
+            
+            return SpinDownDelay(int(delay))
+            
+        except (ValueError, TypeError) as err:
+            _LOGGER.warning(
+                "Error getting spin down delay for parity disk: %s. Using default.",
+                err
+            )
+            return SpinDownDelay.NEVER
+
+    def _get_disk_state(self) -> str:
+        """Get current disk state from smartctl."""
+        try:
+            if not self._device:
+                return "unknown"
+                
+            # Look for cached state first
+            for disk in self.coordinator.data.get("system_stats", {}).get("individual_disks", []):
+                if (disk.get("device") == self._device.replace("/dev/", "") or 
+                    disk.get("name") == "parity"):
+                    return disk.get("state", "unknown").lower()
+
+            # Check smart data
+            smart_data = self.coordinator.data.get("smart_data", {}).get(self._device, {})
+            if smart_data:
+                return smart_data.get("state", "active")
+
+            return "active"  # Default to active for parity
+            
+        except Exception as err:
+            _LOGGER.error("Error getting disk state: %s", err)
+            return "unknown"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if there's a problem with the parity disk."""
+        try:
+            # Get latest parity info
+            parity_info = self.coordinator.data.get("parity_info", self._parity_info)
+            
+            if not parity_info:
+                return None
+
+            has_problem = False
+            self._problem_attributes = {}
+
+            # Get current state
+            self._disk_state = self._get_disk_state()
+            
+            # Check basic parity status
+            if (status := parity_info.get("rdevStatus.0")) != "DISK_OK":
+                self._problem_attributes["parity_status"] = status
+                _LOGGER.warning("Parity disk status issue: %s", status)
+                has_problem = True
+
+            # Check disk state (7 is normal operation)
+            if (state := parity_info.get("diskState.0", "0")) != "7":
+                self._problem_attributes["disk_state"] = f"Abnormal ({state})"
+                _LOGGER.warning("Parity disk state issue: %s", state)
+                has_problem = True
+            
+            # Check SMART status if available
+            if self._device:
+                # Create disk data structure for SMART analysis
+                disk_data = {
+                    "name": "parity",
+                    "device": self._device.replace("/dev/", ""),
+                    "smart_data": self.coordinator.data.get("smart_data", {}).get(self._device, {}),
+                    "state": self._disk_state,
+                    "health": "Passed" if not has_problem else "Failed",
+                }
+
+                # Look for full disk data in coordinator
+                for disk in self.coordinator.data.get("system_stats", {}).get("individual_disks", []):
+                    if disk.get("name") == "parity":
+                        disk_data.update(disk)
+                        break
+
+                smart_result = self._analyze_smart_status(disk_data)
+                has_problem = has_problem or smart_result
+
+            self._last_state = has_problem
+            return has_problem
+
+        except Exception as err:
+            _LOGGER.error("Error checking parity health: %s", err)
+            return self._last_state if self._last_state is not None else None
+
+    def _get_temperature(self) -> Optional[int]:
+        """Get current disk temperature."""
+        try:
+            # First check disk data
+            for disk in self.coordinator.data.get("system_stats", {}).get("individual_disks", []):
+                if disk.get("name") == "parity" and (temp := disk.get("temperature")) is not None:
+                    return temp
+                    
+            # Try SMART data
+            if self._device:
+                smart_data = self.coordinator.data.get("smart_data", {}).get(self._device, {})
+                if temp := smart_data.get("temperature"):
+                    return temp
+                    
+            return None
+            
+        except Exception as err:
+            _LOGGER.error("Error getting temperature: %s", err)
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, StateType]:
+        """Return additional state attributes."""
+        try:
+            # Get latest parity info
+            parity_info = self.coordinator.data.get("parity_info", self._parity_info)
+            if not parity_info:
+                return {}
+
+            # Get disk state
+            self._disk_state = self._get_disk_state()
+
+            # Get current temperature
+            temperature = self._get_temperature()
+
+            # Build base attributes
+            attrs = {
+                "mount_point": self._mount_point,
+                "device": self._device,
+                "disk_status": self._disk_state,
+                "power_state": self._disk_state,
+                "spin_down_delay": self._spin_down_delay.to_human_readable(),
+                "smart_status": "Failed" if self._last_state else "Passed",
+                "temperature": f"{temperature}°C" if temperature is not None else "0°C"
+            }
+
+            # Additional disk information
+            attrs.update({
+                "total_size": format_bytes(int(parity_info.get("diskSize.0", 0))),
+            })
+            
+            # Add SMART details if available
+            if self._device:
+                smart_data = self.coordinator.data.get("smart_data", {}).get(self._device, {})
+                if smart_data:
+                    attrs["smart_details"] = {
+                        "power_on_hours": smart_data.get("power_on_hours"),
+                        "status": "Passed" if smart_data.get("smart_status", True) else "Failed"
+                    }
+            
+            # Add any problem details if they exist
+            if self._problem_attributes:
+                attrs["problem_details"] = self._problem_attributes
+            
+            return attrs
+
+        except Exception as err:
+            _LOGGER.debug("Error getting parity attributes: %s", err)
+            return {}
+
+class UnraidUPSBinarySensor(UnraidBinarySensorEntity):
+    def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
         super().__init__(
             coordinator,
             UnraidBinarySensorEntityDescription(
                 key="ups_status",
-                name="UPS Status",  # Base class will add Unraid prefix
-                device_class=BinarySensorDeviceClass.POWER,  # Changed to POWER device class
+                name="UPS Status",
+                device_class=BinarySensorDeviceClass.POWER,
                 entity_category=EntityCategory.DIAGNOSTIC,
                 icon="mdi:battery-medium",
-            ),
+            )
         )
 
     @property
@@ -485,6 +866,37 @@ class UnraidUPSBinarySensor(UnraidBinarySensorEntity):
             _LOGGER.debug("Error getting UPS attributes: %s", err)
             return {}
 
+async def _get_parity_info(coordinator: UnraidDataUpdateCoordinator) -> Optional[Dict[str, Any]]:
+    """Get parity disk information from mdcmd status."""
+    try:
+        result = await coordinator.api.execute_command("mdcmd status")
+        if result.exit_status != 0:
+            return None
+
+        parity_info = {}
+        for line in result.stdout.splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if key in [
+                "diskNumber.0", "diskName.0", "diskSize.0", "diskState.0",
+                "diskId.0", "rdevNumber.0", "rdevStatus.0", "rdevName.0",
+                "rdevOffset.0", "rdevSize.0", "rdevId.0"
+            ]:
+                parity_info[key] = value
+
+        # Only return if we found valid parity info
+        if "rdevName.0" in parity_info and "diskState.0" in parity_info:
+            return parity_info
+
+        return None
+
+    except Exception as err:
+        _LOGGER.error("Error getting parity disk info: %s", err)
+        return None
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -502,6 +914,17 @@ async def async_setup_entry(
     # Add UPS sensor if UPS info is available
     if coordinator.data.get("system_stats", {}).get("ups_info"):
         entities.append(UnraidUPSBinarySensor(coordinator))
+
+    # Check for and add parity disk sensor
+    parity_info = await _get_parity_info(coordinator)
+    if parity_info:
+        # Store parity info in coordinator data for future updates
+        coordinator.data["parity_info"] = parity_info
+        entities.append(UnraidParityDiskSensor(coordinator, parity_info))
+        _LOGGER.debug(
+            "Added parity disk sensor for device: %s", 
+            parity_info.get("rdevName.0")
+        )
 
     # Filter out tmpfs and special mounts
     ignored_mounts = {

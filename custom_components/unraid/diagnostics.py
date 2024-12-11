@@ -4,15 +4,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from homeassistant.components.diagnostics import REDACTED, async_redact_data
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
+from homeassistant.components.diagnostics import async_redact_data # type: ignore
+from homeassistant.config_entries import ConfigEntry # type: ignore
+from homeassistant.const import ( # type: ignore
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PORT,
     CONF_USERNAME,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant # type: ignore
 
 from .const import DOMAIN
 
