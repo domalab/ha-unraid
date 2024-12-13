@@ -595,58 +595,25 @@ class UnraidDiskHealthSensor(UnraidBinarySensorEntity):
             _LOGGER.debug("Missing key in disk data: %s", err)
             return {}
 
-class UnraidParityDiskSensor(UnraidDiskHealthSensor):
-    """Binary sensor for parity disk health."""
-
-    def __init__(
-        self,
-        coordinator: UnraidDataUpdateCoordinator,
-        parity_info: Dict[str, Any]
-    ) -> None:
-        """Initialize the parity disk sensor."""
-        self._parity_info = parity_info
-        device = parity_info.get("rdevName.0", "").strip()
-        if device and not device.startswith("/dev/"):
-            device = f"/dev/{device}"
-            
-        super().__init__(
-            coordinator=coordinator,
-            disk_name="parity"
-        )
-        
-        # Override device info for parity disk
-        self._device = device
-        self._attr_name = f"{coordinator.hostname.capitalize()} Parity Health"
-        
-        # Initialize state variables
-        self._last_state = None
-        self._mount_point = "/mnt/parity"
-        self._disk_state = "unknown"
-        self._problem_attributes: Dict[str, Any] = {}
-        self._last_smart_check = None
-        self._smart_status = None
-        
-        # Get spin down delay from config
-        self._spin_down_delay = self._get_spin_down_delay()
-        
-        _LOGGER.debug(
-            "Initialized parity disk sensor with device: %s",
-            self._device
-        )
+class UnraidParityDiskSensor(UnraidBinarySensorEntity):
+    """Binary sensor for parity disk health with enhanced monitoring."""
 
     def _get_spin_down_delay(self) -> SpinDownDelay:
-        """Get spin down delay configuration."""
+        """Get spin down delay for parity disk with fallback."""
         try:
             # Check disk config for parity-specific setting
             disk_cfg = self.coordinator.data.get("disk_config", {})
             
-            # Try to get parity-specific spin down delay
-            delay = disk_cfg.get("diskSpindownDelay.0")  # Parity is disk0
-            if delay is None or delay == "-1":
-                # Use global setting if no parity-specific setting
-                delay = disk_cfg.get("spindownDelay", "0")
-            
-            return SpinDownDelay(int(delay))
+            # Get parity delay (diskSpindownDelay.0)
+            delay = disk_cfg.get("diskSpindownDelay.0")
+            if delay and delay != "-1":
+                _LOGGER.debug("Using parity-specific spin down delay: %s", delay)
+                return SpinDownDelay(int(delay))
+                
+            # Use global setting
+            global_delay = disk_cfg.get("spindownDelay", "0")
+            _LOGGER.debug("Using global spin down delay: %s", global_delay)
+            return SpinDownDelay(int(global_delay))
             
         except (ValueError, TypeError) as err:
             _LOGGER.warning(
@@ -655,152 +622,334 @@ class UnraidParityDiskSensor(UnraidDiskHealthSensor):
             )
             return SpinDownDelay.NEVER
 
-    def _get_disk_state(self) -> str:
-        """Get current disk state from smartctl."""
-        try:
-            if not self._device:
-                return "unknown"
-                
-            # Look for cached state first
-            for disk in self.coordinator.data.get("system_stats", {}).get("individual_disks", []):
-                if (disk.get("device") == self._device.replace("/dev/", "") or 
-                    disk.get("name") == "parity"):
-                    return disk.get("state", "unknown").lower()
-
-            # Check smart data
-            smart_data = self.coordinator.data.get("smart_data", {}).get(self._device, {})
-            if smart_data:
-                return smart_data.get("state", "active")
-
-            return "active"  # Default to active for parity
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        parity_info: Dict[str, Any]
+    ) -> None:
+        """Initialize the parity disk sensor."""
+        self._parity_info = parity_info
+        self._disk_serial = parity_info.get("diskId.0", "")  # Get serial number
+        device = parity_info.get("rdevName.0", "").strip()
+        
+        _LOGGER.debug(
+            "Initializing parity disk sensor with device: %s, info: %s",
+            device,
+            {k: v for k, v in parity_info.items() if k != "smart_data"}
+        )
             
-        except Exception as err:
-            _LOGGER.error("Error getting disk state: %s", err)
-            return "unknown"
-
-    @property
-    def is_on(self) -> bool | None:
-        """Return true if there's a problem with the parity disk."""
-        try:
-            # Get latest parity info
-            parity_info = self.coordinator.data.get("parity_info", self._parity_info)
-            
-            if not parity_info:
-                return None
-
-            has_problem = False
-            self._problem_attributes = {}
-
-            # Get current state
-            self._disk_state = self._get_disk_state()
-            
-            # Check basic parity status
-            if (status := parity_info.get("rdevStatus.0")) != "DISK_OK":
-                self._problem_attributes["parity_status"] = status
-                _LOGGER.warning("Parity disk status issue: %s", status)
-                has_problem = True
-
-            # Check disk state (7 is normal operation)
-            if (state := parity_info.get("diskState.0", "0")) != "7":
-                self._problem_attributes["disk_state"] = f"Abnormal ({state})"
-                _LOGGER.warning("Parity disk state issue: %s", state)
-                has_problem = True
-            
-            # Check SMART status if available
-            if self._device:
-                # Create disk data structure for SMART analysis
-                disk_data = {
-                    "name": "parity",
-                    "device": self._device.replace("/dev/", ""),
-                    "smart_data": self.coordinator.data.get("smart_data", {}).get(self._device, {}),
-                    "state": self._disk_state,
-                    "health": "Passed" if not has_problem else "Failed",
-                }
-
-                # Look for full disk data in coordinator
-                for disk in self.coordinator.data.get("system_stats", {}).get("individual_disks", []):
-                    if disk.get("name") == "parity":
-                        disk_data.update(disk)
-                        break
-
-                smart_result = self._analyze_smart_status(disk_data)
-                has_problem = has_problem or smart_result
-
-            self._last_state = has_problem
-            return has_problem
-
-        except Exception as err:
-            _LOGGER.error("Error checking parity health: %s", err)
-            return self._last_state if self._last_state is not None else None
+        # Create description for parity disk
+        description = UnraidBinarySensorEntityDescription(
+            key="parity_health",
+            name="Parity Health",
+            device_class=BinarySensorDeviceClass.PROBLEM,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            icon="mdi:harddisk",
+            has_warning_threshold=True,
+        )
+        
+        # Initialize parent class
+        super().__init__(coordinator, description)
+        
+        # Override device info for parity disk
+        self._device = device
+        self._attr_name = f"{coordinator.hostname.capitalize()} Parity Health"
+        
+        # Initialize state variables
+        self._last_state = None
+        self._problem_attributes: Dict[str, Any] = {}
+        self._last_smart_check = None
+        self._smart_status = None
+        self._last_temperature = None
+        self._disk_state = "unknown"  # Add disk state initialization
+        
+        # Get spin down delay from config
+        self._spin_down_delay = self._get_spin_down_delay()
 
     def _get_temperature(self) -> Optional[int]:
         """Get current disk temperature."""
         try:
+            # Get current array state
+            array_state = self.coordinator.data.get("array_state", {})
+            self._disk_state = "active" if array_state.get("state") == "STARTED" else "standby"
+
             # First check disk data
             for disk in self.coordinator.data.get("system_stats", {}).get("individual_disks", []):
                 if disk.get("name") == "parity" and (temp := disk.get("temperature")) is not None:
+                    _LOGGER.debug("Got parity temperature %d°C from disk data", temp)
+                    self._last_temperature = temp
                     return temp
-                    
-            # Try SMART data
+
+            # Try SMART data if available    
             if self._device:
                 smart_data = self.coordinator.data.get("smart_data", {}).get(self._device, {})
                 if temp := smart_data.get("temperature"):
+                    _LOGGER.debug("Got parity temperature %d°C from SMART data", temp)
+                    self._last_temperature = temp
                     return temp
                     
+            # Return cached temperature if available
+            if self._disk_state == "standby" and self._last_temperature is not None:
+                _LOGGER.debug("Using cached temperature for standby parity disk: %d°C", self._last_temperature)
+                return self._last_temperature
+
+            _LOGGER.debug("No temperature data available for parity disk")
             return None
             
         except Exception as err:
-            _LOGGER.error("Error getting temperature: %s", err)
+            _LOGGER.error("Error getting parity temperature: %s", err)
             return None
+
+    def _analyze_smart_status(self, disk_data: Dict[str, Any]) -> bool:
+        """Analyze SMART status and attributes for actual problems."""
+        self._problem_attributes = {}
+        previous_state = self._last_state
+        
+        try:
+            _LOGGER.debug(
+                "Starting SMART analysis for parity disk with data: %s",
+                {k: v for k, v in disk_data.items() if k not in ['smart_data', 'attributes']}
+            )
+
+            _LOGGER.debug(
+                "Parity disk initial state - State: %s, Temperature: %s°C, Status: %s",
+                disk_data.get("state", "unknown"),
+                disk_data.get("temperature", "unknown"),
+                self._parity_info.get("rdevStatus.0", "unknown")
+            )
+
+            has_problem = False
+
+            # Check parity status first
+            if (status := self._parity_info.get("rdevStatus.0")) != "DISK_OK":
+                self._problem_attributes["parity_status"] = status
+                has_problem = True
+                _LOGGER.warning("Parity disk status issue: %s", status)
+
+            # Check disk state (7 is normal operation)
+            if (state := self._parity_info.get("diskState.0", "0")) != "7":
+                self._problem_attributes["disk_state"] = f"Abnormal ({state})"
+                has_problem = True
+                _LOGGER.warning("Parity disk state issue: %s", state)
+
+            # Get and validate SMART data
+            smart_data = disk_data.get("smart_data", {})
+            if smart_data:
+                _LOGGER.debug("Processing SMART data for parity disk")
+                
+                # Check overall SMART status
+                smart_status = smart_data.get("smart_status", True)
+                if not smart_status:
+                    self._problem_attributes["smart_status"] = "FAILED"
+                    has_problem = True
+                    _LOGGER.warning("Parity disk has failed SMART status")
+
+                # Process SMART attributes
+                attributes = smart_data.get("ata_smart_attributes", {}).get("table", [])
+                
+                # Map of critical attributes and their thresholds
+                critical_attrs = {
+                    "Reallocated_Sector_Ct": 0,
+                    "Current_Pending_Sector": 0,
+                    "Offline_Uncorrectable": 0,
+                    "UDMA_CRC_Error_Count": 100,
+                    "Reallocated_Event_Count": 0,
+                    "Reported_Uncorrect": 0,
+                    "Command_Timeout": 100
+                }
+                
+                # Process each attribute
+                for attr in attributes:
+                    name = attr.get("name")
+                    if not name:
+                        continue
+
+                    # Check critical attributes
+                    if name in critical_attrs:
+                        raw_value = attr.get("raw", {}).get("value", 0)
+                        threshold = critical_attrs[name]
+                        
+                        _LOGGER.debug(
+                            "Checking parity disk attribute %s: value=%s, threshold=%s",
+                            name,
+                            raw_value,
+                            threshold
+                        )
+                        
+                        if int(raw_value) > threshold:
+                            self._problem_attributes[name.lower()] = raw_value
+                            has_problem = True
+                            _LOGGER.warning(
+                                "Parity disk has high %s: %d (threshold: %d)",
+                                name,
+                                raw_value,
+                                threshold
+                            )
+
+                    # Temperature check
+                    elif name == "Temperature_Celsius":
+                        temp = attr.get("raw", {}).get("value")
+                        if temp is not None:
+                            _LOGGER.debug("Parity disk temperature from SMART: %d°C", temp)
+                            if temp > 55:  # Temperature threshold
+                                self._problem_attributes["temperature"] = f"{temp}°C"
+                                has_problem = True
+                                _LOGGER.warning(
+                                    "Parity disk temperature is high: %d°C (threshold: 55°C)",
+                                    temp
+                                )
+
+            # Log state changes
+            if previous_state != has_problem:
+                _LOGGER.info(
+                    "Parity disk health state changed: %s -> %s",
+                    "Problem" if previous_state else "OK",
+                    "Problem" if has_problem else "OK"
+                )
+
+            # Store final state
+            self._last_state = has_problem
+            
+            if has_problem:
+                _LOGGER.warning(
+                    "Parity disk has problems: %s",
+                    self._problem_attributes
+                )
+            else:
+                _LOGGER.debug("No problems found for parity disk")
+            
+            return has_problem
+
+        except Exception as err:
+            _LOGGER.error(
+                "SMART analysis failed for parity disk: %s",
+                err,
+                exc_info=True
+            )
+            return self._last_state if self._last_state is not None else False
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return (
+            self.coordinator.last_update_success
+            and bool(self._device)
+            and bool(self._parity_info)
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if there's a problem with the disk."""
+        try:
+            for disk in self.coordinator.data["system_stats"]["individual_disks"]:
+                if disk["name"] == "parity":
+                    # Update spin down delay if changed
+                    new_delay = SpinDownDelay(disk.get("spin_down_delay", SpinDownDelay.MINUTES_30))
+                    if new_delay != self._spin_down_delay:
+                        self._spin_down_delay = new_delay
+                        _LOGGER.debug(
+                            "Updated spin down delay for %s to %s",
+                            "parity",
+                            self._spin_down_delay.to_human_readable()
+                        )
+
+                    # Get current state
+                    current_state = disk.get("state", "unknown").lower()
+                    if current_state == "standby":
+                        return self._last_state if self._last_state is not None else False
+
+                    current_time = datetime.now(timezone.utc)
+                    should_check_smart = (
+                        self._smart_status is None  # First check
+                        or self._spin_down_delay == SpinDownDelay.NEVER  # Never spin down
+                        or (
+                            self._last_smart_check is not None
+                            and (
+                                current_time - self._last_smart_check
+                            ).total_seconds() >= self._spin_down_delay.to_seconds()
+                        )
+                    )
+
+                    if should_check_smart:
+                        # Smart data will be updated by coordinator
+                        self._last_smart_check = current_time
+                        return self._analyze_smart_status(disk)
+
+                    # Use cached status
+                    return self._last_state if self._last_state is not None else False
+
+            return None
+
+        except (KeyError, AttributeError, TypeError, ValueError) as err:
+            _LOGGER.debug("Error checking disk health: %s", err)
+            return self._last_state if self._last_state is not None else None
+
+    @property
+    def state(self) -> str:
+        """Return the state of the sensor."""
+        if self.is_on:
+            return "Problem"
+        return "OK"
 
     @property
     def extra_state_attributes(self) -> dict[str, StateType]:
         """Return additional state attributes."""
         try:
-            # Get latest parity info
-            parity_info = self.coordinator.data.get("parity_info", self._parity_info)
-            if not parity_info:
-                return {}
+            # Get current status from array state
+            array_state = self.coordinator.data.get("array_state", {})
+            disk_status = "active" if array_state.get("state") == "STARTED" else "standby"
 
-            # Get disk state
-            self._disk_state = self._get_disk_state()
-
-            # Get current temperature
-            temperature = self._get_temperature()
-
-            # Build base attributes
+            # Build attributes
             attrs = {
-                "mount_point": self._mount_point,
                 "device": self._device,
-                "disk_status": self._disk_state,
-                "power_state": self._disk_state,
+                "disk_status": disk_status,
+                "power_state": disk_status,
                 "spin_down_delay": self._spin_down_delay.to_human_readable(),
                 "smart_status": "Failed" if self._last_state else "Passed",
-                "temperature": f"{temperature}°C" if temperature is not None else "0°C"
+                "disk_serial": self._disk_serial
             }
 
-            # Additional disk information
-            attrs.update({
-                "total_size": format_bytes(int(parity_info.get("diskSize.0", 0))),
-            })
-            
+            # Add temperature if available
+            if temp := self._get_temperature():
+                attrs["temperature"] = f"{temp}°C"
+                _LOGGER.debug("Added temperature attribute: %d°C", temp)
+            else:
+                attrs["temperature"] = "0°C"
+                _LOGGER.debug("No temperature available, using 0°C")
+
+            # Add disk size information
+            if size := self._parity_info.get("diskSize.0"):
+                # Convert size to bytes (blocks are sectors of 512 bytes)
+                size_bytes = int(size) * 512  # 512 bytes per sector
+                attrs["total_size"] = format_bytes(size_bytes)
+                _LOGGER.debug(
+                    "Added disk size: %s (raw: %s sectors)",
+                    attrs["total_size"],
+                    size
+                )
+
             # Add SMART details if available
             if self._device:
                 smart_data = self.coordinator.data.get("smart_data", {}).get(self._device, {})
                 if smart_data:
                     attrs["smart_details"] = {
                         "power_on_hours": smart_data.get("power_on_hours"),
-                        "status": "Passed" if smart_data.get("smart_status", True) else "Failed"
+                        "status": "Passed" if smart_data.get("smart_status", True) else "Failed",
+                        "device_model": smart_data.get("model_name", "Unknown"),
+                        "serial_number": smart_data.get("serial_number", "Unknown"),
+                        "firmware": smart_data.get("firmware_version", "Unknown")
                     }
-            
-            # Add any problem details if they exist
+                    _LOGGER.debug("Added SMART details: %s", attrs["smart_details"])
+
+            # Add any problem details
             if self._problem_attributes:
                 attrs["problem_details"] = self._problem_attributes
-            
+                _LOGGER.debug("Added problem details: %s", self._problem_attributes)
+
             return attrs
 
         except Exception as err:
-            _LOGGER.debug("Error getting parity attributes: %s", err)
+            _LOGGER.error("Error getting parity attributes: %s", err)
             return {}
 
 class UnraidUPSBinarySensor(UnraidBinarySensorEntity):

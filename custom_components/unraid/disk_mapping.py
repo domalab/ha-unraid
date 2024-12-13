@@ -7,7 +7,7 @@ from .helpers import format_bytes
 _LOGGER = logging.getLogger(__name__)
 
 def get_unraid_disk_mapping(data: dict) -> Dict[str, str]:
-    """Map Unraid disks to their device paths."""
+    """Map Unraid disks to their device paths and serial numbers."""
     mapping = {}
 
     try:
@@ -15,6 +15,7 @@ def get_unraid_disk_mapping(data: dict) -> Dict[str, str]:
         for disk in data.get("system_stats", {}).get("individual_disks", []):
             name = disk.get("name", "")
             device = disk.get("device", "")
+            serial = disk.get("serial", "")  # Get serial number if available
 
             # Skip if missing essential info
             if not name or not device:
@@ -22,15 +23,24 @@ def get_unraid_disk_mapping(data: dict) -> Dict[str, str]:
 
             # Map array disk (disk1, disk2, etc)
             if name.startswith("disk"):
-                mapping[name] = device
+                mapping[name] = {
+                    "device": device,
+                    "serial": serial
+                }
 
             # Map parity disk
             elif name == "parity":
-                mapping["parity"] = device
+                mapping["parity"] = {
+                    "device": device,
+                    "serial": serial
+                }
 
             # Map cache disk(s)
             elif name.startswith("cache"):
-                mapping[name] = device
+                mapping[name] = {
+                    "device": device,
+                    "serial": serial
+                }
 
         return mapping
 
@@ -46,8 +56,8 @@ def get_disk_info(data: dict, disk_name: str) -> Dict[str, Any]:
             if disk.get("name") == disk_name:
                 # Basic disk information
                 info = {
-                    "mount_point": disk.get("mount_point", ""),
                     "device": disk.get("device", "unknown"),
+                    "serial": disk.get("serial", "unknown"),
                     "temperature": f"{disk.get('temperature', '0')}°C",
                 }
 

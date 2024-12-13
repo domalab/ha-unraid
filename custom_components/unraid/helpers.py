@@ -216,9 +216,9 @@ def process_array_disk(disk_info: DiskInfo) -> Optional[str]:
     device = f"sd{chr(ord('b') + disk_num - 1)}"
     return device
 
-def get_unraid_disk_mapping(system_stats: dict) -> Dict[str, str]:
-    """Get mapping between Unraid disk numbers and Linux device names."""
-    mapping: Dict[str, str] = {}
+def get_unraid_disk_mapping(system_stats: dict) -> Dict[str, Dict[str, Any]]:
+    """Get mapping between Unraid disk names, devices, and serial numbers."""
+    mapping: Dict[str, Dict[str, Any]] = {}
 
     # Check for disk data
     individual_disks = system_stats.get("individual_disks", [])
@@ -255,23 +255,49 @@ def get_unraid_disk_mapping(system_stats: dict) -> Dict[str, str]:
             disk_name = disk.get("name")
             if disk_name:
                 device = f"sd{base_device}"
-                mapping[disk_name] = device
+                mapping[disk_name] = {
+                    "device": device,
+                    "serial": disk.get("serial", ""),
+                    "name": disk_name
+                }
                 _LOGGER.debug(
-                    "Mapped array disk %s to device %s",
+                    "Mapped array disk %s to device %s (serial: %s)",
                     disk_name,
-                    device
+                    device,
+                    disk.get("serial", "unknown")
                 )
                 base_device = chr(ord(base_device) + 1)
+
+        # Handle parity disk
+        for disk in valid_disks:
+            if disk.get("name") == "parity":
+                device = disk.get("device")
+                if device:
+                    mapping["parity"] = {
+                        "device": device,
+                        "serial": disk.get("serial", ""),
+                        "name": "parity"
+                    }
+                    _LOGGER.debug(
+                        "Mapped parity disk to device %s (serial: %s)",
+                        device,
+                        disk.get("serial", "unknown")
+                    )
 
         # Then handle cache disk if present
         for disk in valid_disks:
             if disk.get("name") == "cache":
                 device = disk.get("device")
                 if device:
-                    mapping["cache"] = device
+                    mapping["cache"] = {
+                        "device": device,
+                        "serial": disk.get("serial", ""),
+                        "name": "cache"
+                    }
                     _LOGGER.debug(
-                        "Mapped cache disk to device %s",
-                        device
+                        "Mapped cache disk to device %s (serial: %s)",
+                        device,
+                        disk.get("serial", "unknown")
                     )
 
         return mapping
