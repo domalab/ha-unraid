@@ -23,14 +23,14 @@ If applicable, add screenshots to help explain your problem.
  - Version [e.g. 2024.12]
 
 **Home Assistant installation type (please complete the following information):**
-- [ ] Docker / Container  
-- [ ] Virtual Machine
-- [ ] Raspberry Pi
+- \[ ] Docker / Container  
+- \[ ] Virtual Machine
+- \[ ] Raspberry Pi
 
 **Priority of Request**
-- [ ] High  
-- [ ] Medium  
-- [ ] Low  
+- \[ ] High  
+- \[ ] Medium  
+- \[ ] Low  
 
 **Additional context**
 Add any other context about the problem here.

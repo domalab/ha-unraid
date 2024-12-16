@@ -18,9 +18,9 @@ Describe a specific scenario where this feature would be helpful or explain why 
 
 **Priority of Request**
 How important is this feature to you?  
-- [ ] High
-- [ ] Medium
-- [ ] Low
+- \[ ] High
+- \[ ] Medium
+- \[ ] Low
 
 **Additional context**
 Add any other context or screenshots about the feature request here.
