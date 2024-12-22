@@ -12,7 +12,7 @@ import asyncio
 import asyncssh # type: ignore
 
 from .network_operations import NetworkOperationsMixin
-from ..helpers import format_bytes
+from ..helpers import format_bytes, extract_fans_data
 from ..const import (
     TEMP_WARN_THRESHOLD,
     TEMP_CRIT_THRESHOLD,
@@ -506,7 +506,18 @@ class SystemOperationsMixin:
             _LOGGER.debug("Fetching temperature data")
             result = await self.execute_command("sensors")
             if result.exit_status == 0:
-                temp_data['sensors'] = self._parse_sensors_output(result.stdout)
+                # Parse sensors output
+                sensors_dict = self._parse_sensors_output(result.stdout)
+                temp_data['sensors'] = sensors_dict
+                
+                # Extract fan data
+                fans = extract_fans_data(sensors_dict)
+                if fans:
+                    temp_data['fans'] = fans
+                    _LOGGER.debug("Found fans: %s", list(fans.keys()))
+                else:
+                    _LOGGER.debug("No fans found in sensor data")
+
         except (asyncssh.Error, asyncio.TimeoutError, OSError, ValueError) as e:
             _LOGGER.error("Error getting sensors data: %s", str(e))
 
@@ -523,15 +534,25 @@ class SystemOperationsMixin:
         """Parse the output of the sensors command."""
         sensors_data = {}
         current_sensor = None
+        key_counters = {}  # Track duplicate keys per sensor
+        
         for line in output.splitlines():
             if ':' not in line:
                 current_sensor = line.strip()
                 sensors_data[current_sensor] = {}
+                key_counters[current_sensor] = {}  # Initialize counters for this sensor
             else:
                 key, value = line.split(':', 1)
                 key = key.strip()
                 value = value.split('(')[0].strip()
+                
+                # Handle duplicate keys by adding a number
+                if key in sensors_data[current_sensor]:
+                    key_counters[current_sensor][key] = key_counters[current_sensor].get(key, 1) + 1
+                    key = f"{key} #{key_counters[current_sensor][key]}"
+                
                 sensors_data[current_sensor][key] = value
+        
         return sensors_data
 
     def _parse_thermal_zones(self, output: str) -> Dict[str, float]:

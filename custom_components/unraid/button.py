@@ -18,6 +18,7 @@ from homeassistant.util import dt as dt_util # type: ignore
 
 from .const import DOMAIN
 from .coordinator import UnraidDataUpdateCoordinator
+from .naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -148,18 +149,25 @@ class UnraidButton(ButtonEntity):
         self.coordinator = coordinator
         self.entity_description = description
         
-        # Set unique_id combining entry_id and button key
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_{description.key}"
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="button"
+        )
+        
+        # Set unique_id and name using naming utility
+        self._attr_unique_id = naming.get_entity_id(description.key)
+        self._attr_name = f"{naming.clean_hostname()} {description.name}"
         
         # Set name and icon
-        self._attr_name = description.name
         if description.icon:
             self._attr_icon = description.icon
-            
+                
         # Set device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": f"Unraid Server ({coordinator.hostname})",
+            "name": f"Unraid Server ({naming.clean_hostname()})",
             "manufacturer": "Lime Technology",
             "model": "Unraid Server",
         }
@@ -199,23 +207,29 @@ class UnraidScriptButton(ButtonEntity):
         description: UnraidScriptButtonDescription,
     ) -> None:
         """Initialize the button."""
-        super().__init__()
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="script"
+        )
+        
         self._attr_extra_state_attributes = {}  # Instance-level attribute
         self.coordinator = coordinator
         self.entity_description: UnraidScriptButtonDescription = description
         
-        # Set unique_id combining entry_id and button key (removed duplicate)
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_{description.key}"
+        # Set unique_id and name using naming utility
+        self._attr_unique_id = naming.get_entity_id(description.key)
+        self._attr_name = f"{naming.clean_hostname()} {description.name}"
         
-        # Set name and icon
-        self._attr_name = description.name
+        # Set icon if provided
         if description.icon:
             self._attr_icon = description.icon
-            
+                
         # Set device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": f"Unraid Server ({coordinator.hostname})",
+            "name": f"Unraid Server ({naming.clean_hostname()})",
             "manufacturer": "Lime Technology",
             "model": "Unraid Server",
         }

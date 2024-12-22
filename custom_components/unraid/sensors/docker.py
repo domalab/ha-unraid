@@ -15,6 +15,7 @@ from homeassistant.const import PERCENTAGE, EntityCategory # type: ignore
 
 from .base import UnraidSensorBase, UnraidDiagnosticMixin
 from .const import DOMAIN
+from ..naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,6 +109,13 @@ class UnraidDockerSensor(UnraidSensorBase, UnraidDiagnosticMixin):
 
     def __init__(self, coordinator, description: UnraidSensorEntityDescription) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="docker"
+        )
+
         super().__init__(coordinator, description)
         UnraidDiagnosticMixin.__init__(self)
         self._attr_has_entity_name = True
@@ -115,7 +123,7 @@ class UnraidDockerSensor(UnraidSensorBase, UnraidDiagnosticMixin):
         # Update device info to create Docker parent device
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{coordinator.entry.entry_id}_docker")},
-            "name": f"Unraid Docker ({coordinator.hostname or 'Unknown'})",
+            "name": f"Unraid Docker ({naming.clean_hostname()})",
             "manufacturer": "Docker",
             "model": "Container Engine",
             "via_device": (DOMAIN, coordinator.entry.entry_id),
@@ -137,10 +145,17 @@ class UnraidDockerContainerSensor(UnraidSensorBase, DockerMetricsMixin, UnraidDi
         """Initialize the sensor."""
         self.container_name = container_name
         
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="docker"
+        )
+        
         # Create single sensor description for container
         description = UnraidSensorEntityDescription(
-            key=f"docker_{container_name}",
-            name=container_name,
+            key=f"docker_{container_name.lower()}",
+            name=naming.get_entity_name(container_name, "docker"),
             icon="mdi:docker",
             value_fn=self._get_container_state,
             available_fn=self._is_container_available,
@@ -154,7 +169,7 @@ class UnraidDockerContainerSensor(UnraidSensorBase, DockerMetricsMixin, UnraidDi
         # Link container sensors to the Docker service with consistent naming
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{coordinator.entry.entry_id}_docker")},
-            "name": f"Unraid Docker ({coordinator.hostname})",
+            "name": f"Unraid Docker ({naming.clean_hostname()})",
             "manufacturer": "Docker",
             "model": "Container Engine",
             "via_device": (DOMAIN, coordinator.entry.entry_id),

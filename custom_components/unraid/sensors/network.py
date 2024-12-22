@@ -14,12 +14,14 @@ from homeassistant.util import dt as dt_util # type: ignore
 
 from .base import UnraidSensorBase
 from .const import (
+    DOMAIN,
     UnraidSensorEntityDescription,
     VALID_INTERFACE_PATTERN,
     EXCLUDED_INTERFACES,
 )
 
 from  ..api.network_operations import NetworkRateSmoothingMixin
+from ..naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,9 +52,16 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
         self._direction = direction
         self._unit = NetworkSpeedUnit(1, "bit/s")  # Start with lowest unit
 
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="network"
+        )
+
         description = UnraidSensorEntityDescription(
             key=f"network_{interface}_{direction}",
-            name=f"Network {interface} {direction.capitalize()}",
+            name=f"{naming.get_entity_name(interface, 'network')} {direction.capitalize()}",
             device_class=SensorDeviceClass.DATA_RATE,
             state_class=SensorStateClass.MEASUREMENT,
             icon="mdi:arrow-down" if direction == "inbound" else "mdi:arrow-up",

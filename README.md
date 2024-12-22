@@ -15,10 +15,12 @@ This integration is in active development. Here are a few things to keep in mind
 
 - Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
 - Monitor CPU and Motherboard temperature
+- Monitor System Fans
 - Monitor UPS Connected
 - Control Docker containers
 - Control VMs
 - Execute shell commands
+- Buttons for user scripts
 - Manage user scripts
 
 ## Installation
@@ -56,6 +58,7 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 - CPU Usage: Shows the current CPU utilization percentage.
 - RAM Usage: Displays the current RAM usage percentage.
 - CPU and Motherboard Temps: Shows CPU and Motherboard temperatures
+- System Fans : Shows System Fans and RPM
 - Array Usage: Shows the overall array usage percentage.
 - Individual Array Disks: Displays usage information for each disk in the array.
 - Uptime: Shows how long the Unraid server has been running.
@@ -81,6 +84,11 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 - `unraid.stop_user_script`: Stop a running user script
 - `unraid.system_reboot`: Reboot Unraid
 - `unraid.system_shutdown`: Shutdown Unraid
+
+## Buttons
+
+- Buttons to control user scripts (Disabled by default)
+- Buttons to control system reboot and shutdown (Disabled by default)
 
 ## Contributing
 

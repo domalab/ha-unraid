@@ -141,6 +141,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
     def hostname(self) -> str:
         """Get the hostname for entity naming."""
         raw_hostname = self.entry.data.get(CONF_HOSTNAME, DEFAULT_NAME)
+        _LOGGER.debug("Raw hostname retrieved from entry.data: %s", raw_hostname)
         return raw_hostname.capitalize()
 
     @property
@@ -263,6 +264,29 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         except (KeyError, ValueError, TypeError) as err:
             _LOGGER.error("Error updating disk mapping: %s", err)
             return system_stats
+
+    async def _update_disk_mappings(self, data: dict) -> None:
+        """Update disk mappings with comprehensive information."""
+        try:
+            if not hasattr(self.api, "get_disk_mappings"):
+                return
+                
+            # Only update if we don't already have valid mappings
+            if not data.get("disk_mappings"):
+                mappings = await self.api.get_disk_mappings()
+                if mappings:
+                    data["disk_mappings"] = mappings
+                    _LOGGER.debug(
+                        "Updated disk mappings for %d disks",
+                        len(mappings)
+                    )
+                else:
+                    _LOGGER.debug("No disk mappings available")
+        except Exception as err:
+            _LOGGER.warning("Error updating disk mappings: %s", err)
+            # Don't let mapping errors affect other data
+            if "disk_mappings" not in data:
+                data["disk_mappings"] = {}
 
     async def _async_update_disk_data(
         self,
@@ -486,6 +510,8 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                         data["docker_stats"] = {"containers": {}, "summary": {}}
 
                 _LOGGER.debug("Data update complete. Keys collected: %s", list(data.keys()))
+
+                await self._update_disk_mappings(data)
                 return data
 
         except Exception as err:

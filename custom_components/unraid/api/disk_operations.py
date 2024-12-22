@@ -9,6 +9,8 @@ from dataclasses import dataclass
 import re
 from datetime import datetime
 
+from ..disk_mapping import parse_disk_config, parse_disks_ini
+
 from .smart_operations import SmartDataManager
 from .disk_state import DiskState, DiskStateManager
 
@@ -105,6 +107,53 @@ class DiskOperationsMixin:
         except Exception as err:
             _LOGGER.error("Error during disk operations initialization: %s", err)
 
+    async def get_disk_mappings(self) -> Dict[str, Dict[str, Any]]:
+        """Get comprehensive disk mappings including serials."""
+        try:
+            async with self._disk_lock:
+                # Get all data sources in parallel
+                command_results = await asyncio.gather(
+                    self.execute_command("cat /var/local/emhttp/disks.ini"),
+                    self.execute_command("cat /boot/config/disk.cfg"),
+                    return_exceptions=True
+                )
+
+                mappings = {}
+                
+                # Parse disks.ini first (primary source)
+                if not isinstance(command_results[0], Exception) and command_results[0].exit_status == 0:
+                    disks_ini_mappings = await parse_disks_ini(self.execute_command)
+                    for disk_name, disk_info in disks_ini_mappings.items():
+                        mappings[disk_name] = {
+                            "name": disk_name,
+                            "device": disk_info.get("device", ""),
+                            "serial": disk_info.get("id", ""),  # Serial is in the 'id' field
+                            "status": disk_info.get("status", "unknown"),
+                            "filesystem": disk_info.get("fsType", ""),
+                            "spindown_delay": "-1"  # Default, will be updated from disk.cfg
+                        }
+
+                # Add spindown delays from disk.cfg if needed
+                if not isinstance(command_results[1], Exception) and command_results[1].exit_status == 0:
+                    disk_cfg = parse_disk_config(command_results[1].stdout)
+                    # Update spindown delays in mappings
+                    for disk_name, config in disk_cfg.items():
+                        if disk_name in mappings:
+                            mappings[disk_name].update({
+                                "spindown_delay": config.get("spindown_delay", "-1")
+                            })
+
+                if not mappings:
+                    _LOGGER.warning("No disk mappings found from any source")
+                else:
+                    _LOGGER.debug("Found disk mappings: %s", mappings)
+
+                return mappings
+
+        except Exception as err:
+            _LOGGER.error("Error getting disk mappings: %s", err)
+            return {}
+
     async def _get_array_status(self) -> str:
         """Get Unraid array status using mdcmd."""
         try:
@@ -140,6 +189,13 @@ class DiskOperationsMixin:
 
             if not disk_name:
                 return disk_info
+            
+            # Get disk mappings to get serial
+            mappings = await self.get_disk_mappings()
+            if disk_name in mappings:
+                disk_info["serial"] = mappings[disk_name].get("serial")
+                _LOGGER.debug("Added serial for disk %s: %s", 
+                            disk_name, disk_info.get("serial"))
 
             # Map device name to proper device path 
             if not device:

@@ -50,9 +50,13 @@ class UnraidSwitchEntity(CoordinatorEntity, SwitchEntity):
         
         # Construct unique_id with guaranteed single hostname instance
         self._attr_unique_id = f"unraid_server_{hostname}_{clean_key}"
+        _LOGGER.debug("Entity initialized | unique_id: %s | hostname: %s | clean_key: %s",
+            self._attr_unique_id, hostname, clean_key)
         
         # Keep the name simple and human-readable
         self._attr_name = f"{hostname} {description.name}"
+        _LOGGER.debug("Entity initialized | name: %s | hostname: %s | description: %s",
+            self._attr_name, hostname, description.name)
         
         # All switches belong to main server device
         self._attr_device_info = {

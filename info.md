@@ -15,10 +15,12 @@ This integration is in active development. Here are a few things to keep in mind
 
 - Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
 - Monitor CPU and Motherboard temperature
+- Monitor System Fans
 - Monitor UPS Connected
 - Control Docker containers
 - Control VMs
 - Execute shell commands
+- Buttons for user scripts
 - Manage user scripts
 
 ## Installation
@@ -56,6 +58,7 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 - CPU Usage: Shows the current CPU utilization percentage.
 - RAM Usage: Displays the current RAM usage percentage.
 - CPU and Motherboard Temps: Shows CPU and Motherboard temperatures
+- System Fans : Shows System Fans and RPM
 - Array Usage: Shows the overall array usage percentage.
 - Individual Array Disks: Displays usage information for each disk in the array.
 - Uptime: Shows how long the Unraid server has been running.
@@ -82,6 +85,11 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 - `unraid.system_reboot`: Reboot Unraid
 - `unraid.system_shutdown`: Shutdown Unraid
 
+## Buttons
+
+- Buttons to control user scripts (Disabled by default)
+- Buttons to control system reboot and shutdown (Disabled by default)
+
 ## Contributing
 
 Contributions to this integration are welcome. Please fork the repository and submit a pull request with your changes. Make sure to follow the contribution guidelines.
@@ -96,11 +104,10 @@ This integration is not officially associated with or endorsed by UNRAID. UNRAID
 
 ## Support This Project
 
-If you find this project useful or it has helped you in any way, please consider supporting its development. Your contributions help maintain and improve the project and allow us to dedicate more time to make it even better.
+If you find this project useful or it has helped you in any way, please consider supporting its development. Your contributions help maintain and improve the project and allow me to dedicate more time to make it even better.
 
 You can support by:
 
-- Giving a ⭐ if you like it!
 - [![Donate with PayPal](https://www.paypalobjects.com/webstatic/en_US/i/buttons/PP_logo_h_150x38.png)](https://www.paypal.com/donate?hosted_button_id=VS3VTJZW7Q8NC)
 
 Thank you for your support and for helping keep this project going!

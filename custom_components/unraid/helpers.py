@@ -1,9 +1,10 @@
 """Helper utilities for Unraid integration."""
-from dataclasses import dataclass, field
-from typing import Tuple, Dict, Optional, Pattern, List, Any
-import math
 import logging
 import re
+import math
+from dataclasses import dataclass, field
+from typing import Tuple, Dict, Optional, Pattern, List, Any
+from homeassistant.util import dt as dt_util # type: ignore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -160,13 +161,73 @@ def detect_pools(system_stats: dict) -> Dict[str, PoolInfo]:
     return pools
 
 def get_disk_number(disk_name: str) -> Optional[int]:
-    """Extract disk number from disk name."""
-    if match := DISK_NUMBER_PATTERN.search(disk_name):
-        try:
-            return int(match.group(1))
-        except ValueError:
+    """Extract disk number from disk name with validation."""
+    try:
+        if not disk_name.startswith("disk"):
             return None
-    return None
+        if match := DISK_NUMBER_PATTERN.match(disk_name):
+            return int(match.group(1))
+        return None
+    except (ValueError, AttributeError) as err:
+        _LOGGER.debug("Error extracting disk number from %s: %s", disk_name, err)
+        return None
+
+def get_disk_identifiers(coordinator_data: dict, disk_name: str) -> Tuple[Optional[str], Optional[str]]:
+    """Get device path and serial number for a disk with consistent fallbacks."""
+    device = None
+    serial = None
+    
+    try:
+        # First try disk mappings (from disks.ini)
+        if disk_mappings := coordinator_data.get("disk_mappings", {}):
+            if disk_info := disk_mappings.get(disk_name):
+                device = disk_info.get("device")
+                serial = disk_info.get("serial")
+                _LOGGER.debug(
+                    "Found disk info in mappings for %s - device: %s, serial: %s",
+                    disk_name, device, serial
+                )
+
+        # Then try system stats
+        if not (device and serial):
+            if system_stats := coordinator_data.get("system_stats", {}):
+                for disk in system_stats.get("individual_disks", []):
+                    if disk.get("name") == disk_name:
+                        # Get device if not already found
+                        if not device:
+                            device = disk.get("device")
+                        
+                        # Try serial from different possible locations
+                        if not serial:
+                            serial = (
+                                disk.get("serial")
+                                or disk.get("smart_data", {}).get("serial_number")
+                            )
+                        break
+
+        # Special handling for array disks if device still not found
+        if not device and disk_name.startswith("disk"):
+            if disk_num := get_disk_number(disk_name):
+                device = f"sd{chr(ord('b') + disk_num - 1)}"
+                _LOGGER.debug(
+                    "Falling back to calculated device for %s: %s",
+                    disk_name, device
+                )
+
+        # Special handling for cache disk
+        elif not device and disk_name == "cache":
+            device = "nvme0n1"
+            _LOGGER.debug("Using default NVMe device for cache")
+
+        return device, serial
+
+    except Exception as err:
+        _LOGGER.error(
+            "Error getting disk identifiers for %s: %s",
+            disk_name, err,
+            exc_info=True
+        )
+        return None, None
 
 def validate_device_path(device_path: str) -> bool:
     """Validate device path format."""
@@ -324,3 +385,122 @@ def get_pool_info(system_stats: dict) -> Dict[str, Dict[str, Any]]:
         }
 
     return pool_info
+
+def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]:
+    """Extract fan RPM data from sensors output."""
+    fan_data = {}
+    
+    try:
+        for device, readings in sensors_data.items():
+            if not isinstance(readings, dict):
+                continue
+
+            # Look for entries with "Array Fan" in the key
+            for key, value in readings.items():
+                if "array fan" in key.lower() and "rpm" in str(value).lower():
+                    try:
+                        # Extract RPM value
+                        rpm_str = str(value).upper().replace("RPM", "").strip()
+                        rpm_val = int(float(rpm_str))
+                        
+                        # Get fan number if present
+                        fan_num = "1"  # Default if no number found
+                        if "#" in key:
+                            fan_num = key.split("#")[-1].strip()
+                            
+                        # Generate clean fan key
+                        base_name = f"{device}_array_fan_{fan_num}".lower()
+                        base_name = re.sub(r'[^a-z0-9_]', '_', base_name)
+                        base_name = re.sub(r'_+', '_', base_name).strip('_')
+                        
+                        if rpm_val >= 0 and rpm_val < 10000:  # Validate RPM value
+                            fan_data[base_name] = {
+                                "rpm": rpm_val,
+                                "label": f"System Fan {fan_num}",
+                                "device": device
+                            }
+                            _LOGGER.debug(
+                                "Added fan: %s with %d RPM",
+                                base_name,
+                                rpm_val
+                            )
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.debug(
+                            "Error parsing fan RPM value '%s': %s",
+                            value,
+                            err
+                        )
+                        continue
+
+        _LOGGER.debug("Found %d fans: %s", len(fan_data), list(fan_data.keys()))
+        return fan_data
+        
+    except Exception as err:
+        _LOGGER.error("Error extracting fan data: %s", err, exc_info=True)
+        return {}
+
+class DiskDataHelperMixin:
+    """Mixin providing common disk data handling methods."""
+
+    def _calculate_usage_percentage(self, total: int, used: int) -> Optional[float]:
+        """Calculate storage usage percentage with error handling."""
+        try:
+            if total > 0:
+                return round((used / total) * 100, 1)
+            return 0.0
+        except (TypeError, ZeroDivisionError) as err:
+            _LOGGER.debug("Error calculating usage percentage: %s", err)
+            return None
+
+    def _get_storage_attributes(
+        self,
+        total: int,
+        used: int,
+        free: int,
+        mount_point: Optional[str] = None,
+        device: Optional[str] = None,
+        is_standby: bool = False
+    ) -> Dict[str, Any]:
+        """Get common storage attributes with unified calculation."""
+        try:
+            # Use centralized percentage calculation
+            usage = self._calculate_usage_percentage(total, used)
+            percentage = 0.0 if usage is None else usage
+            
+            attrs = {
+                "total_size": format_bytes(total),
+                "used_space": format_bytes(used),
+                "free_space": format_bytes(free),
+                "percentage": percentage,
+                "power_state": "standby" if is_standby else "active",
+                "last_update": dt_util.utcnow().isoformat()
+            }
+
+            if mount_point:
+                attrs["mount_point"] = mount_point
+            if device:
+                attrs["device"] = device
+
+            return attrs
+
+        except Exception as err:
+            _LOGGER.error("Error creating storage attributes: %s", err)
+            return {
+                "total_size": "unknown",
+                "used_space": "unknown",
+                "free_space": "unknown",
+                "percentage": 0.0,
+                "last_update": dt_util.utcnow().isoformat()
+            }
+
+    def _get_temperature_str(
+        self, 
+        temp_value: Optional[int],
+        is_standby: bool = False
+    ) -> str:
+        """Get temperature string with standardized standby handling."""
+        if is_standby:
+            return "N/A (Standby)"
+        if temp_value is None:
+            return "N/A"
+        return f"{temp_value}°C"

@@ -22,7 +22,8 @@ from homeassistant.util import dt as dt_util # type: ignore
 from homeassistant.core import callback # type: ignore
 
 from .base import UnraidSensorBase, ValueValidationMixin
-from .const import UnraidSensorEntityDescription
+from .const import DOMAIN, UnraidSensorEntityDescription
+from ..naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -114,9 +115,16 @@ class UnraidUPSCurrentPowerSensor(UnraidSensorBase, UPSMetricsMixin):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="ups"
+        )
+
         description = UnraidSensorEntityDescription(
             key="ups_current_power",
-            name="UPS Current Power",
+            name=f"{naming.get_entity_name('ups', 'ups')} Current Power",
             native_unit_of_measurement=UnitOfPower.WATT,
             device_class=SensorDeviceClass.POWER,
             state_class=SensorStateClass.MEASUREMENT,
@@ -170,9 +178,16 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="ups"
+        )
+
         description = UnraidSensorEntityDescription(
             key="ups_energy_consumption",
-            name="UPS Energy Consumption",
+            name=f"{naming.get_entity_name('ups', 'ups')} Energy Consumption",
             native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
             device_class=SensorDeviceClass.ENERGY,
             state_class=SensorStateClass.TOTAL_INCREASING,
@@ -183,7 +198,7 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
         super().__init__(coordinator, description)
         UPSMetricsMixin.__init__(self)
         self._accumulated_energy = 0.0
-        self._last_update = datetime.now(timezone.utc)  # Fixed timezone
+        self._last_update = datetime.now(timezone.utc)
         self._last_power = None
         self._last_reset = None
         self._last_calculation_time = None
@@ -377,9 +392,16 @@ class UnraidUPSLoadPercentage(UnraidSensorBase, UPSMetricsMixin):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="ups"
+        )
+
         description = UnraidSensorEntityDescription(
             key="ups_load_percentage",
-            name="UPS Load Percentage",
+            name=f"{naming.get_entity_name('ups', 'ups')} Load Percentage",
             native_unit_of_measurement=PERCENTAGE,
             device_class=SensorDeviceClass.POWER_FACTOR,
             state_class=SensorStateClass.MEASUREMENT,

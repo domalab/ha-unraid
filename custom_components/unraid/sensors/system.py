@@ -13,8 +13,9 @@ from homeassistant.const import PERCENTAGE, UnitOfTemperature # type: ignore
 from homeassistant.util import dt as dt_util # type: ignore
 
 from .base import UnraidSensorBase
-from .const import UnraidSensorEntityDescription
+from .const import DOMAIN, UnraidSensorEntityDescription
 from ..helpers import format_bytes
+from ..naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,9 +24,16 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="cpu"
+        )
+
         description = UnraidSensorEntityDescription(
             key="cpu_usage",
-            name="CPU Usage",
+            name=f"{naming.get_entity_name('cpu', 'cpu')} Usage",
             native_unit_of_measurement=PERCENTAGE,
             device_class=SensorDeviceClass.POWER_FACTOR,
             state_class=SensorStateClass.MEASUREMENT,
@@ -72,9 +80,16 @@ class UnraidRAMUsageSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="ram"
+        )
+
         description = UnraidSensorEntityDescription(
             key="ram_usage",
-            name="RAM Usage",
+            name=f"{naming.get_entity_name('ram', 'ram')} Usage",
             native_unit_of_measurement=PERCENTAGE,
             device_class=SensorDeviceClass.POWER_FACTOR,
             state_class=SensorStateClass.MEASUREMENT,
@@ -101,55 +116,23 @@ class UnraidRAMUsageSensor(UnraidSensorBase):
             "last_update": dt_util.now().isoformat(),
         }
 
-class UnraidUptimeSensor(UnraidSensorBase):
-    """Uptime sensor for Unraid."""
-
-    def __init__(self, coordinator) -> None:
-        """Initialize the sensor."""
-        description = UnraidSensorEntityDescription(
-            key="uptime",
-            name="Uptime",
-            icon="mdi:clock-outline",
-            value_fn=self._format_uptime,
-            available_fn=lambda data: (
-                "system_stats" in data 
-                and data.get("system_stats", {}).get("uptime") is not None
-            ),
-        )
-        super().__init__(coordinator, description)
-        self._boot_time = None
-
-    def _format_uptime(self, data: dict) -> str:
-        """Format uptime string."""
-        try:
-            uptime_seconds = float(data.get("system_stats", {}).get("uptime", 0))
-            days, remainder = divmod(int(uptime_seconds), 86400)
-            hours, remainder = divmod(remainder, 3600)
-            minutes, _ = divmod(remainder, 60)
-            self._boot_time = dt_util.now() - timedelta(seconds=uptime_seconds)
-            return f"{days}d {hours}h {minutes}m"
-        except (TypeError, ValueError) as err:
-            _LOGGER.debug("Error formatting uptime: %s", err)
-            return "unknown"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
-        return {
-            "boot_time": self._boot_time.isoformat() if self._boot_time else None,
-            "last_update": dt_util.now().isoformat(),
-        }
-
 class UnraidCPUTempSensor(UnraidSensorBase):
     """CPU temperature sensor for Unraid."""
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="cpu"
+        )
+
         super().__init__(
             coordinator,
             UnraidSensorEntityDescription(
                 key="cpu_temperature",
-                name="CPU Temperature",
+                name=f"{naming.get_entity_name('cpu', 'cpu')} Temperature",
                 native_unit_of_measurement=UnitOfTemperature.CELSIUS,
                 device_class=SensorDeviceClass.TEMPERATURE,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -201,11 +184,18 @@ class UnraidMotherboardTempSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="motherboard"
+        )
+
         super().__init__(
             coordinator,
             UnraidSensorEntityDescription(
                 key="motherboard_temperature",
-                name="Motherboard Temperature",
+                name=f"{naming.get_entity_name('motherboard', 'motherboard')} Temperature",
                 icon="mdi:thermometer",
                 device_class=SensorDeviceClass.TEMPERATURE,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -251,16 +241,85 @@ class UnraidMotherboardTempSensor(UnraidSensorBase):
             pass
         return None
 
+class UnraidFanSensor(UnraidSensorBase):
+    """Fan speed sensor for Unraid."""
+
+    def __init__(self, coordinator, fan_id: str, fan_data: dict) -> None:
+        """Initialize the fan sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="fan"
+        )
+        
+        # Get clean fan label
+        display_name = fan_data["label"]
+        
+        _LOGGER.debug(
+            "Initializing fan sensor - ID: %s, Label: %s",
+            fan_id,
+            display_name
+        )
+        
+        super().__init__(
+            coordinator,
+            UnraidSensorEntityDescription(
+                key=f"fan_{fan_id}",
+                name=f"{naming.get_entity_name(display_name, 'fan')}",  # Simplified name
+                native_unit_of_measurement="rpm",
+                device_class=None,
+                state_class=SensorStateClass.MEASUREMENT,
+                icon="mdi:fan",
+                suggested_display_precision=0,
+                value_fn=lambda data: (
+                    data.get("system_stats", {})
+                    .get("temperature_data", {})
+                    .get("fans", {})
+                    .get(fan_id, {})
+                    .get("rpm")
+                )
+            ),
+        )
+        self._fan_id = fan_id
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        try:
+            fan_data = (
+                self.coordinator.data.get("system_stats", {})
+                .get("temperature_data", {})
+                .get("fans", {})
+                .get(self._fan_id, {})
+            )
+            
+            return {
+                "device": fan_data.get("device"),
+                "label": fan_data.get("label"),
+                "last_update": dt_util.now().isoformat()
+            }
+        except Exception as err:
+            _LOGGER.debug("Error getting fan attributes: %s", err)
+            return {}
+
 class UnraidDockerVDiskSensor(UnraidSensorBase):
     """Docker vDisk usage sensor for Unraid."""
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="docker"
+        )
+
         super().__init__(
             coordinator,
             UnraidSensorEntityDescription(
                 key="docker_vdisk",
-                name="Docker vDisk Usage",
+                name=f"{naming.get_entity_name('vdisk', 'docker')} Virtual Disk Usage",
                 native_unit_of_measurement=PERCENTAGE,
                 device_class=SensorDeviceClass.POWER_FACTOR,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -294,11 +353,18 @@ class UnraidLogFileSystemSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="log"
+        )
+
         super().__init__(
             coordinator,
             UnraidSensorEntityDescription(
                 key="log_filesystem",
-                name="Log Filesystem Usage",
+                name=f"{naming.get_entity_name('filesystem', 'log')} Usage",
                 native_unit_of_measurement=PERCENTAGE,
                 device_class=SensorDeviceClass.POWER_FACTOR,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -332,11 +398,18 @@ class UnraidBootUsageSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="boot"
+        )
+
         super().__init__(
             coordinator,
             UnraidSensorEntityDescription(
                 key="boot_usage",
-                name="Boot Usage",
+                name=f"{naming.get_entity_name('boot', 'boot')} Usage",
                 native_unit_of_measurement=PERCENTAGE,
                 device_class=SensorDeviceClass.POWER_FACTOR,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -365,6 +438,52 @@ class UnraidBootUsageSensor(UnraidSensorBase):
             _LOGGER.debug("Error getting boot usage attributes: %s", err)
             return {}
 
+class UnraidUptimeSensor(UnraidSensorBase):
+    """Uptime sensor for Unraid."""
+
+    def __init__(self, coordinator) -> None:
+        """Initialize the sensor."""
+        # Initialize entity naming
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component="uptime"
+        )
+
+        description = UnraidSensorEntityDescription(
+            key="uptime",
+            name=f"{naming.get_entity_name('uptime', 'uptime')} Status",
+            icon="mdi:clock-outline",
+            value_fn=self._format_uptime,
+            available_fn=lambda data: (
+                "system_stats" in data 
+                and data.get("system_stats", {}).get("uptime") is not None
+            ),
+        )
+        super().__init__(coordinator, description)
+        self._boot_time = None
+
+    def _format_uptime(self, data: dict) -> str:
+        """Format uptime string."""
+        try:
+            uptime_seconds = float(data.get("system_stats", {}).get("uptime", 0))
+            days, remainder = divmod(int(uptime_seconds), 86400)
+            hours, remainder = divmod(remainder, 3600)
+            minutes, _ = divmod(remainder, 60)
+            self._boot_time = dt_util.now() - timedelta(seconds=uptime_seconds)
+            return f"{days}d {hours}h {minutes}m"
+        except (TypeError, ValueError) as err:
+            _LOGGER.debug("Error formatting uptime: %s", err)
+            return "unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        return {
+            "boot_time": self._boot_time.isoformat() if self._boot_time else None,
+            "last_update": dt_util.now().isoformat(),
+        }
+
 class UnraidSystemSensors:
     """Helper class to create all system sensors."""
 
@@ -380,3 +499,21 @@ class UnraidSystemSensors:
             UnraidLogFileSystemSensor(coordinator),
             UnraidBootUsageSensor(coordinator),
         ]
+
+        # Add fan sensors if available
+        fan_data = (
+            coordinator.data.get("system_stats", {})
+            .get("temperature_data", {})
+            .get("fans", {})
+        )
+        
+        if fan_data:
+            for fan_id, fan_info in fan_data.items():
+                self.entities.append(
+                    UnraidFanSensor(coordinator, fan_id, fan_info)
+                )
+                _LOGGER.debug(
+                    "Added fan sensor: %s (%s)",
+                    fan_id,
+                    fan_info.get("label", "unknown")
+                )
