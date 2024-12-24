@@ -14,7 +14,7 @@ from homeassistant.helpers.update_coordinator import ( # type: ignore
     CoordinatorEntity,
 )
 from homeassistant.helpers.typing import StateType # type: ignore
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo # type: ignore
 
 from ..const import DOMAIN
 from .const import UnraidSensorEntityDescription

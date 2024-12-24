@@ -9,7 +9,7 @@ from functools import partial
 from homeassistant.core import HomeAssistant, ServiceCall # type: ignore
 from homeassistant.helpers import config_validation as cv # type: ignore
 from homeassistant.exceptions import HomeAssistantError # type: ignore
-import voluptuous as vol
+import voluptuous as vol # type: ignore
 from typing import Any, Set
 import logging
 from datetime import datetime
