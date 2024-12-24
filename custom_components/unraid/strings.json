@@ -1,150 +1,150 @@
 {
-  "config": {
-    "step": {
-      "user": {
-        "title": "Set up Unraid",
-        "description": "[%key:common::config_flow::description::setup_connection%]",
-        "data": {
-          "host": "[%key:common::config_flow::data::host%]",
-          "username": "[%key:common::config_flow::data::username%]",
-          "password": "[%key:common::config_flow::data::password%]",
-          "port": "[%key:common::config_flow::data::port%]",
-          "general_interval": "General Update Interval (Minutes)",
-          "disk_interval": "Disk Update Interval (Hours)",
-          "has_ups": "UPS Insights",
-          "docker_insights": "Docker Insights(Beta)"
-        },
-        "data_description": {
-          "host": "{host_description}",
-          "username": "{username_description}",
-          "password": "{password_description}",
-          "port": "{port_description}",
-          "general_interval": "{general_interval_description}",
-          "disk_interval": "{disk_interval_description}",
-          "has_ups": "Enable if you have a UPS connected to your Unraid server",
-          "docker_insights": "Enable detailed Docker container monitoring"
-        }
-      }
-    },
-    "error": {
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "unknown": "[%key:common::config_flow::error::unknown%]"
-    },
-    "abort": {
-      "already_configured": "[%key:common::config_flow::abort::already_configured%]"
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Update Intervals",
-        "description": "Configure update intervals and settings",
-        "data": {
-          "general_interval": "[%key:config::step::user::data::general_interval%]",
-          "disk_interval": "[%key:config::step::user::data::disk_interval%]",
-          "port": "[%key:common::config_flow::data::port%]",
-          "has_ups": "[%key:config::step::user::data::has_ups%]",
-          "docker_insights": "[%key:config::step::user::data::docker_insights%]"
-        },
-        "data_description": {
-          "general_interval": "[%key:config::step::user::data_description::general_interval%]",
-          "disk_interval": "[%key:config::step::user::data_description::disk_interval%]",
-          "port": "SSH port for connecting to your Unraid server",
-          "has_ups": "[%key:config::step::user::data_description::has_ups%]",
-          "docker_insights": "[%key:config::step::user::data_description::docker_insights%]"
-        }
-      }
-    }
-  },
-  "services": {
-    "force_update": {
-      "name": "Force Update",
-      "description": "Force an immediate update of Unraid data",
-      "fields": {
-        "config_entry": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry to update. If not provided, all Unraid instances will be updated."
-        }
-      }
-    },
-    "execute_command": {
-      "name": "Execute Command",
-      "description": "Execute a command on the Unraid server",
-      "fields": {
-        "entry_id": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry for the Unraid instance"
-        },
-        "command": {
-          "name": "Command",
-          "description": "The command to execute on the Unraid server"
-        }
-      }
-    },
-    "execute_user_script": {
-      "name": "Execute User Script",
-      "description": "Execute a user script on the Unraid server",
-      "fields": {
-        "entry_id": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry for the Unraid instance"
-        },
-        "script_name": {
-          "name": "Script Name",
-          "description": "The name of the user script to execute"
-        },
-        "background": {
-          "name": "Run in Background",
-          "description": "Whether to run the script in the background"
-        }
-      }
-    },
-    "system_reboot": {
-      "name": "Reboot System",
-      "description": "Reboot the Unraid system",
-      "fields": {
-        "entry_id": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry for the Unraid instance"
-        },
-        "delay": {
-          "name": "Delay",
-          "description": "Delay in seconds before executing the reboot (0-3600)"
-        }
-      }
-    },
-    "system_shutdown": {
-      "name": "Shutdown System", 
-      "description": "Shutdown the Unraid system",
-      "fields": {
-        "entry_id": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry for the Unraid instance"
-        },
-        "delay": {
-          "name": "Delay",
-          "description": "Delay in seconds before executing the shutdown (0-3600)"
-        }
-      }
-    }
-  },
-  "entity": {
-    "sensor": {
-      "storage_used": {
-        "name": "{name} Used",
-        "state_attributes": {
-          "total_size": {
-            "name": "Total Size"
+    "config": {
+      "step": {
+        "user": {
+          "title": "[%key:common::config_flow::title::setup%] Unraid",
+          "description": "[%key:common::config_flow::description::setup_connection%]",
+          "data": {
+            "host": "[%key:common::config_flow::data::host%]",
+            "username": "[%key:common::config_flow::data::username%]",
+            "password": "[%key:common::config_flow::data::password%]",
+            "port": "[%key:common::config_flow::data::port%]",
+            "general_interval": "General Update Interval (Minutes)",
+            "disk_interval": "Disk Update Interval (Hours)",
+            "has_ups": "UPS Insights",
+            "docker_insights": "Docker Insights(Beta)"
           },
-          "used_space": {
-            "name": "Used Space"
+          "data_description": {
+            "host": "{host_description}",
+            "username": "{username_description}",
+            "password": "{password_description}",
+            "port": "{port_description}",
+            "general_interval": "{general_interval_description}",
+            "disk_interval": "{disk_interval_description}",
+            "has_ups": "Enable if you have a UPS connected to your Unraid server",
+            "docker_insights": "Enable detailed Docker container monitoring"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+        "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+        "unknown": "[%key:common::config_flow::error::unknown%]"
+      },
+      "abort": {
+        "already_configured": "[%key:common::config_flow::abort::already_configured%]"
+      }
+    },
+    "options": {
+      "step": {
+        "init": {
+          "title": "Update Intervals",
+          "description": "Configure update intervals and settings",
+          "data": {
+            "general_interval": "[%key:config::step::user::data::general_interval%]",
+            "disk_interval": "[%key:config::step::user::data::disk_interval%]",
+            "port": "[%key:common::config_flow::data::port%]",
+            "has_ups": "[%key:config::step::user::data::has_ups%]",
+            "docker_insights": "[%key:config::step::user::data::docker_insights%]"
           },
-          "free_space": {
-            "name": "Free Space"
+          "data_description": {
+            "general_interval": "[%key:config::step::user::data_description::general_interval%]",
+            "disk_interval": "[%key:config::step::user::data_description::disk_interval%]",
+            "port": "SSH port for connecting to your Unraid server",
+            "has_ups": "[%key:config::step::user::data_description::has_ups%]",
+            "docker_insights": "[%key:config::step::user::data_description::docker_insights%]"
+          }
+        }
+      }
+    },
+    "services": {
+      "force_update": {
+        "name": "Force Update",
+        "description": "Force an immediate update of Unraid data",
+        "fields": {
+          "config_entry": {
+            "name": "Config Entry ID",
+            "description": "The ID of the config entry to update. If not provided, all Unraid instances will be updated."
+          }
+        }
+      },
+      "execute_command": {
+        "name": "Execute Command",
+        "description": "Execute a command on the Unraid server",
+        "fields": {
+          "entry_id": {
+            "name": "Config Entry ID",
+            "description": "The ID of the config entry for the Unraid instance"
+          },
+          "command": {
+            "name": "Command",
+            "description": "The command to execute on the Unraid server"
+          }
+        }
+      },
+      "execute_user_script": {
+        "name": "Execute User Script",
+        "description": "Execute a user script on the Unraid server",
+        "fields": {
+          "entry_id": {
+            "name": "Config Entry ID",
+            "description": "The ID of the config entry for the Unraid instance"
+          },
+          "script_name": {
+            "name": "Script Name",
+            "description": "The name of the user script to execute"
+          },
+          "background": {
+            "name": "Run in Background",
+            "description": "Whether to run the script in the background"
+          }
+        }
+      },
+      "system_reboot": {
+        "name": "Reboot System",
+        "description": "Reboot the Unraid system",
+        "fields": {
+          "entry_id": {
+            "name": "Config Entry ID",
+            "description": "The ID of the config entry for the Unraid instance"
+          },
+          "delay": {
+            "name": "Delay",
+            "description": "Delay in seconds before executing the reboot (0-3600)"
+          }
+        }
+      },
+      "system_shutdown": {
+        "name": "Shutdown System", 
+        "description": "Shutdown the Unraid system",
+        "fields": {
+          "entry_id": {
+            "name": "Config Entry ID",
+            "description": "The ID of the config entry for the Unraid instance"
+          },
+          "delay": {
+            "name": "Delay",
+            "description": "Delay in seconds before executing the shutdown (0-3600)"
+          }
+        }
+      }
+    },
+    "entity": {
+      "sensor": {
+        "storage_used": {
+          "name": "{name} Used",
+          "state_attributes": {
+            "total_size": {
+              "name": "Total Size"
+            },
+            "used_space": {
+              "name": "Used Space"
+            },
+            "free_space": {
+              "name": "Free Space"
+            }
           }
         }
       }
     }
   }
-}

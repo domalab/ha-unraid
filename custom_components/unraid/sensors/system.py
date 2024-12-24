@@ -319,7 +319,7 @@ class UnraidDockerVDiskSensor(UnraidSensorBase):
             coordinator,
             UnraidSensorEntityDescription(
                 key="docker_vdisk",
-                name=f"{naming.get_entity_name('vdisk', 'docker')} Virtual Disk Usage",
+                name=f"{naming.get_entity_name('vDisk', 'docker')} Usage",
                 native_unit_of_measurement=PERCENTAGE,
                 device_class=SensorDeviceClass.POWER_FACTOR,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -364,7 +364,7 @@ class UnraidLogFileSystemSensor(UnraidSensorBase):
             coordinator,
             UnraidSensorEntityDescription(
                 key="log_filesystem",
-                name=f"{naming.get_entity_name('filesystem', 'log')} Usage",
+                name=f"{naming.get_entity_name('Log Filesystem')} Usage",
                 native_unit_of_measurement=PERCENTAGE,
                 device_class=SensorDeviceClass.POWER_FACTOR,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -409,7 +409,7 @@ class UnraidBootUsageSensor(UnraidSensorBase):
             coordinator,
             UnraidSensorEntityDescription(
                 key="boot_usage",
-                name=f"{naming.get_entity_name('boot', 'boot')} Usage",
+                name=f"{naming.get_entity_name('Flash Device', 'boot')} Usage",
                 native_unit_of_measurement=PERCENTAGE,
                 device_class=SensorDeviceClass.POWER_FACTOR,
                 state_class=SensorStateClass.MEASUREMENT,

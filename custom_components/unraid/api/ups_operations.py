@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any
 
 import asyncio
-import asyncssh # type: ignore
+import asyncssh
 
 _LOGGER = logging.getLogger(__name__)
 

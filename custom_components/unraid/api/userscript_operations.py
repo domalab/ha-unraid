@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Any
 import asyncio
-import asyncssh # type: ignore
+import asyncssh
 
 _LOGGER = logging.getLogger(__name__)
 

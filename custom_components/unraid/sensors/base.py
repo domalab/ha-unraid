@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import ( # type: ignore
     CoordinatorEntity,
 )
 from homeassistant.helpers.typing import StateType # type: ignore
+from homeassistant.helpers.entity import DeviceInfo
 
 from ..const import DOMAIN
 from .const import UnraidSensorEntityDescription
@@ -137,20 +138,22 @@ class UnraidSensorBase(CoordinatorEntity, SensorEntity, SensorUpdateMixin, Value
         _LOGGER.debug("Base Entity initialized | unique_id: %s | name: %s | description.key: %s",
                 self._attr_unique_id, self._attr_name, description.key)
 
-        # Set up device info
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": f"Unraid Server ({naming.clean_hostname()})",
-            "manufacturer": "Lime Technology",
-            "model": "Unraid Server",
-        }
-
         # Optional display settings from description
         if description.suggested_unit_of_measurement:
             self._attr_suggested_unit_of_measurement = description.suggested_unit_of_measurement
 
         if description.suggested_display_precision is not None:
             self._attr_suggested_display_precision = description.suggested_display_precision
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.entry.entry_id)},
+            name=f"Unraid Server ({self.coordinator.hostname})",
+            manufacturer="Lime Technology",
+            model="Unraid Server",
+        )
 
     @property
     def native_value(self) -> StateType:

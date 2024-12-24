@@ -18,6 +18,7 @@ from homeassistant.core import HomeAssistant, callback # type: ignore
 from homeassistant.helpers.entity_platform import AddEntitiesCallback # type: ignore
 from homeassistant.helpers.typing import StateType # type: ignore
 from homeassistant.helpers.update_coordinator import CoordinatorEntity # type: ignore
+from homeassistant.helpers.entity import DeviceInfo # type: ignore
 
 from .const import (
     DOMAIN, 
@@ -25,10 +26,44 @@ from .const import (
 )
 
 from .coordinator import UnraidDataUpdateCoordinator
-from .helpers import DiskDataHelperMixin, format_bytes, get_disk_identifiers, get_disk_number, get_unraid_disk_mapping
+from .helpers import (
+    DiskDataHelperMixin,
+    format_bytes,
+    get_disk_identifiers,
+    get_disk_number,
+    get_unraid_disk_mapping,
+)
 from .naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
+
+def is_valid_disk_name(disk_name: str) -> bool:
+    """Determine if a disk name should be monitored.
+    
+    Args:
+        disk_name: The name of the disk to check.
+        
+    Returns:
+        bool: True if the disk should be monitored, False otherwise.
+    """
+    if not disk_name:
+        return False
+        
+    # Array disks (disk1, disk2, etc)
+    if disk_name.startswith("disk"):
+        return True
+        
+    # Any cache pool (cache, cache2, cacheNVME, etc)
+    if disk_name.startswith("cache"):
+        return True
+        
+    # Custom pools (fastpool, nvmepool, etc)
+    # Skip system paths and known special names
+    invalid_names = {"parity", "flash", "boot", "temp", "user"}
+    if disk_name.lower() not in invalid_names:
+        return True
+        
+    return False
 
 @dataclass
 class UnraidBinarySensorEntityDescription(BinarySensorEntityDescription):
@@ -99,24 +134,13 @@ class UnraidBinarySensorEntity(CoordinatorEntity, BinarySensorEntity):
         self._attr_name = f"{naming.clean_hostname()} {description.name}"
         
         # All binary sensors belong to main server device
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": f"Unraid Server ({naming.clean_hostname()})",
-            "manufacturer": "Lime Technology",
-            "model": "Unraid Server",
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, coordinator.entry.entry_id)},
+            name=f"Unraid Server ({coordinator.hostname})",
+            manufacturer="Lime Technology",
+            model="Unraid Server",
+        )
         self._attr_has_entity_name = True
-
-        # Add sensor-specific model info
-        model = "System Sensor"
-        if "docker" in description.key:
-            model = "Docker Sensor"
-        elif "vm" in description.key:
-            model = "VM Sensor"
-        
-        self._attr_device_info.update({
-            "model": model
-        })
 
     @property
     def available(self) -> bool:
@@ -1123,15 +1147,17 @@ async def async_setup_entry(
 
     for disk in valid_disks:
         disk_name = disk.get("name")
+        mount_point = disk.get("mount_point", "")
 
         # Skip if invalid or already processed
         if not disk_name or disk_name in processed_disks:
             continue
 
-        if disk_name.startswith("disk") or disk_name == "cache":
+        if is_valid_disk_name(disk_name):
             _LOGGER.debug(
-                "Adding health sensor for disk: %s", 
-                disk_name
+                "Adding health sensor for disk: %s (mount: %s)", 
+                disk_name,
+                mount_point
             )
             try:
                 entities.append(
@@ -1141,13 +1167,13 @@ async def async_setup_entry(
                     )
                 )
                 processed_disks.add(disk_name)
+                _LOGGER.info(
+                    "Added health sensor for %s disk: %s",
+                    "pool" if not (disk_name.startswith("disk") or disk_name == "cache") else "array",
+                    disk_name
+                )
             except ValueError as err:
                 _LOGGER.warning("Skipping invalid disk %s: %s", disk_name, err)
                 continue
-
-    _LOGGER.debug(
-        "Added disk health sensor | disk_name: %s",
-        disk.get("name"),
-    )
 
     async_add_entities(entities)
