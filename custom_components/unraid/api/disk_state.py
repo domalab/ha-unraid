@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from typing import Dict, Any
 from enum import Enum
 
+from .disk_utils import is_valid_disk_name
+
 _LOGGER = logging.getLogger(__name__)
 
 class DiskState(Enum):
@@ -25,12 +27,13 @@ class DiskStateManager:
         self._spindown_delays: Dict[str, int] = {}
         self._lock = asyncio.Lock()
         self._device_types: Dict[str, str] = {}  # Track device types (nvme, sata, etc)
-
+    
     async def get_disk_state(self, device: str) -> DiskState:
         """Get disk state using multiple methods with SMART as primary."""
         try:
             # Skip system paths and invalid disk names
-            if device in ["disks", "remotes", "addons", "rootshare"]:
+            if not is_valid_disk_name(device):
+                _LOGGER.debug("Skipping invalid disk name: %s", device)
                 return DiskState.UNKNOWN
 
             # Format device path correctly
@@ -50,8 +53,19 @@ class DiskStateManager:
                         _LOGGER.error("Invalid disk number in %s", device)
                         return DiskState.UNKNOWN
                 else:
-                    _LOGGER.error("Unrecognized device format: %s", device)
-                    return DiskState.UNKNOWN
+                    # For custom pools or other disks, try to get device from mount
+                    try:
+                        mount_cmd = f"findmnt -n -o SOURCE /mnt/{device}"
+                        result = await self._instance.execute_command(mount_cmd)
+                        if result.exit_status == 0:
+                            device_path = result.stdout.strip()
+                            _LOGGER.debug("Found device path for %s: %s", device, device_path)
+                        else:
+                            _LOGGER.error("Could not find device path for %s", device)
+                            return DiskState.UNKNOWN
+                    except Exception as err:
+                        _LOGGER.error("Error getting device path for %s: %s", device, err)
+                        return DiskState.UNKNOWN
 
             if device_path not in self._device_types:
                 if any(x in str(device_path).lower() for x in ['nvme', 'nvm']):

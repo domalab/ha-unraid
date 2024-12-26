@@ -9,8 +9,8 @@ from dataclasses import dataclass
 import re
 from datetime import datetime
 
+from .disk_utils import is_valid_disk_name
 from ..disk_mapping import parse_disk_config, parse_disks_ini
-
 from .smart_operations import SmartDataManager
 from .disk_state import DiskState, DiskStateManager
 
@@ -421,9 +421,10 @@ class DiskOperationsMixin:
         """Get usage information for individual disks."""
         try:
             disks = []
-            # Get usage for mounted disks
+            # Get usage for mounted disks with improved filtering
+            # Note: Removed grep since we'll filter in code
             usage_result = await self.execute_command(
-                "df -B1 /mnt/disk* /mnt/cache 2>/dev/null | "
+                "df -B1 /mnt/disk* /mnt/cache /mnt/* 2>/dev/null | "
                 "awk 'NR>1 {print $6,$2,$3,$4}'"
             )
 
@@ -432,6 +433,11 @@ class DiskOperationsMixin:
                     try:
                         mount_point, total, used, free = line.split()
                         disk_name = mount_point.replace('/mnt/', '')
+                        
+                        # Skip invalid or system disks while allowing custom pools
+                        if not is_valid_disk_name(disk_name):
+                            _LOGGER.debug("Skipping invalid disk name: %s", disk_name)
+                            continue
                         
                         # Get current disk state
                         state = await self._state_manager.get_disk_state(disk_name)

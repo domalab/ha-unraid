@@ -8,6 +8,7 @@ from .ups_operations import UPSOperationsMixin
 from .userscript_operations import UserScriptOperationsMixin
 from .smart_operations import SmartDataManager
 from .disk_state import DiskStateManager, DiskState
+from .disk_utils import is_valid_disk_name
 
 __all__ = [
     "DiskOperationsMixin",
@@ -21,4 +22,5 @@ __all__ = [
     "SmartDataManager",
     "DiskStateManager",
     "DiskState",
+    "is_valid_disk_name",
 ]
