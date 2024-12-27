@@ -496,6 +496,7 @@ class UnraidParityCheckSensor(UnraidBinarySensorBase):
                 "speed": "N/A",
                 "errors": 0,
                 "last_check": "N/A",
+                "next_check": self.coordinator.data.get("next_parity_check", "Unknown"),
                 "duration": "N/A",
                 "last_status": "N/A"
             }
@@ -591,6 +592,7 @@ class UnraidParityCheckSensor(UnraidBinarySensorBase):
                 "speed": "N/A",
                 "errors": 0,
                 "last_check": "N/A",
+                "next_check": "Unknown",
                 "duration": "N/A",
                 "last_status": "N/A"
             }

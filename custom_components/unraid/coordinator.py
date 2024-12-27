@@ -517,6 +517,78 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                         # Don't let Docker errors affect other data
                         data["docker_containers"] = []
                         data["docker_stats"] = {"containers": {}, "summary": {}}
+                
+                # Step 6 Add parity schedule parsing
+                try:
+                    result = await self.api.execute_command(
+                        "cat /boot/config/plugins/dynamix/parity-check.cron"
+                    )
+                    next_check = "Unknown"
+                    
+                    if result and result.exit_status == 0:
+                        _LOGGER.debug("Found parity check cron: %s", result.stdout)
+                        
+                        # Parse the cron entries
+                        for line in result.stdout.splitlines():
+                            if "mdcmd check" in line and not line.startswith('#'):
+                                # Split the cron entry
+                                parts = line.strip().split()
+                                if len(parts) >= 5:
+                                    minute, hour, dom, month, dow = parts[:5]
+                                    
+                                    now = dt_util.now()
+                                    next_run = None
+                                    
+                                    # Parse based on the cron pattern
+                                    if dom == "1" and month == "1":  # Yearly on Jan 1st
+                                        next_run = now.replace(
+                                            month=1, 
+                                            day=1, 
+                                            hour=int(hour), 
+                                            minute=int(minute), 
+                                            second=0, 
+                                            microsecond=0
+                                        )
+                                        if next_run <= now:
+                                            next_run = next_run.replace(year=next_run.year + 1)
+                                    elif dom == "1" and month == "*":  # Monthly on 1st
+                                        next_run = now.replace(
+                                            day=1, 
+                                            hour=int(hour), 
+                                            minute=int(minute), 
+                                            second=0, 
+                                            microsecond=0
+                                        )
+                                        if next_run <= now:
+                                            if next_run.month == 12:
+                                                next_run = next_run.replace(year=next_run.year + 1, month=1)
+                                            else:
+                                                next_run = next_run.replace(month=next_run.month + 1)
+                                    
+                                    if next_run:
+                                        # Format the date nicely
+                                        if (next_run - now).days == 0:
+                                            next_check = f"Today at {next_run.strftime('%H:%M')}"
+                                        elif (next_run - now).days == 1:
+                                            next_check = f"Tomorrow at {next_run.strftime('%H:%M')}"
+                                        else:
+                                            next_check = next_run.strftime("%b %d %Y at %H:%M")
+                                        break
+                    
+                    # If no cron schedule found, fall back to config file check
+                    if next_check == "Unknown":
+                        parity_config = data.get("disk_config", {})
+                        if not parity_config.get("parity.mode") == "4":  # If not manual mode
+                            next_check = "Schedule configuration error"
+                        else:
+                            next_check = "Manual Only"
+                    
+                    data["next_parity_check"] = next_check
+                    _LOGGER.debug("Set next parity check to: %s", next_check)
+                    
+                except Exception as err:
+                    _LOGGER.error("Error parsing parity schedule: %s", err)
+                    data["next_parity_check"] = "Unknown"
 
                 _LOGGER.debug("Data update complete. Keys collected: %s", list(data.keys()))
 
