@@ -10,7 +10,7 @@ import re
 from datetime import datetime
 
 from .disk_utils import is_valid_disk_name
-from ..disk_mapping import parse_disk_config, parse_disks_ini
+from .disk_mapping import parse_disk_config, parse_disks_ini
 from .smart_operations import SmartDataManager
 from .disk_state import DiskState, DiskStateManager
 

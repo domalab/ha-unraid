@@ -36,7 +36,7 @@ from .const import (
 from .unraid import UnraidAPI
 from .helpers import get_unraid_disk_mapping
 from .insights import get_docker_insights
-from .disk_mapping import get_disk_info
+from .api.disk_mapping import get_disk_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -396,6 +396,15 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     _LOGGER.error("Error getting system stats: %s", err)
                     data["system_stats"] = {}
 
+                # Get array state and parity info
+                array_state = await self._get_array_state()
+                if array_state:
+                    data["array_state"] = array_state
+                    _LOGGER.debug(
+                        "Got array state with parity history: %s",
+                        {k: v for k, v in array_state.items() if k != "parity_history"}
+                    )
+
                 # Step 2: Get VMs, Docker Containers, and User Scripts
                 try:
                     # Run these tasks concurrently
@@ -714,3 +723,108 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             # Ensure we're in a consistent state
             if not enabled and self.docker_monitor:
                 self.docker_monitor = None
+
+    async def _get_array_state(self) -> Optional[Dict[str, Any]]:
+        """Get array state information."""
+        try:
+            result = await self.api.execute_command("mdcmd status")
+            if result.exit_status != 0:
+                return None
+
+            array_state = {}
+            for line in result.stdout.splitlines():
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                array_state[key.strip()] = value.strip()
+
+            # Parse parity history
+            parity_history = await self._parse_parity_history()
+            if parity_history:
+                array_state["parity_history"] = parity_history
+
+            return array_state
+
+        except Exception as err:
+            _LOGGER.error("Error getting array state: %s", err)
+            return None
+
+    async def _parse_parity_history(self) -> Optional[Dict[str, Any]]:
+        """Parse parity check history from the log file."""
+        try:
+            _LOGGER.debug("Attempting to read parity check history")
+            result = await self.api.execute_command(
+                "cat /boot/config/parity-checks.log"
+            )
+            if result.exit_status != 0:
+                _LOGGER.warning(
+                "Failed to read parity history file: exit_code=%d, stderr='%s'",
+                result.exit_status,
+                result.stderr
+            )
+                return None
+
+            _LOGGER.debug("Raw parity history content: %s", result.stdout)
+
+            latest_check = None
+            for line in result.stdout.splitlines():
+                # Format: YYYY MMM DD HH:MM:SS|Duration|Speed|Status|Errors|Type|Size
+                _LOGGER.debug("Processing parity history line: %s", line)
+
+                fields = line.strip().split("|")
+                if len(fields) < 7:
+                    _LOGGER.warning("Invalid parity history line (not enough fields): %s", line)
+                    continue
+
+                try:
+                    # Handle the space-separated date format
+                    date_str = fields[0]
+                    _LOGGER.debug("Parsing date: %s", date_str)
+                    check_date = datetime.strptime(date_str, "%Y %b %d %H:%M:%S")
+                    
+                    # Format duration from seconds to readable format
+                    duration_secs = int(fields[1])
+                    hours = duration_secs // 3600
+                    minutes = (duration_secs % 3600) // 60
+                    seconds = duration_secs % 60
+                    duration_str = f"{hours} hours, {minutes} minutes, {seconds} seconds"
+                    
+                    # Format speed in MB/s
+                    speed_bytes = int(fields[2])
+                    speed_mb = round(speed_bytes / (1024 * 1024), 2)
+                    
+                    check_info = {
+                        "date": check_date.strftime("%Y-%m-%d %H:%M:%S"),
+                        "duration": duration_str,
+                        "speed": f"{speed_mb} MB/s",
+                        "status": "Success" if fields[3] == "0" else f"Failed ({fields[3]} errors)",
+                        "errors": int(fields[4]),
+                        "type": fields[5],
+                        "size": fields[6]
+                    }
+                    
+                    _LOGGER.debug("Processed check info: %s", check_info)
+                    
+                    if not latest_check or check_date > datetime.strptime(latest_check["date"], "%Y-%m-%d %H:%M:%S"):
+                        latest_check = check_info
+                        _LOGGER.debug("Updated latest check info")
+
+                except (ValueError, IndexError) as err:
+                    _LOGGER.warning(
+                        "Error parsing parity history line '%s': %s",
+                        line,
+                        err,
+                        exc_info=True
+                    )
+                    continue
+
+            _LOGGER.debug("Final latest check info: %s", latest_check)
+            return latest_check
+
+        except Exception as err:
+            _LOGGER.error(
+                "Error reading parity history: %s",
+                err,
+                exc_info=True
+            )
+            return None

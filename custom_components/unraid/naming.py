@@ -11,9 +11,9 @@ _LOGGER = logging.getLogger(__name__)
 # Patterns for entity name formatting
 ENTITY_NAME_PATTERNS: Dict[str, Union[str, Callable[[str], str]]] = {
     "disk": lambda num: f"Array {num}",
-    "cache": "Cache",
-    "parity": "Parity",
-    "pool": lambda name: f"Pool {name.title()}",
+    "cache": lambda _: "Pool Cache",
+    "parity": lambda _: "Parity",
+    "pool": lambda name: f"Pool {name.title()}" if name != "cache" else "Pool Cache",
     "docker": lambda name: f"Docker {name}",
     "vm": lambda name: f"VM {name}",
 }

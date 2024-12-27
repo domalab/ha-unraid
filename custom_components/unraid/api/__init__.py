@@ -9,6 +9,7 @@ from .userscript_operations import UserScriptOperationsMixin
 from .smart_operations import SmartDataManager
 from .disk_state import DiskStateManager, DiskState
 from .disk_utils import is_valid_disk_name
+from .disk_mapping import get_unraid_disk_mapping, get_disk_info
 
 __all__ = [
     "DiskOperationsMixin",
@@ -23,4 +24,6 @@ __all__ = [
     "DiskStateManager",
     "DiskState",
     "is_valid_disk_name",
+    "get_unraid_disk_mapping",
+    "get_disk_info",
 ]

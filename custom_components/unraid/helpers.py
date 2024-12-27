@@ -439,6 +439,40 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]
         _LOGGER.error("Error extracting fan data: %s", err, exc_info=True)
         return {}
 
+def is_solid_state_drive(disk_data: dict) -> bool:
+    """Determine if a disk is a solid state drive (NVME or SSD)."""
+    try:
+        # Guard against None or invalid disk_data
+        if not disk_data or not isinstance(disk_data, dict):
+            _LOGGER.debug("Invalid disk_data provided to is_solid_state_drive: %s", disk_data)
+            return False
+
+        # Check device path for nvme
+        device = disk_data.get("device")
+        if device and isinstance(device, str) and "nvme" in device.lower():
+            return True
+        
+        # Check if it's a cache device
+        if disk_data.get("name") == "cache":
+            return True
+            
+        # Check smart data for rotation rate (0 indicates SSD)
+        smart_data = disk_data.get("smart_data", {})
+        if isinstance(smart_data, dict):
+            rotation_rate = smart_data.get("rotation_rate")
+            if rotation_rate == 0:
+                return True
+            
+        return False
+
+    except (AttributeError, TypeError, ValueError) as err:
+        _LOGGER.debug(
+            "Error checking if disk is SSD: %s - Error: %s",
+            disk_data.get("name", "unknown"),
+            err
+        )
+        return False
+
 class DiskDataHelperMixin:
     """Mixin providing common disk data handling methods."""
 

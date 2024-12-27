@@ -15,8 +15,10 @@ from .const import DOMAIN, UnraidSensorEntityDescription
 from ..coordinator import UnraidDataUpdateCoordinator
 from ..helpers import (
     DiskDataHelperMixin,
+    format_bytes,
     get_disk_identifiers,
     get_pool_info,
+    is_solid_state_drive,
 )
 
 from ..naming import EntityNaming
@@ -293,12 +295,17 @@ class UnraidArraySensor(UnraidSensorBase, DiskDataHelperMixin):
         return attrs
 
 class UnraidPoolSensor(UnraidSensorBase, DiskDataHelperMixin):
-    """Storage pool sensor for Unraid."""
+    """Storage pool and solid state drive sensor for Unraid."""
 
     def __init__(self, coordinator, pool_name: str) -> None:
         """Initialize the sensor."""
-        # Set pool name first as it's needed by value functions
+        # Set initial values first
         self._pool_name = pool_name
+        self._last_value: Optional[float] = None
+        self._last_temperature: Optional[int] = None
+        
+        # Get device and serial using the helper BEFORE using them in get_pool_icon
+        self._device, self._serial = get_disk_identifiers(coordinator.data, pool_name)
 
         # Initialize entity naming
         naming = EntityNaming(
@@ -307,90 +314,125 @@ class UnraidPoolSensor(UnraidSensorBase, DiskDataHelperMixin):
             component="pool"
         )
 
-        description = UnraidSensorEntityDescription(
-            key=f"pool_{pool_name}_usage",
-            name=f"{naming.get_entity_name(pool_name, 'pool')} Usage",
-            native_unit_of_measurement=PERCENTAGE,
-            device_class=None,
-            state_class=SensorStateClass.MEASUREMENT,
-            icon=self._get_pool_icon(),
-            suggested_display_precision=1,
-            value_fn=self._get_pool_usage,
+        # Get pretty name using naming utility
+        pretty_name = naming.get_entity_name(pool_name, "pool")
+
+        # Initialize base sensor class
+        super().__init__(
+            coordinator,
+            UnraidSensorEntityDescription(
+                key=f"pool_{pool_name}_usage",
+                name=f"{pretty_name} Usage",
+                native_unit_of_measurement=PERCENTAGE,
+                device_class=None,
+                state_class=SensorStateClass.MEASUREMENT,
+                icon=self._get_pool_icon(),  # Now _device is available
+                suggested_display_precision=1,
+                value_fn=self._get_usage,
+            ),
         )
 
-        # Initialize parent class and mixin
-        super().__init__(coordinator, description)
+        # Initialize DiskDataHelperMixin
         DiskDataHelperMixin.__init__(self)
 
     def _get_pool_icon(self) -> str:
-        """Get appropriate icon for pool type."""
+        """Get appropriate icon based on device type."""
         pool_name = self._pool_name.lower()
-        if "cache" in pool_name:
-            return "mdi:harddisk"
-        elif "nvme" in pool_name:
-            return "mdi:harddisk"
+        try:
+            if (self._device and "nvme" in self._device.lower()) or "nvme" in pool_name:
+                return "mdi:harddisk"
+        except AttributeError:
+            _LOGGER.debug(
+                "Device not available for pool %s when getting icon",
+                self._pool_name
+            )
         return "mdi:harddisk"
 
-    def _get_pool_usage(self, data: dict) -> float | None:
-        """Get pool usage percentage."""
-        pool_info = get_pool_info(data.get("system_stats", {}))
-        if self._pool_name in pool_info:
-            info = pool_info[self._pool_name]
-            return self._calculate_usage_percentage(
-                info.get("total_size", 0),
-                info.get("used_size", 0)
-            )
-        return None
+    def _get_usage(self, data: dict) -> float | None:
+        """Get usage percentage for the pool or SSD."""
+        try:
+            # First check individual disks for direct device
+            for disk in data.get("system_stats", {}).get("individual_disks", []):
+                if disk.get("name") == self._pool_name:
+                    return self._calculate_usage_percentage(
+                        disk.get("total", 0),
+                        disk.get("used", 0)
+                    )
+
+            # Fallback to pool data
+            pool_info = get_pool_info(data.get("system_stats", {}))
+            if self._pool_name in pool_info:
+                info = pool_info[self._pool_name]
+                return self._calculate_usage_percentage(
+                    info.get("total_size", 0),
+                    info.get("used_size", 0)
+                )
+
+            return None
+
+        except (TypeError, ValueError) as err:
+            _LOGGER.debug("Error getting usage: %s", err)
+            return self._last_value if self._last_value is not None else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional pool attributes."""
+        """Return additional state attributes."""
         try:
-            pool_info = get_pool_info(self.coordinator.data.get("system_stats", {}))
-            if self._pool_name not in pool_info:
-                return {}
-
-            info = pool_info[self._pool_name]
-            
-            # Base attributes from helper
-            attrs = self._get_storage_attributes(
-                info["total_size"],
-                info["used_size"],
-                info.get("free_size", 0),
-                info.get("mount_point")
-            )
-
-            # For cache pool, get filesystem info from disk data
-            filesystem = info.get("filesystem", "unknown")
-            status = "active"  # Default status for mounted pool
-            
-            # Check individual disks for more detailed cache info
+            # First try to get individual disk data
             for disk in self.coordinator.data.get("system_stats", {}).get("individual_disks", []):
-                if disk.get("name") == "cache" and disk.get("mount_point") == info.get("mount_point"):
-                    filesystem = disk.get("filesystem", filesystem)
-                    # If disk is mounted and responding, it's active
-                    status = "active" if disk.get("state") != "standby" else "standby"
-                    break
+                if disk.get("name") == self._pool_name:
+                    device, serial = get_disk_identifiers(
+                        self.coordinator.data,
+                        self._pool_name
+                    )
+                    
+                    is_standby = disk.get("state") == "standby"
+                    
+                    attrs = self._get_storage_attributes(
+                        total=disk.get("total", 0),
+                        used=disk.get("used", 0),
+                        free=disk.get("free", 0),
+                        mount_point=disk.get("mount_point"),
+                        device=device,
+                        is_standby=is_standby
+                    )
 
-            attrs.update({
-                "filesystem": filesystem,
-                "device_count": len(info.get("devices", [])),
-                "status": status,
-            })
+                    attrs.update({
+                        "device": device or "unknown",
+                        "disk_serial": serial or "unknown",
+                        "power_state": "standby" if is_standby else "active",
+                        "filesystem": disk.get("filesystem", "unknown"),
+                    })
 
-            # Add device details with proper nvme path
-            for i, device in enumerate(info.get("devices", []), 1):
-                # Clean up device path for nvme devices
-                if 'nvme' in device.lower():
-                    device_name = device.split('/')[-1]  # Extract just the device name
-                    attrs[f"device_{i}"] = device_name
-                else:
-                    attrs[f"device_{i}"] = device
+                    # Handle temperature
+                    temp = disk.get("temperature")
+                    if not is_standby and temp is not None:
+                        self._last_temperature = temp
+                    
+                    attrs["temperature"] = self._get_temperature_str(
+                        self._last_temperature if is_standby else temp,
+                        is_standby
+                    )
 
-            return attrs
+                    return attrs
 
-        except (KeyError, TypeError, AttributeError) as err:
-            _LOGGER.debug("Error getting pool attributes: %s", err)
+            # Fallback to pool data
+            pool_info = get_pool_info(self.coordinator.data.get("system_stats", {}))
+            if self._pool_name in pool_info:
+                info = pool_info[self._pool_name]
+                return {
+                    "filesystem": info.get("filesystem", "unknown"),
+                    "device_count": len(info.get("devices", [])),
+                    "mount_point": info.get("mount_point", "unknown"),
+                    "total_size": format_bytes(info.get("total_size", 0)),
+                    "used_space": format_bytes(info.get("used_size", 0)),
+                    "free_space": format_bytes(info.get("free_size", 0)),
+                }
+
+            return {}
+
+        except Exception as err:
+            _LOGGER.error("Error getting attributes: %s", err)
             return {}
 
 class UnraidStorageSensors:
@@ -403,12 +445,10 @@ class UnraidStorageSensors:
         # Add array sensor
         self.entities.append(UnraidArraySensor(coordinator))
 
-        # Add individual disk sensors
         try:
-            # Get disk data with type validation
             disk_data = coordinator.data.get("system_stats", {}).get("individual_disks", [])
             if not isinstance(disk_data, list):
-                _LOGGER.error("Invalid disk data format - expected list, got %s", type(disk_data))
+                _LOGGER.error("Invalid disk data format - expected list")
                 disk_data = []
 
             # Define ignored mounts and filesystem types
@@ -420,8 +460,11 @@ class UnraidStorageSensors:
             # Track processed disks
             processed_disks = set()
 
-            # Sort array disks first
+            # Sort and process array disks (spinning drives)
             array_disks = []
+            solid_state_disks = []
+            
+            # First, categorize all disks
             for disk in disk_data:
                 if not isinstance(disk, dict):
                     _LOGGER.warning("Invalid disk entry format: %s", disk)
@@ -434,51 +477,25 @@ class UnraidStorageSensors:
                 # Skip invalid or ignored disks
                 if not disk_name:
                     continue
-                if disk_name in processed_disks:
-                    continue
-                if filesystem == "tmpfs":  # Direct check for tmpfs
+                if filesystem == "tmpfs":
                     continue
                 if any(mount in mount_point for mount in ignored_mounts):
                     continue
-                # Skip parity disk (handled separately)
                 if disk_name == "parity":
                     continue
 
-                # Collect array disks for sorting
-                if disk_name.startswith("disk"):
+                # Route disk to appropriate list based on type
+                if is_solid_state_drive(disk):
+                    solid_state_disks.append(disk)
+                elif disk_name.startswith("disk"):
                     try:
-                        # Use the helper function for disk number extraction
                         disk_num = get_disk_number(disk_name)
                         if disk_num is not None:
                             array_disks.append((disk_num, disk))
-                        else:
-                            _LOGGER.warning("Invalid disk number format: %s", disk_name)
                     except ValueError:
                         _LOGGER.warning("Invalid disk number format: %s", disk_name)
-                        continue
 
-                # Process cache disk immediately
-                elif disk_name == "cache":
-                    try:
-                        self.entities.append(
-                            UnraidDiskSensor(
-                                coordinator=coordinator,
-                                disk_name=disk_name
-                            )
-                        )
-                        processed_disks.add(disk_name)
-                        _LOGGER.debug(
-                            "Added disk sensor for cache: %s",
-                            disk_name
-                        )
-                    except ValueError as err:
-                        _LOGGER.warning(
-                            "Error adding disk sensor for %s: %s",
-                            disk_name,
-                            err
-                        )
-
-            # Process sorted array disks
+            # Process spinning drives with UnraidDiskSensor
             for _, disk in sorted(array_disks, key=lambda x: x[0]):
                 try:
                     disk_name = disk.get("name", "")
@@ -490,46 +507,54 @@ class UnraidStorageSensors:
                             )
                         )
                         processed_disks.add(disk_name)
-                        _LOGGER.debug(
-                            "Added array disk sensor for: %s",
-                            disk_name
-                        )
+                        _LOGGER.debug("Added spinning disk sensor: %s", disk_name)
                 except ValueError as err:
-                    _LOGGER.warning(
-                        "Error adding disk sensor for %s: %s",
-                        disk_name,
-                        err
-                    )
-                    continue
+                    _LOGGER.warning("Error adding disk sensor: %s", err)
 
-            _LOGGER.info(
-                "Successfully added %d disk sensors",
-                len(processed_disks)
-            )
-
-        except (TypeError, KeyError, AttributeError) as err:
-            _LOGGER.error(
-                "Error setting up disk sensors: %s",
-                err,
-                exc_info=True
-            )
-
-        # Add pool sensors
-        try:
+            # Process pools and SSDs
             pool_info = get_pool_info(coordinator.data.get("system_stats", {}))
-            for pool_name in pool_info:
-                self.entities.append(UnraidPoolSensor(coordinator, pool_name))
-                _LOGGER.debug("Added pool sensor for: %s", pool_name)
             
-            if pool_info:
-                _LOGGER.info(
-                    "Successfully added %d pool sensors",
-                    len(pool_info)
-                )
+            # First handle SSDs and NVMEs that aren't part of a pool
+            for disk in solid_state_disks:
+                try:
+                    disk_name = disk.get("name", "")
+                    if not disk_name or disk_name in processed_disks:
+                        continue
+                        
+                    # Check if this disk is part of a pool
+                    is_pool_member = False
+                    for pool_name, pool_data in pool_info.items():
+                        if disk.get("device") in pool_data.get("devices", []):
+                            is_pool_member = True
+                            break
+                            
+                    # Only create individual sensor if not part of a pool
+                    if not is_pool_member:
+                        self.entities.append(
+                            UnraidPoolSensor(
+                                coordinator=coordinator,
+                                pool_name=disk_name
+                            )
+                        )
+                        processed_disks.add(disk_name)
+                        _LOGGER.debug("Added SSD/NVME sensor: %s", disk_name)
+                except ValueError as err:
+                    _LOGGER.warning("Error adding SSD sensor: %s", err)
 
-        except (TypeError, KeyError, AttributeError, ValueError) as err:
-            _LOGGER.error(
-                "Error setting up pool sensors: %s",
-                err,
-                exc_info=True
-            )
+            # Then handle pools
+            for pool_name in pool_info:
+                try:
+                    if pool_name not in processed_disks:
+                        self.entities.append(
+                            UnraidPoolSensor(
+                                coordinator=coordinator,
+                                pool_name=pool_name
+                            )
+                        )
+                        processed_disks.add(pool_name)
+                        _LOGGER.debug("Added pool sensor: %s", pool_name)
+                except ValueError as err:
+                    _LOGGER.warning("Error adding pool sensor: %s", err)
+
+        except Exception as err:
+            _LOGGER.error("Error setting up sensors: %s", err, exc_info=True)

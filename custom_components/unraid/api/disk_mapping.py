@@ -3,7 +3,7 @@ import re
 from typing import Dict, Any
 import logging
 
-from .helpers import format_bytes
+from ..helpers import format_bytes
 
 _LOGGER = logging.getLogger(__name__)
 
