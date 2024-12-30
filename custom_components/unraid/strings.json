@@ -11,8 +11,7 @@
           "port": "[%key:common::config_flow::data::port%]",
           "general_interval": "General Update Interval (Minutes)",
           "disk_interval": "Disk Update Interval (Hours)",
-          "has_ups": "UPS Insights",
-          "docker_insights": "Docker Insights(Beta)"
+          "has_ups": "UPS Insights"
         },
         "data_description": {
           "host": "{host_description}",
@@ -21,8 +20,7 @@
           "port": "{port_description}",
           "general_interval": "{general_interval_description}",
           "disk_interval": "{disk_interval_description}",
-          "has_ups": "Enable if you have a UPS connected to your Unraid server",
-          "docker_insights": "Enable detailed Docker container monitoring"
+          "has_ups": "Enable if you have a UPS connected to your Unraid server"
         }
       }
     },
@@ -44,15 +42,13 @@
           "general_interval": "[%key:config::step::user::data::general_interval%]",
           "disk_interval": "[%key:config::step::user::data::disk_interval%]",
           "port": "[%key:common::config_flow::data::port%]",
-          "has_ups": "[%key:config::step::user::data::has_ups%]",
-          "docker_insights": "[%key:config::step::user::data::docker_insights%]"
+          "has_ups": "[%key:config::step::user::data::has_ups%]"
         },
         "data_description": {
           "general_interval": "[%key:config::step::user::data_description::general_interval%]",
           "disk_interval": "[%key:config::step::user::data_description::disk_interval%]",
           "port": "SSH port for connecting to your Unraid server",
-          "has_ups": "[%key:config::step::user::data_description::has_ups%]",
-          "docker_insights": "[%key:config::step::user::data_description::docker_insights%]"
+          "has_ups": "[%key:config::step::user::data_description::has_ups%]"
         }
       }
     }

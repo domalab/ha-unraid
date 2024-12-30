@@ -36,15 +36,6 @@ MOUNT_POINT_PATTERN: Pattern = re.compile(r'/mnt/disk(\d+)$')
 VALID_INTERFACE_PATTERN: Pattern = re.compile(r'^[a-zA-Z0-9]+$')
 EXCLUDED_INTERFACES: Set[str] = {'lo', 'tunl0', 'sit0'}
 
-# Docker Constants
-DOCKER_CONTAINER_METRICS: tuple[str, ...] = (
-    "cpu_percentage",
-    "memory_usage",
-    "memory_percentage",
-    "network_speed_up",
-    "network_speed_down",
-)
-
 # Temperature thresholds
 TEMP_WARN_THRESHOLD: Final = 60  # °C
 TEMP_CRIT_THRESHOLD: Final = 80  # °C

@@ -116,26 +116,6 @@ class DiskHealth(str, Enum):
     FAILED = "FAILED"
     UNKNOWN = "Unknown"
 
-# Docker Configuration
-CONF_DOCKER_INSIGHTS = "docker_insights"
-DEFAULT_DOCKER_INSIGHTS = False
-
-# Docker Stats Keys
-DOCKER_STATS_CPU_PERCENTAGE = "containers_cpu_percentage"
-DOCKER_STATS_1CPU_PERCENTAGE = "containers_1cpu_percentage" 
-DOCKER_STATS_MEMORY = "containers_memory"
-DOCKER_STATS_MEMORY_PERCENTAGE = "containers_memory_percentage"
-
-# Container Stats Keys
-CONTAINER_STATS_CPU_PERCENTAGE = "cpu_percentage"
-CONTAINER_STATS_1CPU_PERCENTAGE = "1cpu_percentage"
-CONTAINER_STATS_MEMORY = "memory"
-CONTAINER_STATS_MEMORY_PERCENTAGE = "memory_percentage"
-CONTAINER_STATS_NETWORK_SPEED_UP = "network_speed_up"
-CONTAINER_STATS_NETWORK_SPEED_DOWN = "network_speed_down"
-CONTAINER_STATS_NETWORK_TOTAL_UP = "network_total_up"
-CONTAINER_STATS_NETWORK_TOTAL_DOWN = "network_total_down"
-
 # Device identifier patterns
 DEVICE_ID_SERVER = "{}_server_{}"  # DOMAIN, entry_id
 DEVICE_ID_DOCKER = "{}_docker_{}_{}"  # DOMAIN, container_name, entry_id

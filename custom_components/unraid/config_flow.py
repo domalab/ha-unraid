@@ -13,7 +13,6 @@ from homeassistant.exceptions import HomeAssistantError # type: ignore
 from homeassistant.core import callback # type: ignore
 
 from .const import (
-    CONF_DOCKER_INSIGHTS,
     DOMAIN,
     DEFAULT_PORT,
     CONF_GENERAL_INTERVAL,
@@ -41,7 +40,6 @@ class UnraidConfigFlowData:
     general_interval: int = DEFAULT_GENERAL_INTERVAL
     disk_interval: int = DEFAULT_DISK_INTERVAL
     has_ups: bool = False
-    docker_insights: bool = False
 
 @callback
 def get_schema_base(
@@ -49,7 +47,6 @@ def get_schema_base(
     disk_interval: int,
     include_auth: bool = False,
     has_ups: bool = False,
-    docker_insights: bool = False
 ) -> vol.Schema:
     """Get base schema with sliders for both intervals."""
     if include_auth:
@@ -110,7 +107,6 @@ def get_schema_base(
                 )
             ),
             vol.Required(CONF_HAS_UPS, default=has_ups): bool,
-            vol.Required(CONF_DOCKER_INSIGHTS, default=docker_insights): bool,
         }
 
     return vol.Schema(schema)
@@ -125,14 +121,12 @@ def get_options_schema(
     general_interval: int,
     disk_interval: int,
     has_ups: bool,
-    docker_insights: bool = False,
 ) -> vol.Schema:
     """Get schema for options flow."""
     return get_schema_base(
         general_interval,
         disk_interval,
-        has_ups=has_ups,
-        docker_insights=docker_insights
+        has_ups=has_ups
     )
 
 async def validate_input(data: dict[str, Any]) -> dict[str, Any]:
@@ -278,10 +272,6 @@ class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
             CONF_HAS_UPS,
             config_entry.data.get(CONF_HAS_UPS, False)
         )
-        self._docker_insights = config_entry.options.get(
-            CONF_DOCKER_INSIGHTS,
-            config_entry.data.get(CONF_DOCKER_INSIGHTS, False)
-        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -295,7 +285,6 @@ class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_GENERAL_INTERVAL: user_input[CONF_GENERAL_INTERVAL],
                     CONF_DISK_INTERVAL: user_input[CONF_DISK_INTERVAL],
                     CONF_HAS_UPS: user_input[CONF_HAS_UPS],
-                    CONF_DOCKER_INSIGHTS: user_input[CONF_DOCKER_INSIGHTS],
                 },
             )
 
@@ -322,7 +311,6 @@ class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
                 )
             ),
             vol.Required(CONF_HAS_UPS, default=self._has_ups): bool,
-            vol.Required(CONF_DOCKER_INSIGHTS, default=self._docker_insights): bool,
         })
 
         return self.async_show_form(
@@ -335,7 +323,6 @@ class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
                 "disk_interval_description": (
                     "How often to update disk information (1-24 hours)"
                 ),
-                "docker_insights_description": "Enable detailed Docker container monitoring"
             },
         )
 

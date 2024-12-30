@@ -7,6 +7,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Tuple, Dict, Optional, Pattern, List, Any
 from homeassistant.util import dt as dt_util # type: ignore
+from enum import Enum
 
 from .sensors.const import (
     CHIPSET_FAN_PATTERNS,
@@ -593,3 +594,45 @@ class DiskDataHelperMixin:
         if temp_value is None:
             return "N/A"
         return f"{temp_value}°C"
+    
+class SpeedUnit(Enum):
+    """Speed units with their multipliers."""
+    BYTES = (1, "B")
+    KILOBYTES = (1024, "KB")
+    MEGABYTES = (1024 * 1024, "MB")
+    GIGABYTES = (1024 * 1024 * 1024, "GB")
+
+    def __init__(self, multiplier: int, symbol: str):
+        self.multiplier = multiplier
+        self.symbol = symbol
+
+    @classmethod
+    def from_symbol(cls, symbol: str) -> "SpeedUnit":
+        """Get unit from symbol."""
+        for unit in cls:
+            if unit.symbol == symbol.upper():
+                return unit
+        raise ValueError(f"Unknown speed unit: {symbol}")
+
+def parse_speed_string(speed_str: str) -> float:
+    """Parse speed string and return value in bytes per second."""
+    try:
+        # Remove trailing '/s' if present
+        speed_str = speed_str.replace('/s', '').strip()
+        
+        # Split into value and unit
+        parts = speed_str.split()
+        if len(parts) != 2:
+            raise ValueError(f"Invalid speed format: {speed_str}")
+            
+        value, unit = parts
+        
+        # Convert value to float
+        speed = float(value)
+        
+        # Get unit multiplier without 'decimal'
+        unit_enum = SpeedUnit.from_symbol(unit)
+        return speed * unit_enum.multiplier
+            
+    except (ValueError, IndexError) as err:
+        raise ValueError(f"Could not parse speed string '{speed_str}': {err}")

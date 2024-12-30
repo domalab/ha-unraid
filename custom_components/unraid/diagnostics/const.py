@@ -3,12 +3,61 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Callable, Any
+from enum import Enum
 
-from homeassistant.components.binary_sensor import ( # type: ignore
+from homeassistant.components.binary_sensor import (  # type: ignore
     BinarySensorDeviceClass,
     BinarySensorEntityDescription,
 )
-from homeassistant.const import EntityCategory # type: ignore
+from homeassistant.const import EntityCategory  # type: ignore
+
+# Parity Check Status Constants
+PARITY_STATUS_IDLE = "Idle"
+PARITY_STATUS_UNKNOWN = "Unknown"
+PARITY_STATUS_CHECKING = "Checking Parity"
+
+# Parity History Date Formats
+PARITY_HISTORY_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+PARITY_TIME_FORMAT = "%H:%M"
+PARITY_FULL_DATE_FORMAT = "%b %d %Y %H:%M"
+
+# Default Parity Attributes
+DEFAULT_PARITY_ATTRIBUTES = {
+    "status": PARITY_STATUS_IDLE,
+    "progress": 0,
+    "speed": "N/A",
+    "errors": 0,
+    "last_check": "N/A",
+    "next_check": "Unknown",
+    "duration": "N/A",
+    "last_status": "N/A"
+}
+
+# Speed Units
+class SpeedUnit(Enum):
+    """Speed units with their multipliers."""
+    BYTES = (1, "B")
+    KILOBYTES = (1024, "KB")
+    MEGABYTES = (1024 * 1024, "MB")
+    GIGABYTES = (1024 * 1024 * 1024, "GB")
+
+    # Decimal Units
+    DECIMAL_KILOBYTES = (1000, "kB")
+    DECIMAL_MEGABYTES = (1_000_000, "MB")
+    DECIMAL_GIGABYTES = (1_000_000_000, "GB")
+
+    def __init__(self, multiplier: int, symbol: str):
+        self.multiplier = multiplier
+        self.symbol = symbol
+    
+    @staticmethod
+    def from_symbol(symbol: str):
+        """Retrieve SpeedUnit based on symbol."""
+        symbol = symbol.upper()
+        for unit in SpeedUnit:
+            if unit.symbol == symbol:
+                return unit
+        raise ValueError(f"Unknown speed unit: {symbol}")
 
 @dataclass
 class UnraidBinarySensorEntityDescription(BinarySensorEntityDescription):
@@ -50,4 +99,15 @@ SENSOR_DESCRIPTIONS: tuple[UnraidBinarySensorEntityDescription, ...] = (
     ),
 )
 
-__all__ = ["UnraidBinarySensorEntityDescription", "SENSOR_DESCRIPTIONS"]
+__all__ = [
+    "UnraidBinarySensorEntityDescription",
+    "SENSOR_DESCRIPTIONS",
+    "SpeedUnit",
+    "PARITY_STATUS_IDLE",
+    "PARITY_STATUS_UNKNOWN",
+    "PARITY_STATUS_CHECKING",
+    "PARITY_HISTORY_DATE_FORMAT",
+    "PARITY_TIME_FORMAT",
+    "PARITY_FULL_DATE_FORMAT",
+    "DEFAULT_PARITY_ATTRIBUTES",
+]

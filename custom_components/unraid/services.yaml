@@ -159,14 +159,3 @@ system_shutdown:
           min: 0
           max: 3600
           unit_of_measurement: seconds
-
-docker_insights:
-  name: Docker Insights
-  description: Enable detailed Docker container monitoring
-  fields:
-    enabled:
-      name: Enabled
-      description: Enable or disable Docker Insights monitoring
-      required: true
-      selector:
-        boolean:

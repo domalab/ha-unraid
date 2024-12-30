@@ -17,7 +17,6 @@ from cryptography.utils import CryptographyDeprecationWarning  # type: ignore
 from homeassistant.helpers.importlib import async_import_module  # type: ignore
 
 from .const import (
-    CONF_DOCKER_INSIGHTS,
     CONF_HOSTNAME,
     DOMAIN,
     PLATFORMS,
@@ -181,13 +180,6 @@ async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None
                 await coordinator.async_update_ups_status(entry.options[CONF_HAS_UPS])
             except Exception as err:
                 _LOGGER.error("Error updating UPS status: %s", err)
-        
-        # Handle Docker Insights updates
-        if CONF_DOCKER_INSIGHTS in entry.options:
-            try:
-                await coordinator.async_update_docker_insights(entry.options[CONF_DOCKER_INSIGHTS])
-            except Exception as err:
-                _LOGGER.error("Error updating Docker Insights: %s", err)
         
         # Reload the config entry
         await hass.config_entries.async_reload(entry.entry_id)

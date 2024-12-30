@@ -27,6 +27,24 @@ class DiskStateManager:
         self._spindown_delays: Dict[str, int] = {}
         self._lock = asyncio.Lock()
         self._device_types: Dict[str, str] = {}  # Track device types (nvme, sata, etc)
+        self._device_paths_cache: Dict[str, str] = {}  # Cache for device paths
+    
+    async def _get_device_path(self, device: str) -> str | None:
+        """Get actual device path from mount point."""
+        try:
+            # Check cache first
+            if device in self._device_paths_cache:
+                return self._device_paths_cache[device]
+            
+            mount_cmd = f"findmnt -n -o SOURCE /mnt/{device}"
+            result = await self._instance.execute_command(mount_cmd)
+            if result.exit_status == 0 and (device_path := result.stdout.strip()):
+                self._device_paths_cache[device] = device_path
+                return device_path
+            return None
+        except Exception as err:
+            _LOGGER.error("Error getting device path for %s: %s", device, err)
+            return None
     
     async def get_disk_state(self, device: str) -> DiskState:
         """Get disk state using multiple methods with SMART as primary."""
@@ -42,9 +60,13 @@ class DiskStateManager:
                 if device.startswith('sd'):
                     device_path = f"/dev/{device}"
                 elif device == "cache":
-                    device_path = "/dev/nvme0n1"
-                    self._device_types[device] = 'nvme'
-                    return DiskState.ACTIVE
+                    # Get actual cache device path
+                    if actual_path := await self._get_device_path("cache"):
+                        device_path = actual_path
+                        self._device_types[device] = 'nvme' if 'nvme' in actual_path.lower() else 'sata'
+                        return DiskState.ACTIVE
+                    _LOGGER.error("Could not find cache device path")
+                    return DiskState.UNKNOWN
                 elif device.startswith("disk"):
                     try:
                         disk_num = int(''.join(filter(str.isdigit, device)))
@@ -53,18 +75,12 @@ class DiskStateManager:
                         _LOGGER.error("Invalid disk number in %s", device)
                         return DiskState.UNKNOWN
                 else:
-                    # For custom pools or other disks, try to get device from mount
-                    try:
-                        mount_cmd = f"findmnt -n -o SOURCE /mnt/{device}"
-                        result = await self._instance.execute_command(mount_cmd)
-                        if result.exit_status == 0:
-                            device_path = result.stdout.strip()
-                            _LOGGER.debug("Found device path for %s: %s", device, device_path)
-                        else:
-                            _LOGGER.error("Could not find device path for %s", device)
-                            return DiskState.UNKNOWN
-                    except Exception as err:
-                        _LOGGER.error("Error getting device path for %s: %s", device, err)
+                    # For custom pools or other disks
+                    if actual_path := await self._get_device_path(device):
+                        device_path = actual_path
+                        _LOGGER.debug("Found device path for %s: %s", device, device_path)
+                    else:
+                        _LOGGER.error("Could not find device path for %s", device)
                         return DiskState.UNKNOWN
 
             if device_path not in self._device_types:
@@ -126,7 +142,8 @@ class DiskStateManager:
                             state = DiskState.STANDBY
                         else:
                             _LOGGER.warning(
-                                "Both SMART and hdparm failed to determine state for %s (smart_exit=%d, hdparm_output='%s'), assuming ACTIVE",
+                                "Both SMART and hdparm failed to determine state for %s "
+                                "(smart_exit=%d, hdparm_output='%s'), assuming ACTIVE",
                                 device_path,
                                 result.exit_status,
                                 output.strip()

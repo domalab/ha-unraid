@@ -11,8 +11,7 @@
                     "port": "Port",
                     "general_interval": "General Update Interval (Minutes)",
                     "disk_interval": "Disk Update Interval (Hours)",
-                    "has_ups": "UPS Insights",
-                    "docker_insights": "Docker Insights(Beta)"
+                    "has_ups": "UPS Insights"
                 },
                 "data_description": {
                     "host": "{host_description}",
@@ -21,8 +20,7 @@
                     "port": "{port_description}",
                     "general_interval": "{general_interval_description}",
                     "disk_interval": "{disk_interval_description}",
-                    "has_ups": "Check this if you have a UPS connected to your Unraid server",
-                    "docker_insights": "Enable detailed Docker container monitoring"
+                    "has_ups": "Check this if you have a UPS connected to your Unraid server"
                 }
             }
         },
@@ -44,15 +42,13 @@
                     "general_interval": "General Update Interval (Minutes)",
                     "disk_interval": "Disk Update Interval (Hours)",
                     "port": "SSH Port",
-                    "has_ups": "UPS Insights",
-                    "docker_insights": "Docker Insights(Beta)"
+                    "has_ups": "UPS Insights"
                 },
                 "data_description": {
                     "general_interval": "How often to update non-disk sensors (1-60 minutes)",
                     "disk_interval": "How often to update disk information (1-24 hours)",
                     "port": "SSH port for connecting to your Unraid server",
-                    "has_ups": "Enable if you have a UPS connected to your Unraid server",
-                    "docker_insights": "Monitor detailed Docker container statistics (adds additional sensors)"
+                    "has_ups": "Enable if you have a UPS connected to your Unraid server"
                 }
             }
         }

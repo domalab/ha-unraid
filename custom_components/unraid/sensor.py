@@ -12,7 +12,6 @@ from .sensors import (
     UnraidSystemSensors,
     UnraidStorageSensors,
     UnraidNetworkSensors,
-    UnraidDockerSensors,
     UnraidUPSSensors,
 )
 from .coordinator import UnraidDataUpdateCoordinator
@@ -44,13 +43,6 @@ async def async_setup_entry(
         if network_sensors:
             entities.extend(network_sensors)
             _LOGGER.debug("Added network sensors for active interfaces")
-
-        # Docker sensors (if enabled)
-        if coordinator.docker_insights:
-            docker_sensors = UnraidDockerSensors(coordinator).entities
-            if docker_sensors:
-                entities.extend(docker_sensors)
-                _LOGGER.debug("Added Docker sensors")
 
         # UPS sensors (if available)
         if coordinator.has_ups:
