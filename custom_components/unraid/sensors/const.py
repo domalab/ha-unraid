@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Final, Callable, Any, Pattern, Set
+from typing import Final, Callable, Any, Pattern, Set, List, Dict
 from dataclasses import dataclass, field
 
 from homeassistant.components.sensor import ( # type: ignore
@@ -48,6 +48,69 @@ DOCKER_CONTAINER_METRICS: tuple[str, ...] = (
 # Temperature thresholds
 TEMP_WARN_THRESHOLD: Final = 60  # °C
 TEMP_CRIT_THRESHOLD: Final = 80  # °C
+
+@dataclass
+class ChipsetFanPattern:
+    """Pattern definition for chipset fan detection."""
+    patterns: List[str]
+    rpm_keys: List[str]
+    description: str
+
+# Chipset-specific fan patterns
+CHIPSET_FAN_PATTERNS: Dict[str, ChipsetFanPattern] = {
+    "nct67": ChipsetFanPattern(
+        patterns=["fan", "sys_fan", "chassis_fan", "array_fan"],
+        rpm_keys=["fan{}_input", "fan_input"],
+        description="Nuvoton NCT67xx series"
+    ),
+    "it87": ChipsetFanPattern(
+        patterns=["fan", "system_fan", "power_fan", "cpu_fan"],
+        rpm_keys=["fan{}_input", "speed"],
+        description="ITE IT87xx series"
+    ),
+    "w83795": ChipsetFanPattern(
+        patterns=["fan", "fanin", "sys_fan"],
+        rpm_keys=["fan{}_input", "speed"],
+        description="Winbond W83795G/ADG"
+    ),
+    "f71882": ChipsetFanPattern(
+        patterns=["fan", "fan_in"],
+        rpm_keys=["fan{}_input"],
+        description="Fintek F71882FG"
+    ),
+    "nzxt": ChipsetFanPattern(
+        patterns=["fan", "channel"],
+        rpm_keys=["fan{}_input", "speed"],
+        description="NZXT Smart Device"
+    ),
+    "k10temp": ChipsetFanPattern(
+        patterns=["fan", "cpu_fan"],
+        rpm_keys=["fan{}_input"],
+        description="AMD K10 temperature sensor"
+    ),
+    "coretemp": ChipsetFanPattern(
+        patterns=["fan", "cpu_fan"],
+        rpm_keys=["fan{}_input"],
+        description="Intel Core temperature sensor"
+    )
+}
+
+# Common fan number extraction patterns
+FAN_NUMBER_PATTERNS: List[str] = [
+    r'fan(\d+)',
+    r'#(\d+)',
+    r'\s(\d+)',
+    r'channel\s*(\d+)',
+    r'(\d+)$'
+]
+
+# Default patterns for unknown chipsets
+DEFAULT_FAN_PATTERNS: List[str] = ["fan", "sys_fan", "chassis_fan"]
+DEFAULT_RPM_KEYS: List[str] = ["fan{}_input", "fan_input", "speed"]
+
+# RPM validation constants
+MIN_VALID_RPM: int = 0
+MAX_VALID_RPM: int = 10000
 
 @dataclass
 class UnraidSensorEntityDescription(SensorEntityDescription):

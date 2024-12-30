@@ -1,10 +1,21 @@
 """Helper utilities for Unraid integration."""
+from __future__ import annotations
+
 import logging
 import re
 import math
 from dataclasses import dataclass, field
 from typing import Tuple, Dict, Optional, Pattern, List, Any
 from homeassistant.util import dt as dt_util # type: ignore
+
+from .sensors.const import (
+    CHIPSET_FAN_PATTERNS,
+    DEFAULT_FAN_PATTERNS,
+    DEFAULT_RPM_KEYS,
+    FAN_NUMBER_PATTERNS,
+    MIN_VALID_RPM,
+    MAX_VALID_RPM,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -395,44 +406,88 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]
             if not isinstance(readings, dict):
                 continue
 
-            # Look for entries with "Array Fan" in the key
+            # Identify chipset
+            chipset = None
+            chipset_pattern = None
+            for chip_key in CHIPSET_FAN_PATTERNS:
+                if chip_key in device.lower():
+                    chipset = chip_key
+                    chipset_pattern = CHIPSET_FAN_PATTERNS[chip_key]
+                    break
+            
+            # Use chipset-specific or default patterns
+            patterns = (chipset_pattern.patterns if chipset_pattern 
+                       else DEFAULT_FAN_PATTERNS)
+            rpm_keys = (chipset_pattern.rpm_keys if chipset_pattern 
+                       else DEFAULT_RPM_KEYS)
+
+            # Look for fan readings
             for key, value in readings.items():
-                if "array fan" in key.lower() and "rpm" in str(value).lower():
+                key_lower = key.lower()
+                
+                if any(pattern in key_lower for pattern in patterns):
                     try:
-                        # Extract RPM value
-                        rpm_str = str(value).upper().replace("RPM", "").strip()
-                        rpm_val = int(float(rpm_str))
+                        # Extract fan number
+                        fan_num = "1"  # Default
+                        for pattern in FAN_NUMBER_PATTERNS:
+                            if match := re.search(pattern, key_lower):
+                                fan_num = match.group(1)
+                                break
                         
-                        # Get fan number if present
-                        fan_num = "1"  # Default if no number found
-                        if "#" in key:
-                            fan_num = key.split("#")[-1].strip()
+                        # Get RPM value
+                        rpm_val = None
+                        if isinstance(value, dict):
+                            for rpm_key in rpm_keys:
+                                formatted_key = rpm_key.format(fan_num)
+                                if formatted_key in value:
+                                    rpm_val = float(value[formatted_key])
+                                    break
+                                elif rpm_key in value:
+                                    rpm_val = float(value[rpm_key])
+                                    break
+                        else:
+                            rpm_str = str(value).upper().replace("RPM", "").strip()
+                            rpm_val = float(rpm_str)
+                        
+                        if (rpm_val is not None and 
+                            MIN_VALID_RPM <= rpm_val <= MAX_VALID_RPM):
                             
-                        # Generate clean fan key
-                        base_name = f"{device}_array_fan_{fan_num}".lower()
-                        base_name = re.sub(r'[^a-z0-9_]', '_', base_name)
-                        base_name = re.sub(r'_+', '_', base_name).strip('_')
-                        
-                        if rpm_val >= 0 and rpm_val < 10000:  # Validate RPM value
+                            base_name = f"{device}_{key_lower}".replace(" ", "_")
+                            base_name = re.sub(r'[^a-z0-9_]', '_', base_name)
+                            base_name = re.sub(r'_+', '_', base_name).strip('_')
+                            
+                            display_name = (f"{chipset.upper()} Fan {fan_num}" 
+                                          if chipset else f"System Fan {fan_num}")
+                            
                             fan_data[base_name] = {
-                                "rpm": rpm_val,
-                                "label": f"System Fan {fan_num}",
-                                "device": device
+                                "rpm": int(rpm_val),
+                                "label": display_name,
+                                "device": device,
+                                "chipset": chipset or "unknown",
+                                "channel": int(fan_num)
                             }
+                            
                             _LOGGER.debug(
-                                "Added fan: %s with %d RPM",
+                                "Added %s fan: %s with %d RPM",
+                                chipset or "generic",
                                 base_name,
-                                rpm_val
+                                int(rpm_val)
                             )
-                    except (ValueError, TypeError) as err:
+                            
+                    except (ValueError, TypeError, KeyError) as err:
                         _LOGGER.debug(
-                            "Error parsing fan RPM value '%s': %s",
+                            "Error parsing fan for chipset %s: %s - %s",
+                            chipset or "unknown",
                             value,
                             err
                         )
                         continue
 
-        _LOGGER.debug("Found %d fans: %s", len(fan_data), list(fan_data.keys()))
+        _LOGGER.debug(
+            "Found %d fans across %d chipsets", 
+            len(fan_data),
+            len(set(f["chipset"] for f in fan_data.values()))
+        )
         return fan_data
         
     except Exception as err:
