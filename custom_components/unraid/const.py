@@ -75,15 +75,15 @@ class SpinDownDelay(IntEnum):
     MINUTES_15 = 15
     MINUTES_30 = 30
     MINUTES_45 = 45
-    HOUR_1 = 60
-    HOURS_2 = 120
-    HOURS_3 = 180
-    HOURS_4 = 240
-    HOURS_5 = 300
-    HOURS_6 = 360
-    HOURS_7 = 420
-    HOURS_8 = 480
-    HOURS_9 = 540
+    HOUR_1 = 1
+    HOURS_2 = 2
+    HOURS_3 = 3
+    HOURS_4 = 4
+    HOURS_5 = 5
+    HOURS_6 = 6
+    HOURS_7 = 7
+    HOURS_8 = 8
+    HOURS_9 = 9
 
     def to_human_readable(self) -> str:
         """Convert spin down delay to human readable format."""
