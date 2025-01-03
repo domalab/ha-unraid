@@ -48,7 +48,7 @@ class VMOperationsMixin:
             if service_check.exit_status != 0:
                 _LOGGER.debug("VM system is disabled or not installed")
                 return []
-                
+                    
             if "is currently running" not in service_check.stdout:
                 _LOGGER.debug("VM service is not running")
                 return []
@@ -69,7 +69,7 @@ class VMOperationsMixin:
                         vm_name = line.strip()
                         status = await self.get_vm_status(vm_name)
                         os_type = await self.get_vm_os_info(vm_name)
-
+                        
                         vms.append({
                             "name": vm_name,
                             "status": status,

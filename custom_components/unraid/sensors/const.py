@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Final, Callable, Any, Pattern, Set, List, Dict
+from typing import Final, Callable, Any, Pattern, Set, List, Dict, Tuple
 from dataclasses import dataclass, field
 
 from homeassistant.components.sensor import ( # type: ignore
@@ -35,6 +35,81 @@ MOUNT_POINT_PATTERN: Pattern = re.compile(r'/mnt/disk(\d+)$')
 # Network Constants
 VALID_INTERFACE_PATTERN: Pattern = re.compile(r'^[a-zA-Z0-9]+$')
 EXCLUDED_INTERFACES: Set[str] = {'lo', 'tunl0', 'sit0'}
+
+# CPU Core temperature patterns
+CPU_CORE_PATTERN: Pattern = re.compile(r"^Core\s+(\d+)$")
+CPU_TCCD_PATTERN: Pattern = re.compile(r"^Tccd(\d+)$")
+CPU_PECI_PATTERN: Pattern = re.compile(r"^PECI Agent\s+(\d+)$")
+
+# CPU temperature detection patterns
+CPU_TEMP_PATTERNS: Final[List[Tuple[str, str]]] = [
+    # Intel CPU Package and Core temperatures (static entries for common cases)
+    ("Package id 0", "temp1_input"),      # Intel CPU Package - Primary
+    ("CPU Package", "temp1_input"),       # Intel Package - Alternative
+    ("CPU DTS", "temp1_input"),           # Intel Digital Temperature Sensor
+    
+    # AMD-specific temperatures
+    ("Tctl", "temp1_input"),              # AMD Ryzen CPU - Primary
+    ("Tdie", "temp2_input"),              # AMD Ryzen CPU die
+    ("k10temp", "temp1_input"),           # AMD K10 CPU
+    ("Core Complex Die", "temp1_input"),  # AMD complex die
+    
+    # Motherboard vendor-specific CPU temperatures
+    ("CPU Temperature", "temp1_input"),    # ASUS boards
+    ("CPU Socket", "temp2_input"),         # MSI boards
+    ("CPU Core", "temp3_input"),           # Gigabyte boards
+    
+    # Generic CPU temperature sensors
+    ("CPU Temp", "temp1_input"),          # pch_cannonlake
+    ("CPUTIN", "temp2_input"),            # nct6793
+    ("CPU", "temp1_input"),               # Generic CPU temp
+    ("CPU Die", "temp1_input"),           # Generic CPU die temp
+    ("CPU Die Average", "temp2_input"),   # Average of multiple dies
+]
+
+# Note: The following patterns are now handled dynamically:
+# - Core 0-N: Handled by CPU_CORE_PATTERN
+# - Tccd1-N: Handled by CPU_TCCD_PATTERN
+# - PECI Agent 0-N: Handled by CPU_PECI_PATTERN
+
+# Motherboard temperature detection patterns
+MB_SYSTEM_PATTERN: Pattern = re.compile(r"^System\s+(\d+)$")
+MB_EC_PATTERN: Pattern = re.compile(r"^EC_TEMP(\d+)$")
+MB_AUXTIN_PATTERN: Pattern = re.compile(r"^AUXTIN(\d+)$")
+MB_ACPI_PATTERN: Pattern = re.compile(r"^acpitz-acpi-(\d+)$")
+
+# Motherboard temperature detection patterns
+MOTHERBOARD_TEMP_PATTERNS: Final[List[Tuple[str, str]]] = [
+    # ACPI and main board temperatures
+    ("acpitz-acpi-0", "temp1_input"),     # ACPI interface temperature
+    ("MB Temp", "temp1_input"),           # Direct MB temp
+    ("Board Temp", "temp1_input"),        # Generic board temp
+    ("Motherboard", "temp1_input"),       # Generic MB temp
+    ("SYSTIN", "temp1_input"),            # System board temp input
+    
+    # Chipset temperatures
+    ("PCH Temp", "temp3_input"),          # Intel PCH temperature
+    ("PCH_CHIP_CPU_MAX_TEMP", "temp1_input"), # Intel PCH max temp
+    ("PCH_CHIP_TEMP", "temp2_input"),     # Intel PCH current temp
+    ("SB Temperature", "temp3_input"),    # Southbridge temperature
+    ("NB Temperature", "temp4_input"),    # Northbridge temperature
+    ("X570 Chipset", "temp1_input"),      # AMD X570 chipset
+    ("B550 Chipset", "temp1_input"),      # AMD B550 chipset
+    
+    # Sensor chip specific temperatures
+    ("ITE8686", "temp2_input"),           # ITE sensor common temp
+    ("Nuvoton NCT6798D", "temp3_input"),  # Nuvoton sensor board temp
+]
+
+# Note: The following patterns are now handled dynamically:
+# - System N: Handled by MB_SYSTEM_PATTERN
+# - EC_TEMPN: Handled by MB_EC_PATTERN
+# - AUXTIN[N]: Handled by MB_AUXTIN_PATTERN
+# - acpitz-acpi-N: Handled by MB_ACPI_PATTERN
+
+# Define valid temperature ranges
+VALID_CPU_TEMP_RANGE: Final[Tuple[float, float]] = (-10.0, 105.0)
+VALID_MB_TEMP_RANGE: Final[Tuple[float, float]] = (-10.0, 100.0)
 
 # Temperature thresholds
 TEMP_WARN_THRESHOLD: Final = 60  # °C

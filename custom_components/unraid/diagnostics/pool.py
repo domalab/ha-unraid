@@ -36,7 +36,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             raise ValueError(f"Not a pool disk: {disk_name}")
             
         # Skip system paths and known special names
-        invalid_names = {"parity", "flash", "boot", "temp", "user"}
+        invalid_names = {"parity", "flash", "boot", "user"}
         if disk_name.lower() in invalid_names:
             raise ValueError(f"Invalid pool name: {disk_name}")
             
@@ -90,8 +90,16 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         try:
             disk_cfg = self.coordinator.data.get("disk_config", {})
             # Use global setting for pools (no per-disk setting)
-            global_delay = int(disk_cfg.get("spindownDelay", "0"))
-            return SpinDownDelay(global_delay)
+            global_delay = disk_cfg.get("spindownDelay", "0")
+            
+            # Handle special cases
+            if global_delay in (None, "", "-1"):
+                return SpinDownDelay.NEVER
+                
+            # Convert to SpinDownDelay enum
+            delay_value = int(global_delay)
+            return SpinDownDelay(delay_value)
+            
         except (ValueError, TypeError) as err:
             _LOGGER.warning(
                 "Error getting spin down delay for pool %s: %s. Using default Never.",

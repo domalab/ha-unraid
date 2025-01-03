@@ -11,9 +11,16 @@ from enum import Enum
 
 from .sensors.const import (
     CHIPSET_FAN_PATTERNS,
+    CPU_CORE_PATTERN,
+    CPU_PECI_PATTERN,
+    CPU_TCCD_PATTERN,
     DEFAULT_FAN_PATTERNS,
     DEFAULT_RPM_KEYS,
     FAN_NUMBER_PATTERNS,
+    MB_ACPI_PATTERN,
+    MB_AUXTIN_PATTERN,
+    MB_EC_PATTERN,
+    MB_SYSTEM_PATTERN,
     MIN_VALID_RPM,
     MAX_VALID_RPM,
 )
@@ -528,6 +535,54 @@ def is_solid_state_drive(disk_data: dict) -> bool:
             err
         )
         return False
+
+def get_core_temp_input(sensor_label: str) -> Optional[str]:
+    """Map CPU core labels to temperature input files."""
+    if match := CPU_CORE_PATTERN.match(sensor_label):
+        core_index = int(match.group(1))
+        return f"temp{core_index + 2}_input"  # Core 0 -> temp2_input, etc.
+    return None
+
+def get_tccd_temp_input(sensor_label: str) -> Optional[str]:
+    """Map AMD CCD temperature labels to input files."""
+    if match := CPU_TCCD_PATTERN.match(sensor_label):
+        ccd_index = int(match.group(1))
+        return f"temp{ccd_index + 3}_input"  # Tccd1 -> temp4_input, etc.
+    return None
+
+def get_peci_temp_input(sensor_label: str) -> Optional[str]:
+    """Map PECI agent labels to temperature input files."""
+    if match := CPU_PECI_PATTERN.match(sensor_label):
+        peci_index = int(match.group(1))
+        return f"temp{peci_index + 7}_input"  # PECI Agent 0 -> temp7_input
+    return None
+
+def get_system_temp_input(sensor_label: str) -> Optional[str]:
+    """Map System N labels to temperature input files."""
+    if match := MB_SYSTEM_PATTERN.match(sensor_label):
+        sys_index = int(match.group(1))
+        return f"temp{sys_index + 1}_input"  # System 1 -> temp2_input, etc.
+    return None
+
+def get_ec_temp_input(sensor_label: str) -> Optional[str]:
+    """Map EC_TEMP[N] labels to temperature input files."""
+    if match := MB_EC_PATTERN.match(sensor_label):
+        ec_index = int(match.group(1))
+        return f"temp{ec_index}_input"  # EC_TEMP1 -> temp1_input, etc.
+    return None
+
+def get_auxtin_temp_input(sensor_label: str) -> Optional[str]:
+    """Map AUXTIN[N] labels to temperature input files."""
+    if match := MB_AUXTIN_PATTERN.match(sensor_label):
+        aux_index = int(match.group(1))
+        return f"temp{aux_index + 3}_input"  # AUXTIN0 -> temp3_input, etc.
+    return None
+
+def get_acpi_temp_input(sensor_label: str) -> Optional[str]:
+    """Map ACPI temperature labels to input files."""
+    if MB_ACPI_PATTERN.match(sensor_label):
+        return "temp1_input"  # acpitz-acpi-0 -> temp1_input
+    return None
 
 class DiskDataHelperMixin:
     """Mixin providing common disk data handling methods."""

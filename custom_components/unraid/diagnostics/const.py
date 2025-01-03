@@ -12,9 +12,9 @@ from homeassistant.components.binary_sensor import (  # type: ignore
 from homeassistant.const import EntityCategory  # type: ignore
 
 # Parity Check Status Constants
-PARITY_STATUS_IDLE = "Idle"
+PARITY_STATUS_IDLE = "Success"
 PARITY_STATUS_UNKNOWN = "Unknown"
-PARITY_STATUS_CHECKING = "Checking Parity"
+PARITY_STATUS_CHECKING = "Running"
 
 # Parity History Date Formats
 PARITY_HISTORY_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"

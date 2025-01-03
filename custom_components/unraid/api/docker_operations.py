@@ -72,18 +72,28 @@ class DockerOperationsMixin:
         except (asyncssh.Error, OSError) as e:
             _LOGGER.debug("Error getting docker containers (this is normal if Docker is not configured): %s", str(e))
             return []
+        
+    async def execute_container_command(self, command: str, timeout: int = 30) -> asyncssh.SSHCompletedProcess:
+        """Execute Docker container command with timeout."""
+        try:
+            async with asyncio.timeout(timeout):
+                result = await self.execute_command(command)
+                return result
+        except asyncio.TimeoutError:
+            _LOGGER.error("Docker command timed out")
+            raise
 
     async def start_container(self, container_name: str) -> bool:
         """Start a Docker container."""
         try:
             _LOGGER.debug("Starting container: %s", container_name)
-            result = await self.execute_command(f'docker start "{container_name}"')
+            result = await self.execute_container_command(f'docker start "{container_name}"')
             if result.exit_status != 0:
                 _LOGGER.error("Failed to start container %s: %s", container_name, result.stderr)
                 return False
             _LOGGER.info("Container %s started successfully", container_name)
             return True
-        except (asyncssh.Error, asyncio.TimeoutError, OSError, ValueError) as e:
+        except (asyncio.TimeoutError, Exception) as e:
             _LOGGER.error("Error starting container %s: %s", container_name, str(e))
             return False
 
@@ -91,64 +101,15 @@ class DockerOperationsMixin:
         """Stop a Docker container."""
         try:
             _LOGGER.debug("Stopping container: %s", container_name)
-            result = await self.execute_command(f'docker stop "{container_name}"')
+            result = await self.execute_container_command(f'docker stop "{container_name}"')
             if result.exit_status != 0:
                 _LOGGER.error("Failed to stop container %s: %s", container_name, result.stderr)
                 return False
             _LOGGER.info("Container %s stopped successfully", container_name)
             return True
-        except (asyncssh.Error, asyncio.TimeoutError, OSError) as e:
+        except (asyncio.TimeoutError, Exception) as e:
             _LOGGER.error("Error stopping container %s: %s", container_name, str(e))
             return False
-            
-    async def get_docker_proxy_url(self) -> str:
-        """Get the URL for connecting to Docker socket proxy."""
-        try:
-            # Get IP address
-            result = await self.execute_command(
-                "ip -4 addr show | grep inet | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1"
-            )
-
-            if result.exit_status != 0:
-                raise ValueError("Failed to get Unraid IP address")
-
-            # Get first non-localhost IP
-            ip_addresses = result.stdout.strip().split('\n')
-            server_ip = next(
-                (ip.strip() for ip in ip_addresses if ip and not ip.startswith('127.')),
-                None
-            )
-
-            if not server_ip:
-                raise ValueError("No valid IP address found")
-
-            # Check if dockersocket proxy is running
-            result = await self.execute_command(
-                "docker ps --format '{{.Names}}' | grep -E 'dockersocket|dockerproxy'"
-            )
-
-            if result.exit_status != 0 or not result.stdout.strip():
-                raise ValueError(
-                    "Docker socket proxy not found. Please ensure 'dockersocket' or "
-                    "'dockerproxy' container is running on your Unraid server"
-                )
-
-            # Verify proxy is accessible
-            proxy_port = 2375  # Default proxy port
-            proxy_url = f"http://{server_ip}:{proxy_port}"
-
-            test_cmd = f"curl -s {proxy_url}/version"
-            result = await self.execute_command(test_cmd)
-
-            if result.exit_status != 0:
-                raise ValueError(f"Docker proxy not accessible on {proxy_url}")
-
-            _LOGGER.debug("Using Docker proxy URL: %s", proxy_url)
-            return proxy_url
-
-        except (asyncssh.Error, asyncio.TimeoutError, OSError, ValueError) as err:
-            _LOGGER.error("Error getting Docker proxy URL: %s", err)
-            raise
 
     async def _get_docker_vdisk_usage(self) -> Dict[str, Any]:
         """Fetch Docker vDisk information from the Unraid system."""

@@ -84,13 +84,28 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         """Get spin down delay for this array disk."""
         try:
             disk_cfg = self.coordinator.data.get("disk_config", {})
+            
             # Get global setting (default to NEVER/0 if not specified)
-            global_delay = int(disk_cfg.get("spindownDelay", "0"))
+            global_setting = disk_cfg.get("spindownDelay", "0")
+            if global_setting in (None, "", "-1"):
+                return SpinDownDelay.NEVER
+                
+            global_delay = int(global_setting)
+            
             # Check for disk-specific setting
             disk_delay = disk_cfg.get(f"diskSpindownDelay.{self._disk_num}")
             if disk_delay and disk_delay != "-1":  # -1 means use global setting
-                global_delay = int(disk_delay)
+                try:
+                    return SpinDownDelay(int(disk_delay))
+                except ValueError:
+                    _LOGGER.warning(
+                        "Invalid disk-specific delay value for %s: %s, using global setting",
+                        self._disk_name,
+                        disk_delay
+                    )
+            
             return SpinDownDelay(global_delay)
+            
         except (ValueError, TypeError) as err:
             _LOGGER.warning(
                 "Error getting spin down delay for %s: %s. Using default Never.",
