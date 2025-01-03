@@ -101,13 +101,3 @@ This integration is released under the Apache License.
 ## Disclaimer
 
 This integration is not officially associated with or endorsed by UNRAID. UNRAID trademarks belong to UNRAID, and this integration is independently developed.
-
-## Support This Project
-
-If you find this project useful or it has helped you in any way, please consider supporting its development. Your contributions help maintain and improve the project and allow me to dedicate more time to make it even better.
-
-You can support by:
-
-- [![Donate with PayPal](https://www.paypalobjects.com/webstatic/en_US/i/buttons/PP_logo_h_150x38.png)](https://www.paypal.com/donate?hosted_button_id=VS3VTJZW7Q8NC)
-
-Thank you for your support and for helping keep this project going!
