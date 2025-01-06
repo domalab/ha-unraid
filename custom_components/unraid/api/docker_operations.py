@@ -31,13 +31,45 @@ class ContainerStates(Enum):
 class DockerOperationsMixin:
     """Mixin for Docker-related operations."""
 
+    async def check_docker_running(self) -> bool:
+        """Check if Docker is running using multiple methods.
+        
+        Returns:
+            bool: True if Docker service is running, False otherwise.
+        """
+        try:
+            # Method 1: Traditional rc.d script check
+            service_check = await self.execute_command("/etc/rc.d/rc.docker status")
+            if service_check.exit_status == 0 and "is currently running" in service_check.stdout:
+                _LOGGER.debug("Docker validated through rc.d script")
+                return True
+                
+            # Method 2: Process check
+            process_check = await self.execute_command("pgrep -f dockerd")
+            if process_check.exit_status == 0:
+                # Method 3: Socket file check
+                sock_check = await self.execute_command("[ -S /var/run/docker.sock ]")
+                if sock_check.exit_status == 0:
+                    _LOGGER.debug("Docker validated through process and socket checks")
+                    return True
+                
+            _LOGGER.debug(
+                "Docker service checks failed - rc.d: %s, process: %s",
+                service_check.exit_status,
+                process_check.exit_status
+            )
+            return False
+        except Exception as err:
+            _LOGGER.debug("Error checking Docker status: %s", str(err))
+            return False
+
     async def get_docker_containers(self) -> List[Dict[str, Any]]:
         """Fetch information about Docker containers."""
         try:
             _LOGGER.debug("Fetching Docker container information")
-            # Check if Docker service is running using Unraid's rc script
-            service_check = await self.execute_command("/etc/rc.d/rc.docker status")
-            if service_check.exit_status != 0 or "is currently running" not in service_check.stdout:
+            
+            # Use new service check method
+            if not await self.check_docker_running():
                 _LOGGER.debug("Docker service is not running, no containers available")
                 return []
 

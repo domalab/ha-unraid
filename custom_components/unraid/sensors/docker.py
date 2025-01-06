@@ -5,10 +5,10 @@ import logging
 from typing import Any, Callable
 from dataclasses import dataclass, field
 
-from homeassistant.components.sensor import (
+from homeassistant.components.sensor import ( # type: ignore
     SensorEntityDescription,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory # type: ignore
 
 from .base import UnraidSensorBase, UnraidDiagnosticMixin
 from .const import DOMAIN

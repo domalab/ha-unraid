@@ -37,20 +37,46 @@ class VMState(Enum):
 class VMOperationsMixin:
     """Mixin for VM-related operations."""
 
+    async def check_libvirt_running(self) -> bool:
+        """Check if libvirt is running using multiple methods.
+        
+        Returns:
+            bool: True if libvirt service is running, False otherwise.
+        """
+        try:
+            # Method 1: Traditional rc.d script check
+            service_check = await self.execute_command("/etc/rc.d/rc.libvirt status")
+            if service_check.exit_status == 0 and "is currently running" in service_check.stdout:
+                _LOGGER.debug("Libvirt validated through rc.d script")
+                return True
+                
+            # Method 2: Process check
+            process_check = await self.execute_command("pgrep -f libvirtd")
+            if process_check.exit_status == 0:
+                # Method 3: Socket file check
+                sock_check = await self.execute_command("[ -S /var/run/libvirt/libvirt-sock ]")
+                if sock_check.exit_status == 0:
+                    _LOGGER.debug("Libvirt validated through process and socket checks")
+                    return True
+                
+            _LOGGER.debug(
+                "Libvirt service checks failed - rc.d: %s, process: %s",
+                service_check.exit_status,
+                process_check.exit_status
+            )
+            return False
+        except Exception as err:
+            _LOGGER.debug("Error checking libvirt status: %s", str(err))
+            return False
+
     async def get_vms(self) -> List[Dict[str, Any]]:
         """Fetch information about virtual machines."""
         try:
             _LOGGER.debug("Checking VM service status")
-            # First check if VM system is enabled via libvirt
-            service_check = await self.execute_command("/etc/rc.d/rc.libvirt status")
             
-            # If service check fails or service isn't running, VMs are disabled
-            if service_check.exit_status != 0:
+            # Use new service check method
+            if not await self.check_libvirt_running():
                 _LOGGER.debug("VM system is disabled or not installed")
-                return []
-                    
-            if "is currently running" not in service_check.stdout:
-                _LOGGER.debug("VM service is not running")
                 return []
 
             # Only proceed with VM checks if service is running and enabled
@@ -75,7 +101,6 @@ class VMOperationsMixin:
                             "status": status,
                             "os_type": os_type
                         })
-
                     except Exception as vm_err:
                         _LOGGER.debug("Error processing VM '%s': %s", line.strip(), str(vm_err))
                         continue
