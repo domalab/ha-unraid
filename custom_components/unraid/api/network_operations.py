@@ -235,31 +235,80 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
     async def _get_interface_stats(self, interface: str) -> Dict[str, Any]:
         """Get statistics for a specific interface."""
         try:
+            original_interface = interface
+            normalized_interface = interface.lower()
+
+            # Only apply VLAN-specific normalization if it looks like a VLAN interface
+            if '.' in normalized_interface or '@' in normalized_interface:
+                if '@' in normalized_interface:
+                    normalized_interface = normalized_interface.split('@')[0]
+                normalized_interface = normalized_interface.replace('o', '0')
+            
+            _LOGGER.debug(
+                "Processing interface: %s (normalized: %s)",
+                original_interface,
+                normalized_interface
+            )
+
+            if not await self._interface_exists(normalized_interface):
+                _LOGGER.debug(
+                    "Interface not found: %s (normalized from: %s)",
+                    normalized_interface,
+                    original_interface
+                )
+                raise ValueError(f"Interface {normalized_interface} does not exist")
+
             # Get traffic stats
             stats_cmd = (
-                f"cat /sys/class/net/{interface}/statistics/rx_bytes "
-                f"/sys/class/net/{interface}/statistics/tx_bytes"
+                f"cat /sys/class/net/{normalized_interface}/statistics/rx_bytes "
+                f"/sys/class/net/{normalized_interface}/statistics/tx_bytes"
             )
             stats_result = await self.execute_command(stats_cmd)
-            
+
             if stats_result.exit_status != 0:
-                raise ValueError(f"Failed to get stats for {interface}")
-                
+                raise ValueError(f"Failed to get stats for {normalized_interface}")
+
             rx_bytes, tx_bytes = map(int, stats_result.stdout.splitlines())
-            
+
             # Get interface info concurrently
-            info = await self._get_interface_info(interface)
-            
+            info = await self._get_interface_info(normalized_interface)
+
             return {
                 "rx_bytes": rx_bytes,
                 "tx_bytes": tx_bytes,
                 "connected": True,
                 **info
             }
-            
+
         except Exception as err:
-            _LOGGER.error("Error getting interface stats: %s", err)
+            _LOGGER.error(
+                "Error getting interface stats: %s (interface=%s)",
+                err,
+                interface
+            )
             raise
+
+    async def _interface_exists(self, interface: str) -> bool:
+        """Check if network interface exists."""
+        try:
+            cmd = f"test -d /sys/class/net/{interface}"
+            result = await self.execute_command(cmd)
+            exists = result.exit_status == 0
+            
+            _LOGGER.debug(
+                "Interface existence check: %s (exists=%s)",
+                interface,
+                exists
+            )
+            
+            return exists
+        except Exception as err:
+            _LOGGER.error(
+                "Error checking interface existence: %s (interface=%s)",
+                err,
+                interface
+            )
+            return False
 
     async def _calculate_rates(
         self,
@@ -334,4 +383,3 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
                 "duplex": "unknown",
                 "link_detected": False
             }
-        

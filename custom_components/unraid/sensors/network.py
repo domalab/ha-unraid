@@ -175,13 +175,29 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
 
     def _is_interface_available(self, data: dict) -> bool:
         """Check if network interface is available."""
-        network_stats = data.get("system_stats", {}).get("network_stats", {})
-        return (
-            self._interface in network_stats
-            and network_stats[self._interface].get("connected", False)
-            and bool(re.match(VALID_INTERFACE_PATTERN, self._interface))
-            and self._interface not in EXCLUDED_INTERFACES
-        )
+        try:
+            network_stats = data.get("system_stats", {}).get("network_stats", {})
+            
+            # Use the same normalization as in network_operations
+            normalized_interface = self._interface.lower()
+            if '.' in normalized_interface or '@' in normalized_interface:
+                if '@' in normalized_interface:
+                    normalized_interface = normalized_interface.split('@')[0]
+                normalized_interface = normalized_interface.replace('o', '0')
+
+            return (
+                normalized_interface in network_stats
+                and network_stats[normalized_interface].get("connected", False)
+                and bool(re.match(VALID_INTERFACE_PATTERN, normalized_interface))
+                and normalized_interface not in EXCLUDED_INTERFACES
+            )
+        except Exception as err:
+            _LOGGER.error(
+                "Error checking interface availability: %s (interface=%s)",
+                err,
+                self._interface
+            )
+            return False
 
     @property
     def native_unit_of_measurement(self) -> str:

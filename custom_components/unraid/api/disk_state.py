@@ -49,6 +49,9 @@ class DiskStateManager:
     async def get_disk_state(self, device: str) -> DiskState:
         """Get disk state using multiple methods with SMART as primary."""
         try:
+            # Initialize result as None at start
+            result = None
+
             # Skip system paths and invalid disk names
             if not is_valid_disk_name(device):
                 _LOGGER.debug("Skipping invalid disk name: %s", device)
@@ -87,6 +90,7 @@ class DiskStateManager:
                 if any(x in str(device_path).lower() for x in ['nvme', 'nvm']):
                     self._device_types[device_path] = 'nvme'
                     _LOGGER.debug("NVMe device detected: %s", device_path)
+                    # For NVMe, set state as ACTIVE without running SMART/hdparm
                     return DiskState.ACTIVE
                 else:
                     self._device_types[device_path] = 'sata'
@@ -166,15 +170,23 @@ class DiskStateManager:
             self._states[device_path] = state
             self._last_check[device_path] = datetime.now(timezone.utc)
             
-            # Log final decision with full context
-            _LOGGER.debug(
-                "Final state for %s (%s): %s (SMART result: %s, hdparm result: %s)",
-                device_path,
-                device_type,
-                state.value,
-                getattr(result, 'exit_status', 'not_run'),
-                getattr(result, 'stdout', 'not_run').strip() if hasattr(result, 'stdout') else 'not_run'
-            )
+            # Log final decision with full context, handle NVMe case
+            if device_type == 'nvme':
+                _LOGGER.debug(
+                    "Final state for %s (%s): %s (NVMe device - no SMART/hdparm check needed)",
+                    device_path,
+                    device_type,
+                    state.value
+                )
+            else:
+                _LOGGER.debug(
+                    "Final state for %s (%s): %s (SMART result: %s, hdparm result: %s)",
+                    device_path,
+                    device_type,
+                    state.value,
+                    getattr(result, 'exit_status', 'not_run'),
+                    getattr(result, 'stdout', 'not_run').strip() if hasattr(result, 'stdout') else 'not_run'
+                )
             return state
 
         except Exception as err:
