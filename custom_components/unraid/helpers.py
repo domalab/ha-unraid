@@ -670,14 +670,37 @@ class SpeedUnit(Enum):
         raise ValueError(f"Unknown speed unit: {symbol}")
 
 def parse_speed_string(speed_str: str) -> float:
-    """Parse speed string and return value in bytes per second."""
+    """Parse speed string and return value in bytes per second.
+    
+    Handles both raw byte values and formatted strings with units.
+    Examples:
+        - "99128056" -> 99128056 (raw bytes/sec)
+        - "100 MB/s" -> 104857600 (converted to bytes/sec)
+        - "1.5 GB/s" -> 1610612736 (converted to bytes/sec)
+    """
     try:
-        # Remove trailing '/s' if present
+        # Remove trailing '/s' if present and clean up the string
         speed_str = speed_str.replace('/s', '').strip()
+        
+        # Check if the string is just a number (raw bytes/sec)
+        try:
+            return float(speed_str)
+        except ValueError:
+            # Not a raw number, proceed with unit parsing
+            pass
+            
+        # Handle malformed units like 'MB B' -> 'MB'
+        speed_str = speed_str.replace('MB B', 'MB').replace('GB B', 'GB')
         
         # Split into value and unit
         parts = speed_str.split()
         if len(parts) != 2:
+            # Try to handle case where unit might be stuck to number
+            if any(unit in speed_str for unit in ['MB', 'GB', 'KB', 'B']):
+                for unit in ['MB', 'GB', 'KB', 'B']:
+                    if unit in speed_str:
+                        value = speed_str.replace(unit, '').strip()
+                        return float(value) * SpeedUnit.from_symbol(unit).multiplier
             raise ValueError(f"Invalid speed format: {speed_str}")
             
         value, unit = parts
@@ -685,9 +708,13 @@ def parse_speed_string(speed_str: str) -> float:
         # Convert value to float
         speed = float(value)
         
-        # Get unit multiplier without 'decimal'
+        # Handle case where unit might have extra spaces or text
+        unit = unit.replace('B/s', 'B').replace('B', '').strip() + 'B'
+        
+        # Get unit multiplier
         unit_enum = SpeedUnit.from_symbol(unit)
         return speed * unit_enum.multiplier
             
     except (ValueError, IndexError) as err:
         raise ValueError(f"Could not parse speed string '{speed_str}': {err}")
+

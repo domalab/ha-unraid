@@ -635,8 +635,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 _LOGGER.debug("Processing parity history line: %s", line)
 
                 fields = line.strip().split("|")
-                if len(fields) < 7:
-                    _LOGGER.warning("Invalid parity history line (not enough fields): %s", line)
+                # Minimum required fields: date, duration, speed, status, errors
+                if len(fields) < 5:
+                    _LOGGER.warning("Invalid parity history line (insufficient fields): %s", line)
                     continue
 
                 try:
@@ -644,30 +645,34 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     date_str = fields[0]
                     _LOGGER.debug("Parsing date: %s", date_str)
                     check_date = datetime.strptime(date_str, "%Y %b %d %H:%M:%S")
-                    
+
                     # Format duration from seconds to readable format
                     duration_secs = int(fields[1])
                     hours = duration_secs // 3600
                     minutes = (duration_secs % 3600) // 60
                     seconds = duration_secs % 60
                     duration_str = f"{hours} hours, {minutes} minutes, {seconds} seconds"
-                    
-                    # Format speed using our new helper - convert bytes to MB/s
-                    speed_bytes = parse_speed_string(f"{fields[2]} B/s")
-                    speed_mb = round(speed_bytes / 1_000_000, 2)
-                    
+
+                    # Parse speed using helper function
+                    try:
+                        speed_bytes = parse_speed_string(fields[2].strip())
+                        speed_mb = round(speed_bytes / 1_000_000, 2)
+                    except ValueError as err:
+                        _LOGGER.warning("Could not parse speed value: %s - %s", fields[2], err)
+                        speed_mb = 0
+
                     check_info = {
                         "date": check_date.strftime("%Y-%m-%d %H:%M:%S"),
                         "duration": duration_str,
                         "speed": f"{speed_mb} MB/s",
                         "status": "Success" if fields[3] == "0" else f"Failed ({fields[3]} errors)",
                         "errors": int(fields[4]),
-                        "type": fields[5],
-                        "size": fields[6]
+                        "type": fields[5] if len(fields) > 5 else "Unknown",
+                        "size": fields[6] if len(fields) > 6 else "Unknown"
                     }
-                    
+
                     _LOGGER.debug("Processed check info: %s", check_info)
-                    
+
                     if not latest_check or check_date > datetime.strptime(latest_check["date"], "%Y-%m-%d %H:%M:%S"):
                         latest_check = check_info
                         _LOGGER.debug("Updated latest check info")
