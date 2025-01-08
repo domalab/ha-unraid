@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import logging
-import re
-from typing import Any, Dict, Final
 from datetime import datetime, timezone
-from dataclasses import dataclass
+import re
+from typing import Any, Dict
 
 from homeassistant.components.sensor import ( # type: ignore
     SensorDeviceClass,
@@ -14,41 +13,22 @@ from homeassistant.components.sensor import ( # type: ignore
 from homeassistant.const import ( # type: ignore
     PERCENTAGE,
     UnitOfPower,
-    UnitOfElectricPotential,
-    UnitOfTime,
     UnitOfEnergy,
 )
-from homeassistant.util import dt as dt_util # type: ignore
 from homeassistant.core import callback # type: ignore
+from homeassistant.helpers.restore_state import RestoreEntity # type: ignore
+from homeassistant.util import dt as dt_util # type: ignore
 
 from .base import UnraidSensorBase, ValueValidationMixin
-from .const import DOMAIN, UnraidSensorEntityDescription
+from .const import (
+    DOMAIN, 
+    UnraidSensorEntityDescription,
+    UPS_METRICS,
+    UPS_MODEL_PATTERNS,
+)
 from ..naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
-
-# UPS metric validation ranges
-UPS_METRICS: Final = {
-    "NOMPOWER": {"min": 0, "max": 10000, "unit": UnitOfPower.WATT},
-    "LOADPCT": {"min": 0, "max": 100, "unit": PERCENTAGE},
-    "BCHARGE": {"min": 0, "max": 100, "unit": PERCENTAGE},
-    "LINEV": {"min": 0, "max": 500, "unit": UnitOfElectricPotential.VOLT},
-    "BATTV": {"min": 0, "max": 60, "unit": UnitOfElectricPotential.VOLT},
-    "TIMELEFT": {"min": 0, "max": 1440, "unit": UnitOfTime.MINUTES},
-    "ITEMP": {"min": 0, "max": 60, "unit": "°C"},
-}
-
-@dataclass
-class UPSMetric:
-    """UPS metric with validation."""
-    value: float
-    unit: str
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            self.timestamp = dt_util.now()
 
 class UPSMetricsMixin(ValueValidationMixin):
     """Mixin for UPS metrics handling."""
@@ -123,8 +103,8 @@ class UnraidUPSCurrentPowerSensor(UnraidSensorBase, UPSMetricsMixin):
         )
 
         description = UnraidSensorEntityDescription(
-            key="ups_current_power",
-            name=f"{naming.get_entity_name('ups', 'ups')} Current Power",
+            key="ups_current_consumption",
+            name=f"{naming.get_entity_name('ups', 'ups')} Current Consumption",
             native_unit_of_measurement=UnitOfPower.WATT,
             device_class=SensorDeviceClass.POWER,
             state_class=SensorStateClass.MEASUREMENT,
@@ -156,25 +136,8 @@ class UnraidUPSCurrentPowerSensor(UnraidSensorBase, UPSMetricsMixin):
             _LOGGER.debug("Error getting UPS power usage: %s", err)
             return None
 
-class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
+class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntity):
     """UPS energy consumption sensor."""
-
-    # Added power factor and model patterns
-    POWER_FACTOR_ESTIMATE = 0.9  # Conservative estimate for VA to W conversion
-
-    # Known UPS model patterns for power calculation
-    MODEL_PATTERNS = {
-        r'smart-ups.*?(\d{3,4})': 1.0,       # Smart-UPS models use direct VA rating
-        r'back-ups.*?(\d{3,4})': 0.9,        # Back-UPS models typically 90% of VA
-        r'back-ups pro.*?(\d{3,4})': 0.95,   # Back-UPS Pro models ~95% of VA
-        r'smart-ups\s*x.*?(\d{3,4})': 1.0,   # Smart-UPS X series
-        r'smart-ups\s*xl.*?(\d{3,4})': 1.0,  # Smart-UPS XL series
-        r'smart-ups\s*rt.*?(\d{3,4})': 1.0,  # Smart-UPS RT series
-        r'symmetra.*?(\d{3,4})': 1.0,        # Symmetra models
-        r'sua\d{3,4}': 1.0,                  # Smart-UPS alternative model format
-        r'smx\d{3,4}': 1.0,                  # Smart-UPS SMX model format
-        r'smt\d{3,4}': 1.0,                  # Smart-UPS SMT model format
-    }
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
@@ -186,8 +149,8 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
         )
 
         description = UnraidSensorEntityDescription(
-            key="ups_energy_consumption",
-            name=f"{naming.get_entity_name('ups', 'ups')} Energy Consumption",
+            key="ups_total_consumption",
+            name=f"{naming.get_entity_name('ups', 'ups')} Total Consumption",
             native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
             device_class=SensorDeviceClass.ENERGY,
             state_class=SensorStateClass.TOTAL_INCREASING,
@@ -206,6 +169,59 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
         self._last_power_value = None
         self._power_source = "direct"
 
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        
+        # Restore previous state if available
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            try:
+                restored_value = float(last_state.state)
+                # Validate restored value
+                if restored_value < 0:
+                    _LOGGER.warning(
+                        "Invalid negative energy value restored: %f",
+                        restored_value
+                    )
+                    self._reset_energy_counter()
+                else:
+                    self._accumulated_energy = restored_value
+                    _LOGGER.debug(
+                        "Restored energy consumption: %.3f kWh",
+                        self._accumulated_energy
+                    )
+
+                # Restore attributes if available
+                if last_reset := last_state.attributes.get("last_reset"):
+                    try:
+                        if last_reset != "Never":
+                            self._last_reset = datetime.fromisoformat(last_reset)
+                    except ValueError:
+                        _LOGGER.debug("Could not parse last_reset timestamp")
+                        
+                if last_calculation := last_state.attributes.get("last_calculation"):
+                    try:
+                        self._last_calculation_time = datetime.fromisoformat(last_calculation)
+                    except ValueError:
+                        _LOGGER.debug("Could not parse last_calculation timestamp")
+                        
+                if power_source := last_state.attributes.get("power_source"):
+                    self._power_source = power_source
+                    
+                if last_power := last_state.attributes.get("last_power"):
+                    try:
+                        self._last_power = float(last_power)
+                    except (TypeError, ValueError):
+                        _LOGGER.debug("Could not restore last_power value")
+
+            except (ValueError, TypeError) as err:
+                _LOGGER.warning(
+                    "Could not restore previous energy state: %s",
+                    err
+                )
+                self._reset_energy_counter()
+
     def _validate_derived_power(self, va_rating: int, factor: float) -> float | None:
         """Validate derived power values."""
         try:
@@ -217,6 +233,46 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
         except (TypeError, ValueError, ZeroDivisionError) as err:
             _LOGGER.error("Error validating derived power: %s", err)
             return None
+
+    def _validate_energy_increment(
+        self,
+        energy_increment: float,
+        hours: float,
+        avg_power: float
+    ) -> bool:
+        """Validate energy increment is within reasonable bounds."""
+        try:
+            # Check for physically impossible values
+            if energy_increment < 0:
+                _LOGGER.warning("Negative energy increment calculated: %f kWh", energy_increment)
+                return False
+                
+            # Check for unreasonably large values
+            # Max theoretical value: full power (10kW) for the entire period
+            max_theoretical = (10 * hours)  # kWh
+            if energy_increment > max_theoretical:
+                _LOGGER.warning(
+                    "Energy increment too large: %f kWh (max theoretical: %f kWh)",
+                    energy_increment,
+                    max_theoretical
+                )
+                return False
+                
+            # Check for unreasonable power implications
+            implied_power = (energy_increment / hours) * 1000  # Convert back to watts
+            if abs(implied_power - avg_power) > (avg_power * 0.1):  # 10% tolerance
+                _LOGGER.warning(
+                    "Energy increment implies unreasonable power: %f W (expected: %f W)",
+                    implied_power,
+                    avg_power
+                )
+                return False
+                
+            return True
+            
+        except (ValueError, ZeroDivisionError) as err:
+            _LOGGER.error("Error validating energy increment: %s", err)
+            return False
 
     def _get_nominal_power(self, ups_info: dict) -> float | None:
         """Get nominal power either directly or derived from model."""
@@ -238,7 +294,7 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
                 return self._last_power_value
 
             # Try each model pattern
-            for pattern, factor in self.MODEL_PATTERNS.items():
+            for pattern, factor in UPS_MODEL_PATTERNS.items():
                 if match := re.search(pattern, model):
                     va_rating = int(match.group(1))
                     nominal_power = self._validate_derived_power(va_rating, factor)
@@ -257,10 +313,13 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
             if self._last_power_value is not None:
                 return self._last_power_value
 
-            _LOGGER.warning("Could not determine power rating for UPS model: %s", model)
+            _LOGGER.warning(
+                "Could not determine power rating for UPS model: %s",
+                model
+            )
             return None
 
-        except (ValueError, TypeError, KeyError, AttributeError, ZeroDivisionError) as err:
+        except Exception as err:
             _LOGGER.error("Error calculating nominal power: %s", err)
             return self._last_power_value
 
@@ -285,7 +344,7 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
 
             # Calculate current power
             current_power = (nominal_power * load_percent) / 100.0
-            current_time = datetime.now(timezone.utc)  # Fixed timezone
+            current_time = datetime.now(timezone.utc)
 
             if self._last_power is not None and self._last_calculation_time is not None:
                 hours = (current_time - self._last_calculation_time).total_seconds() / 3600
@@ -297,10 +356,21 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
                     )
                     self._reset_energy_counter()
                     return 0.0
+                elif hours > 1:
+                    # For gaps between 1-24 hours, log a warning but continue
+                    _LOGGER.warning(
+                        "Time gap detected (%s hours) - energy calculation may be less accurate",
+                        round(hours, 2)
+                    )
 
                 # Calculate average power over the period
                 avg_power = (current_power + self._last_power) / 2
                 energy_increment = (avg_power * hours) / 1000  # Convert to kWh
+
+                # Validate the calculated increment
+                if not self._validate_energy_increment(energy_increment, hours, avg_power):
+                    _LOGGER.warning("Skipping invalid energy increment")
+                    return self._accumulated_energy
 
                 _LOGGER.debug(
                     "Energy calculation - Avg Power: %.2fW, Time: %.4fh, "
@@ -317,10 +387,11 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
             self._last_power = current_power
             self._last_calculation_time = current_time
             self._last_update = current_time
+            self._error_count = 0
 
             return round(self._accumulated_energy, 3)
 
-        except (TypeError, ValueError, KeyError) as err:
+        except Exception as err:
             self._error_count += 1
             if self._error_count <= 3:
                 _LOGGER.error("Error calculating UPS energy: %s", err)
@@ -347,8 +418,18 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
                 self.coordinator.data.get("system_stats", {})
                 .get("ups_info", {})
             )
+            
+            # Format timestamps safely
+            last_reset_str = (self._last_reset.isoformat() 
+                            if self._last_reset is not None 
+                            else "Never")
+            last_calculation_str = (self._last_calculation_time.isoformat() 
+                                if self._last_calculation_time is not None 
+                                else None)
+
             attrs = {
-                "last_reset": self._last_reset.isoformat() if self._last_reset else "Never",
+                "last_reset": last_reset_str,
+                "last_calculation": last_calculation_str,
                 "nominal_power": f"{ups_info.get('NOMPOWER', '0')}W",
                 "line_voltage": f"{ups_info.get('LINEV', '0')}V",
                 "last_transfer_reason": ups_info.get('LASTXFER', 'Unknown'),
@@ -356,11 +437,12 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
                 "battery_charge": f"{ups_info.get('BCHARGE', '0')}%",
                 "time_on_battery": f"{ups_info.get('TONBATT', '0')}seconds",
                 "power_source": self._power_source,
-                "calculation_age": (
-                    f"{self._get_time_since_last_calculation():.1f}h"
-                    if self._last_calculation_time else "unknown"
-                )
             }
+            
+            if self._last_calculation_time:
+                time_since = self._get_time_since_last_calculation()
+                if time_since is not None:
+                    attrs["calculation_age"] = f"{time_since:.1f}h"
 
             # Add UPS model and power derivation info
             if model := ups_info.get("MODEL"):
@@ -373,6 +455,9 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin):
 
             if self._error_count > 0:
                 attrs["error_count"] = self._error_count
+                
+            if self._last_power is not None:
+                attrs["last_power"] = self._last_power
 
             return attrs
 
@@ -401,11 +486,11 @@ class UnraidUPSLoadPercentage(UnraidSensorBase, UPSMetricsMixin):
 
         description = UnraidSensorEntityDescription(
             key="ups_load_percentage",
-            name=f"{naming.get_entity_name('ups', 'ups')} Load Percentage",
+            name=f"{naming.get_entity_name('ups', 'ups')} Current Load",
             native_unit_of_measurement=PERCENTAGE,
             device_class=SensorDeviceClass.POWER_FACTOR,
             state_class=SensorStateClass.MEASUREMENT,
-            icon="mdi:flash",
+            icon="mdi:gauge",
             suggested_display_precision=1,
             value_fn=self._get_load_percentage,
         )

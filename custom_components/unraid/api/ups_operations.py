@@ -7,20 +7,12 @@ from typing import Dict, Any
 import asyncio
 import asyncssh # type: ignore
 
-_LOGGER = logging.getLogger(__name__)
+from ..const import (
+    UPS_METRICS,
+    UPS_DEFAULT_POWER_FACTOR,
+)
 
-# UPS metric validation ranges
-UPS_METRICS = {
-    "NOMPOWER": {"min": 0, "max": 10000, "unit": "W"},
-    "LOADPCT": {"min": 0, "max": 100, "unit": "%"},
-    "CUMONKWHOURS": {"min": 0, "max": 1000000, "unit": "kWh"},
-    "LOADAPNT": {"min": 0, "max": 10000, "unit": "VA"},
-    "LINEV": {"min": 0, "max": 500, "unit": "V"},
-    "POWERFACTOR": {"min": 0, "max": 1, "unit": None},
-    "BCHARGE": {"min": 0, "max": 100, "unit": "%"},
-    "TIMELEFT": {"min": 0, "max": 1440, "unit": "min"},
-    "BATTV": {"min": 0, "max": 60, "unit": "V"},
-}
+_LOGGER = logging.getLogger(__name__)
 
 class UPSOperationsMixin:
     """Mixin for UPS-related operations."""
@@ -34,8 +26,11 @@ class UPSOperationsMixin:
                 result = await self.execute_command("apcaccess status")
                 return result.exit_status == 0
             return False
-        except (asyncssh.Error, OSError):
-            _LOGGER.debug("UPS detection result: %s", "detected" if result.exit_status == 0 else "not detected")
+        except (asyncssh.Error, OSError) as err:
+            _LOGGER.debug(
+                "Error during UPS detection: %s",
+                err
+            )
             return False
 
     async def get_ups_info(self) -> Dict[str, Any]:
@@ -57,12 +52,20 @@ class UPSOperationsMixin:
                         if ':' in line:
                             key, value = line.split(':', 1)
                             ups_data[key.strip()] = value.strip()
+                    
+                    # Add power factor info if not present
+                    if "POWERFACTOR" not in ups_data:
+                        ups_data["POWERFACTOR"] = str(UPS_DEFAULT_POWER_FACTOR)
+                    
                     return ups_data
 
             # If not installed or not running, return empty dict without error
             return {}
         except (asyncssh.Error, OSError) as error:
-            _LOGGER.debug("Error getting UPS info (apcupsd might not be installed): %s", str(error))
+            _LOGGER.debug(
+                "Error getting UPS info (apcupsd might not be installed): %s",
+                str(error)
+            )
             return {}
 
     def _validate_ups_metric(self, metric: str, value: str) -> Any:
@@ -79,10 +82,14 @@ class UPSOperationsMixin:
             return None
 
         try:
-            # Clean up value string
-            numeric_value = float(''.join(
-                c for c in value if c.isdigit() or c in '.-'
-            ))
+            # Clean up value string and handle special cases
+            if isinstance(value, str):
+                # Remove any non-numeric characters except decimals and negatives
+                numeric_value = float(''.join(
+                    c for c in value if c.isdigit() or c in '.-'
+                ))
+            else:
+                numeric_value = float(value)
 
             # Check range
             metric_info = UPS_METRICS[metric]
@@ -161,7 +168,7 @@ class UPSOperationsMixin:
             result = await self.execute_command(
                 "apcaccess -u | grep '^MODEL'"
             )
-            if result.exit_status == 0:
+            if result.exit_status == 0 and ':' in result.stdout:
                 return result.stdout.split(':', 1)[1].strip()
             return "Unknown"
         except (asyncssh.Error, asyncio.TimeoutError, OSError) as err:
@@ -176,14 +183,21 @@ class UPSOperationsMixin:
         """
         try:
             info = await self.get_ups_info()
+            
+            # Process each metric through validation
+            validated_metrics = {
+                metric: self._validate_ups_metric(metric, info.get(metric, "0"))
+                for metric in ["BCHARGE", "TIMELEFT", "LOADPCT", "NOMPOWER", "LINEV", "BATTV"]
+            }
+            
             return {
                 "status": info.get("STATUS", "Unknown"),
-                "battery_charge": info.get("BCHARGE", 0),
-                "runtime_left": info.get("TIMELEFT", 0),
-                "load_percent": info.get("LOADPCT", 0),
-                "nominal_power": info.get("NOMPOWER", 0),
-                "line_voltage": info.get("LINEV", 0),
-                "battery_voltage": info.get("BATTV", 0)
+                "battery_charge": validated_metrics["BCHARGE"],
+                "runtime_left": validated_metrics["TIMELEFT"],
+                "load_percent": validated_metrics["LOADPCT"],
+                "nominal_power": validated_metrics["NOMPOWER"],
+                "line_voltage": validated_metrics["LINEV"],
+                "battery_voltage": validated_metrics["BATTV"]
             }
         except (asyncssh.Error, asyncio.TimeoutError, OSError) as err:
             _LOGGER.error("Error getting UPS status summary: %s", err)

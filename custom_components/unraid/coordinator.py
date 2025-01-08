@@ -631,12 +631,18 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
             latest_check = None
             for line in result.stdout.splitlines():
-                # Format: YYYY MMM DD HH:MM:SS|Duration|Speed|Status|Errors|Type|Size
+                # Skip empty lines
+                if not line.strip():
+                    continue
+
+                # Format can vary:
+                # Old: YYYY MMM DD HH:MM:SS|Duration|Speed|Status|Errors
+                # New: YYYY MMM DD HH:MM:SS|Duration|Speed|Status|Errors|Type|Size|Duration|Step|Description
                 _LOGGER.debug("Processing parity history line: %s", line)
 
                 fields = line.strip().split("|")
-                # Minimum required fields: date, duration, speed, status, errors
-                if len(fields) < 5:
+                # Minimum required fields: date, duration, speed, status
+                if len(fields) < 4:
                     _LOGGER.warning("Invalid parity history line (insufficient fields): %s", line)
                     continue
 
@@ -647,11 +653,15 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     check_date = datetime.strptime(date_str, "%Y %b %d %H:%M:%S")
 
                     # Format duration from seconds to readable format
-                    duration_secs = int(fields[1])
-                    hours = duration_secs // 3600
-                    minutes = (duration_secs % 3600) // 60
-                    seconds = duration_secs % 60
-                    duration_str = f"{hours} hours, {minutes} minutes, {seconds} seconds"
+                    try:
+                        duration_secs = int(fields[1])
+                        hours = duration_secs // 3600
+                        minutes = (duration_secs % 3600) // 60
+                        seconds = duration_secs % 60
+                        duration_str = f"{hours} hours, {minutes} minutes, {seconds} seconds"
+                    except ValueError:
+                        duration_str = "Unknown"
+                        _LOGGER.warning("Could not parse duration value: %s", fields[1])
 
                     # Parse speed using helper function
                     try:
@@ -661,17 +671,33 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                         _LOGGER.warning("Could not parse speed value: %s - %s", fields[2], err)
                         speed_mb = 0
 
+                    # Get error count (defaults to 0 if not present)
+                    try:
+                        errors = int(fields[4]) if len(fields) > 4 else 0
+                    except ValueError:
+                        errors = 0
+
+                    # Build check info with additional fields if available
                     check_info = {
                         "date": check_date.strftime("%Y-%m-%d %H:%M:%S"),
                         "duration": duration_str,
                         "speed": f"{speed_mb} MB/s",
                         "status": "Success" if fields[3] == "0" else f"Failed ({fields[3]} errors)",
-                        "errors": int(fields[4]),
+                        "errors": errors,
                         "type": fields[5] if len(fields) > 5 else "Unknown",
                         "size": fields[6] if len(fields) > 6 else "Unknown"
                     }
 
+                    # Add description if available (new format)
+                    if len(fields) > 9:
+                        check_info["description"] = fields[9]
+
                     _LOGGER.debug("Processed check info: %s", check_info)
+
+                    # Skip invalid dates (like 1969) and update latest check
+                    if check_date.year < 2000:
+                        _LOGGER.warning("Skipping invalid date: %s", date_str)
+                        continue
 
                     if not latest_check or check_date > datetime.strptime(latest_check["date"], "%Y-%m-%d %H:%M:%S"):
                         latest_check = check_info

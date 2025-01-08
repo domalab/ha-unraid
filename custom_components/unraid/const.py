@@ -1,8 +1,13 @@
 """Constants for the Unraid integration."""
 from enum import Enum, IntEnum
-from typing import Final
+from typing import Final, Dict
 from homeassistant.const import ( # type: ignore
     Platform,
+    PERCENTAGE,
+    UnitOfPower,
+    UnitOfElectricPotential,
+    UnitOfTime,
+    UnitOfEnergy,
 )
 
 # Unraid Server
@@ -55,18 +60,40 @@ UNIT_PERCENTAGE = "%"
 TEMP_WARN_THRESHOLD: Final = 80  # Temperature above which warning state is triggered
 TEMP_CRIT_THRESHOLD: Final = 90  # Temperature above which critical state is triggered
 
-# UPS Configuration
-UPS_METRICS = {
-    "NOMPOWER": {"min": 0, "max": 10000, "unit": "W"},
-    "LOADPCT": {"min": 0, "max": 100, "unit": "%"},
-    "CUMONKWHOURS": {"min": 0, "max": 1000000, "unit": "kWh"},
-    "LOADAPNT": {"min": 0, "max": 10000, "unit": "VA"},
-    "LINEV": {"min": 0, "max": 500, "unit": "V"},
-    "POWERFACTOR": {"min": 0, "max": 1, "unit": None},
-    "BCHARGE": {"min": 0, "max": 100, "unit": "%"},
-    "TIMELEFT": {"min": 0, "max": 1440, "unit": "min"},
-    "BATTV": {"min": 0, "max": 60, "unit": "V"},
+# UPS metric validation ranges
+UPS_METRICS: Final[Dict[str, dict]] = {
+    "NOMPOWER": {"min": 0, "max": 10000, "unit": UnitOfPower.WATT},
+    "LOADPCT": {"min": 0, "max": 100, "unit": PERCENTAGE},
+    "BCHARGE": {"min": 0, "max": 100, "unit": PERCENTAGE},
+    "LINEV": {"min": 0, "max": 500, "unit": UnitOfElectricPotential.VOLT},
+    "BATTV": {"min": 0, "max": 60, "unit": UnitOfElectricPotential.VOLT},
+    "TIMELEFT": {"min": 0, "max": 1440, "unit": UnitOfTime.MINUTES},
+    "ITEMP": {"min": 0, "max": 60, "unit": "°C"},
+    "CUMONKWHOURS": {"min": 0, "max": 1000000, "unit": UnitOfEnergy.KILO_WATT_HOUR},
 }
+
+# UPS model patterns for power calculation
+UPS_MODEL_PATTERNS: Final[Dict[str, float]] = {
+    r'smart-ups.*?(\d{3,4})': 1.0,       # Smart-UPS models use direct VA rating
+    r'back-ups.*?(\d{3,4})': 0.9,        # Back-UPS models typically 90% of VA
+    r'back-ups pro.*?(\d{3,4})': 0.95,   # Back-UPS Pro models ~95% of VA
+    r'smart-ups\s*x.*?(\d{3,4})': 1.0,   # Smart-UPS X series
+    r'smart-ups\s*xl.*?(\d{3,4})': 1.0,  # Smart-UPS XL series
+    r'smart-ups\s*rt.*?(\d{3,4})': 1.0,  # Smart-UPS RT series
+    r'symmetra.*?(\d{3,4})': 1.0,        # Symmetra models
+    r'sua\d{3,4}': 1.0,                  # Smart-UPS alternative model format
+    r'smx\d{3,4}': 1.0,                  # Smart-UPS SMX model format
+    r'smt\d{3,4}': 1.0,                  # Smart-UPS SMT model format
+}
+
+# UPS default values and thresholds
+UPS_DEFAULT_POWER_FACTOR: Final = 0.9
+UPS_TEMP_WARN_THRESHOLD: Final = 45  # °C
+UPS_TEMP_CRIT_THRESHOLD: Final = 60  # °C
+UPS_BATTERY_LOW_THRESHOLD: Final = 50  # %
+UPS_BATTERY_CRITICAL_THRESHOLD: Final = 20  # %
+UPS_LOAD_HIGH_THRESHOLD: Final = 80  # %
+UPS_LOAD_CRITICAL_THRESHOLD: Final = 95  # %
 
 # SpinDownDelay class
 class SpinDownDelay(IntEnum):

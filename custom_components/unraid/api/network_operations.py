@@ -258,17 +258,18 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
                 )
                 raise ValueError(f"Interface {normalized_interface} does not exist")
 
-            # Get traffic stats
-            stats_cmd = (
-                f"cat /sys/class/net/{normalized_interface}/statistics/rx_bytes "
-                f"/sys/class/net/{normalized_interface}/statistics/tx_bytes"
-            )
-            stats_result = await self.execute_command(stats_cmd)
+            # Get traffic stats separately
+            rx_cmd = f"cat /sys/class/net/{normalized_interface}/statistics/rx_bytes"
+            tx_cmd = f"cat /sys/class/net/{normalized_interface}/statistics/tx_bytes"
+            
+            rx_result = await self.execute_command(rx_cmd)
+            tx_result = await self.execute_command(tx_cmd)
 
-            if stats_result.exit_status != 0:
+            if rx_result.exit_status != 0 or tx_result.exit_status != 0:
                 raise ValueError(f"Failed to get stats for {normalized_interface}")
 
-            rx_bytes, tx_bytes = map(int, stats_result.stdout.splitlines())
+            rx_bytes = int(rx_result.stdout.strip())
+            tx_bytes = int(tx_result.stdout.strip())
 
             # Get interface info concurrently
             info = await self._get_interface_info(normalized_interface)

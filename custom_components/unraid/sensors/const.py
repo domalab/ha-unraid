@@ -1,4 +1,4 @@
-"""Constants for Unraid sensors."""
+"""Constants for Unraid sensors and devices."""
 from __future__ import annotations
 
 import re
@@ -14,36 +14,74 @@ from homeassistant.const import ( # type: ignore
     UnitOfTemperature,
     UnitOfPower,
     UnitOfFrequency,
+    UnitOfElectricPotential,
+    UnitOfTime,
+    UnitOfEnergy,
+    PERCENTAGE,
 )
 
+# Core constants
 DOMAIN: Final = "unraid"
 
 # Unit constants for clarity and consistency
 UNIT_WATTS: Final = UnitOfPower.WATT
 UNIT_HERTZ: Final = UnitOfFrequency.HERTZ
 UNIT_CELSIUS: Final = UnitOfTemperature.CELSIUS
+UNIT_VOLTS: Final = UnitOfElectricPotential.VOLT
 
-# Sensor update intervals
+# Polling intervals
 FAST_POLL_INTERVAL: Final = 30  # seconds
 STANDARD_POLL_INTERVAL: Final = 60  # seconds
 SLOW_POLL_INTERVAL: Final = 300  # seconds
 
+# =====================
 # Storage Constants
+# =====================
 DISK_NUMBER_PATTERN: Pattern = re.compile(r'disk(\d+)$')
 MOUNT_POINT_PATTERN: Pattern = re.compile(r'/mnt/disk(\d+)$')
 
+# =====================
 # Network Constants
+# =====================
 VALID_INTERFACE_PATTERN: Pattern = re.compile(r'^[a-zA-Z0-9]+$')
 EXCLUDED_INTERFACES: Set[str] = {'lo', 'tunl0', 'sit0'}
 
-# CPU Core temperature patterns
-CPU_CORE_PATTERN: Pattern = re.compile(r"^Core\s+(\d+)$")
-CPU_TCCD_PATTERN: Pattern = re.compile(r"^Tccd(\d+)$")
-CPU_PECI_PATTERN: Pattern = re.compile(r"^PECI Agent\s+(\d+)$")
+# =====================
+# Temperature Patterns and Thresholds
+# =====================
+
+# Temperature ranges and thresholds
+VALID_CPU_TEMP_RANGE: Final[Tuple[float, float]] = (-10.0, 105.0)
+VALID_MB_TEMP_RANGE: Final[Tuple[float, float]] = (-10.0, 100.0)
+TEMP_WARN_THRESHOLD: Final = 60  # °C
+TEMP_CRIT_THRESHOLD: Final = 80  # °C
+
+# Keyword sets for dynamic detection
+CPU_KEYWORDS: Final[Set[str]] = {
+    "cpu", "core", "package", "k10temp", "coretemp", 
+    "ccd", "tctl", "tdie", "ryzen", "intel", "amd"
+}
+
+MB_KEYWORDS: Final[Set[str]] = {
+    "mb", "board", "pch", "systin", "system", "chipset", 
+    "northbridge", "southbridge", "acpi", "motherboard"
+}
+
+# Minimum difference required between readings to consider a change
+TEMP_CHANGE_THRESHOLD: Final = 0.5  # °C
+
+# CPU and Motherboard Dynamic pattern matching
+CPU_CORE_PATTERN: Pattern = re.compile(r"^Core\s+(\d+)$", re.IGNORECASE)
+CPU_TCCD_PATTERN: Pattern = re.compile(r"^Tccd(\d+)$", re.IGNORECASE)
+CPU_PECI_PATTERN: Pattern = re.compile(r"^PECI Agent\s+(\d+)$", re.IGNORECASE)
+MB_SYSTEM_PATTERN: Pattern = re.compile(r"^System\s+(\d+)$", re.IGNORECASE)
+MB_EC_PATTERN: Pattern = re.compile(r"^EC_TEMP(\d+)$", re.IGNORECASE)
+MB_AUXTIN_PATTERN: Pattern = re.compile(r"^AUXTIN(\d+)$", re.IGNORECASE)
+MB_ACPI_PATTERN: Pattern = re.compile(r"^acpitz-acpi-(\d+)$", re.IGNORECASE)
 
 # CPU temperature detection patterns
 CPU_TEMP_PATTERNS: Final[List[Tuple[str, str]]] = [
-    # Intel CPU Package and Core temperatures (static entries for common cases)
+    # Intel CPU Package and Core temperatures
     ("Package id 0", "temp1_input"),      # Intel CPU Package - Primary
     ("CPU Package", "temp1_input"),       # Intel Package - Alternative
     ("CPU DTS", "temp1_input"),           # Intel Digital Temperature Sensor
@@ -67,18 +105,7 @@ CPU_TEMP_PATTERNS: Final[List[Tuple[str, str]]] = [
     ("CPU Die Average", "temp2_input"),   # Average of multiple dies
 ]
 
-# Note: The following patterns are now handled dynamically:
-# - Core 0-N: Handled by CPU_CORE_PATTERN
-# - Tccd1-N: Handled by CPU_TCCD_PATTERN
-# - PECI Agent 0-N: Handled by CPU_PECI_PATTERN
-
-# Motherboard temperature detection patterns
-MB_SYSTEM_PATTERN: Pattern = re.compile(r"^System\s+(\d+)$")
-MB_EC_PATTERN: Pattern = re.compile(r"^EC_TEMP(\d+)$")
-MB_AUXTIN_PATTERN: Pattern = re.compile(r"^AUXTIN(\d+)$")
-MB_ACPI_PATTERN: Pattern = re.compile(r"^acpitz-acpi-(\d+)$")
-
-# Motherboard temperature detection patterns
+# Motherboard temperature patterns
 MOTHERBOARD_TEMP_PATTERNS: Final[List[Tuple[str, str]]] = [
     # ACPI and main board temperatures
     ("acpitz-acpi-0", "temp1_input"),     # ACPI interface temperature
@@ -101,19 +128,17 @@ MOTHERBOARD_TEMP_PATTERNS: Final[List[Tuple[str, str]]] = [
     ("Nuvoton NCT6798D", "temp3_input"),  # Nuvoton sensor board temp
 ]
 
-# Note: The following patterns are now handled dynamically:
-# - System N: Handled by MB_SYSTEM_PATTERN
-# - EC_TEMPN: Handled by MB_EC_PATTERN
-# - AUXTIN[N]: Handled by MB_AUXTIN_PATTERN
-# - acpitz-acpi-N: Handled by MB_ACPI_PATTERN
+# Define known good sensor chips and their temperature input keys
+KNOWN_SENSOR_CHIPS: Final[Dict[str, List[str]]] = {
+    "coretemp-isa": ["Package id 0", "Core 0"],
+    "k10temp-pci": ["Tctl", "Tdie"],
+    "nct6791-isa": ["SYSTIN", "CPUTIN"],
+    "it8688-isa": ["CPU Temperature", "System 1"],
+}
 
-# Define valid temperature ranges
-VALID_CPU_TEMP_RANGE: Final[Tuple[float, float]] = (-10.0, 105.0)
-VALID_MB_TEMP_RANGE: Final[Tuple[float, float]] = (-10.0, 100.0)
-
-# Temperature thresholds
-TEMP_WARN_THRESHOLD: Final = 60  # °C
-TEMP_CRIT_THRESHOLD: Final = 80  # °C
+# =====================
+# Fan Control Constants
+# =====================
 
 @dataclass
 class ChipsetFanPattern:
@@ -161,7 +186,6 @@ CHIPSET_FAN_PATTERNS: Dict[str, ChipsetFanPattern] = {
     )
 }
 
-# Common fan number extraction patterns
 FAN_NUMBER_PATTERNS: List[str] = [
     r'fan(\d+)',
     r'#(\d+)',
@@ -170,13 +194,54 @@ FAN_NUMBER_PATTERNS: List[str] = [
     r'(\d+)$'
 ]
 
-# Default patterns for unknown chipsets
 DEFAULT_FAN_PATTERNS: List[str] = ["fan", "sys_fan", "chassis_fan"]
 DEFAULT_RPM_KEYS: List[str] = ["fan{}_input", "fan_input", "speed"]
 
-# RPM validation constants
 MIN_VALID_RPM: int = 0
 MAX_VALID_RPM: int = 10000
+
+# =====================
+# UPS Constants
+# =====================
+
+# UPS metric validation ranges
+UPS_METRICS: Final[Dict[str, dict]] = {
+    "NOMPOWER": {"min": 0, "max": 10000, "unit": UNIT_WATTS},
+    "LOADPCT": {"min": 0, "max": 100, "unit": PERCENTAGE},
+    "BCHARGE": {"min": 0, "max": 100, "unit": PERCENTAGE},
+    "LINEV": {"min": 0, "max": 500, "unit": UNIT_VOLTS},
+    "BATTV": {"min": 0, "max": 60, "unit": UNIT_VOLTS},
+    "TIMELEFT": {"min": 0, "max": 1440, "unit": UnitOfTime.MINUTES},
+    "ITEMP": {"min": 0, "max": 60, "unit": UNIT_CELSIUS},
+    "CUMONKWHOURS": {"min": 0, "max": 1000000, "unit": UnitOfEnergy.KILO_WATT_HOUR},
+}
+
+# UPS model patterns for power calculation
+UPS_MODEL_PATTERNS: Final[Dict[str, float]] = {
+    r'smart-ups.*?(\d{3,4})': 1.0,       # Smart-UPS models use direct VA rating
+    r'back-ups.*?(\d{3,4})': 0.9,        # Back-UPS models typically 90% of VA
+    r'back-ups pro.*?(\d{3,4})': 0.95,   # Back-UPS Pro models ~95% of VA
+    r'smart-ups\s*x.*?(\d{3,4})': 1.0,   # Smart-UPS X series
+    r'smart-ups\s*xl.*?(\d{3,4})': 1.0,  # Smart-UPS XL series
+    r'smart-ups\s*rt.*?(\d{3,4})': 1.0,  # Smart-UPS RT series
+    r'symmetra.*?(\d{3,4})': 1.0,        # Symmetra models
+    r'sua\d{3,4}': 1.0,                  # Smart-UPS alternative model format
+    r'smx\d{3,4}': 1.0,                  # Smart-UPS SMX model format
+    r'smt\d{3,4}': 1.0,                  # Smart-UPS SMT model format
+}
+
+# UPS thresholds and defaults
+UPS_DEFAULT_POWER_FACTOR: Final = 0.9
+UPS_TEMP_WARN_THRESHOLD: Final = 45  # °C
+UPS_TEMP_CRIT_THRESHOLD: Final = 60  # °C
+UPS_BATTERY_LOW_THRESHOLD: Final = 50  # %
+UPS_BATTERY_CRITICAL_THRESHOLD: Final = 20  # %
+UPS_LOAD_HIGH_THRESHOLD: Final = 80  # %
+UPS_LOAD_CRITICAL_THRESHOLD: Final = 95  # %
+
+# =====================
+# Entity Description
+# =====================
 
 @dataclass
 class UnraidSensorEntityDescription(SensorEntityDescription):

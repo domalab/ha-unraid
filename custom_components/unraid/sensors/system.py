@@ -1,9 +1,9 @@
 """System-related sensors for Unraid."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import logging
-from typing import Any, Optional
-from datetime import timedelta
+from typing import Any, Dict, Optional
 
 from homeassistant.components.sensor import ( # type: ignore
     SensorDeviceClass,
@@ -14,12 +14,10 @@ from homeassistant.util import dt as dt_util # type: ignore
 
 from .base import UnraidSensorBase
 from .const import (
-    CPU_TEMP_PATTERNS,
-    DOMAIN, 
-    MOTHERBOARD_TEMP_PATTERNS,
-    VALID_CPU_TEMP_RANGE,
-    VALID_MB_TEMP_RANGE, 
+    DOMAIN,
     UnraidSensorEntityDescription,
+    CPU_TEMP_PATTERNS,
+    MOTHERBOARD_TEMP_PATTERNS,
 )
 from ..helpers import (
     format_bytes,
@@ -30,6 +28,9 @@ from ..helpers import (
     get_peci_temp_input,
     get_system_temp_input,
     get_tccd_temp_input,
+    parse_temperature,
+    find_temperature_inputs,
+    is_valid_temp_range,
 )
 from ..naming import EntityNaming
 
@@ -137,7 +138,6 @@ class UnraidCPUTempSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
@@ -157,18 +157,25 @@ class UnraidCPUTempSensor(UnraidSensorBase):
                 value_fn=self._get_temperature
             ),
         )
+        self._last_valid_temp: Optional[float] = None
+        self._last_update: Optional[datetime] = None
+        self._detected_source: Optional[str] = None
 
     def _get_temperature(self, data: dict) -> Optional[float]:
-        """Get CPU temperature from data with dynamic core detection."""
+        """Get CPU temperature with comprehensive detection."""
         try:
             temp_data = data["system_stats"].get("temperature_data", {})
             sensors_data = temp_data.get("sensors", {})
+            
+            if not sensors_data:
+                return self._last_valid_temp
 
+            # Step 1: Try static patterns first
             for device_name, device_data in sensors_data.items():
                 if not isinstance(device_data, dict):
                     continue
 
-                # First check static patterns
+                # Check CPU_TEMP_PATTERNS
                 for sensor_name, temp_key in CPU_TEMP_PATTERNS:
                     if sensor_name in device_data:
                         sensor_data = device_data[sensor_name]
@@ -178,61 +185,66 @@ class UnraidCPUTempSensor(UnraidSensorBase):
                             reading = sensor_data
 
                         if reading is not None:
-                            if temp := self._parse_temperature(str(reading)):
-                                if VALID_CPU_TEMP_RANGE[0] <= temp <= VALID_CPU_TEMP_RANGE[1]:
-                                    return round(temp, 1)
+                            if temp := parse_temperature(str(reading)):
+                                if is_valid_temp_range(temp, is_cpu=True):
+                                    self._last_valid_temp = round(temp, 1)
+                                    self._last_update = dt_util.utcnow()
+                                    self._detected_source = f"{device_name}/{sensor_name}"
+                                    return self._last_valid_temp
 
-                # Then try dynamic patterns
+                # Try dynamic core patterns
                 for label, values in device_data.items():
-                    # Try CPU cores
-                    if temp_key := get_core_temp_input(label):
-                        if isinstance(values, dict):
-                            reading = values.get(temp_key)
-                            if reading is not None:
-                                if temp := self._parse_temperature(str(reading)):
-                                    if VALID_CPU_TEMP_RANGE[0] <= temp <= VALID_CPU_TEMP_RANGE[1]:
-                                        return round(temp, 1)
+                    for getter in [get_core_temp_input, get_tccd_temp_input, get_peci_temp_input]:
+                        if temp_key := getter(label):
+                            if isinstance(values, dict):
+                                reading = values.get(temp_key)
+                                if reading is not None:
+                                    if temp := parse_temperature(str(reading)):
+                                        if is_valid_temp_range(temp, is_cpu=True):
+                                            self._last_valid_temp = round(temp, 1)
+                                            self._last_update = dt_util.utcnow()
+                                            self._detected_source = f"{device_name}/{label}"
+                                            return self._last_valid_temp
 
-                    # Try AMD CCDs
-                    if temp_key := get_tccd_temp_input(label):
-                        if isinstance(values, dict):
-                            reading = values.get(temp_key)
-                            if reading is not None:
-                                if temp := self._parse_temperature(str(reading)):
-                                    if VALID_CPU_TEMP_RANGE[0] <= temp <= VALID_CPU_TEMP_RANGE[1]:
-                                        return round(temp, 1)
-
-                    # Try PECI agents
-                    if temp_key := get_peci_temp_input(label):
-                        if isinstance(values, dict):
-                            reading = values.get(temp_key)
-                            if reading is not None:
-                                if temp := self._parse_temperature(str(reading)):
-                                    if VALID_CPU_TEMP_RANGE[0] <= temp <= VALID_CPU_TEMP_RANGE[1]:
-                                        return round(temp, 1)
-
-            return None
+            # Step 2: Dynamic detection fallback
+            temps = find_temperature_inputs(sensors_data)
+            cpu_temps = temps.get('cpu', set())
             
-        except (KeyError, ValueError, TypeError) as err:
-            _LOGGER.debug("Error getting CPU temperature: %s", err)
-            return None
+            if cpu_temps:
+                # Filter valid temps and sort by value (highest usually most relevant for CPU)
+                valid_temps = sorted(
+                    [t for t in cpu_temps if t.is_valid],
+                    key=lambda x: x.value,
+                    reverse=True
+                )
+                
+                if valid_temps:
+                    temp = valid_temps[0].value
+                    self._last_valid_temp = round(temp, 1)
+                    self._last_update = dt_util.utcnow()
+                    self._detected_source = f"{valid_temps[0].chip}/{valid_temps[0].label}"
+                    return self._last_valid_temp
 
-    def _parse_temperature(self, value: str) -> Optional[float]:
-        """Parse temperature value from string."""
-        try:
-            # Remove common temperature markers and convert to float
-            cleaned = value.replace('°C', '').replace(' C', '').replace('+', '').strip()
-            temp = float(cleaned)
-            return temp
-        except (ValueError, TypeError):
-            return None
+            return self._last_valid_temp
+
+        except Exception as err:
+            _LOGGER.debug("Error getting CPU temperature: %s", err)
+            return self._last_valid_temp
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return additional state attributes."""
+        attrs = {  # Initialize a new dict instead of using super()
+            "last_update": self._last_update.isoformat() if self._last_update else None,
+            "sensor_source": self._detected_source,
+        }
+        return attrs
 
 class UnraidMotherboardTempSensor(UnraidSensorBase):
     """Representation of Unraid motherboard temperature sensor."""
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
@@ -251,90 +263,90 @@ class UnraidMotherboardTempSensor(UnraidSensorBase):
                 value_fn=self._get_temperature
             ),
         )
+        self._last_valid_temp: Optional[float] = None
+        self._last_update: Optional[datetime] = None
+        self._detected_source: Optional[str] = None
 
     def _get_temperature(self, data: dict) -> Optional[float]:
-        """Get motherboard temperature from data with dynamic pattern matching."""
+        """Get motherboard temperature with comprehensive detection."""
         try:
             temp_data = data["system_stats"].get("temperature_data", {})
             sensors_data = temp_data.get("sensors", {})
+            
+            if not sensors_data:
+                return self._last_valid_temp
 
-            # Check each temperature source in priority order
+            # Step 1: Try static patterns first
             for device_name, device_data in sensors_data.items():
                 if not isinstance(device_data, dict):
                     continue
 
-                # 1. First check static patterns from MOTHERBOARD_TEMP_PATTERNS
+                # Check static MOTHERBOARD_TEMP_PATTERNS
                 for sensor_name, temp_key in MOTHERBOARD_TEMP_PATTERNS:
                     if sensor_name not in device_data:
                         continue
 
                     sensor_data = device_data[sensor_name]
-                    # Handle both nested dict and direct value cases
                     if isinstance(sensor_data, dict):
                         reading = sensor_data.get(temp_key)
                     else:
                         reading = sensor_data
 
                     if reading is not None:
-                        if temp := self._parse_temperature(str(reading)):
-                            if VALID_MB_TEMP_RANGE[0] <= temp <= VALID_MB_TEMP_RANGE[1]:
-                                return round(temp, 1)
+                        if temp := parse_temperature(str(reading)):
+                            if is_valid_temp_range(temp, is_cpu=False):
+                                self._last_valid_temp = round(temp, 1)
+                                self._last_update = dt_util.utcnow()
+                                self._detected_source = f"{device_name}/{sensor_name}"
+                                return self._last_valid_temp
 
-                # 2. Try dynamic patterns for each sensor label
+                # Try dynamic patterns
                 for label, values in device_data.items():
-                    # Try ACPI temperatures
-                    if temp_key := get_acpi_temp_input(label):
-                        if isinstance(values, dict):
-                            reading = values.get(temp_key)
-                            if reading is not None:
-                                if temp := self._parse_temperature(str(reading)):
-                                    if VALID_MB_TEMP_RANGE[0] <= temp <= VALID_MB_TEMP_RANGE[1]:
-                                        return round(temp, 1)
+                    for getter in [get_acpi_temp_input, get_system_temp_input,
+                                get_ec_temp_input, get_auxtin_temp_input]:
+                        if temp_key := getter(label):
+                            if isinstance(values, dict):
+                                reading = values.get(temp_key)
+                                if reading is not None:
+                                    if temp := parse_temperature(str(reading)):
+                                        if is_valid_temp_range(temp, is_cpu=False):
+                                            self._last_valid_temp = round(temp, 1)
+                                            self._last_update = dt_util.utcnow()
+                                            self._detected_source = f"{device_name}/{label}"
+                                            return self._last_valid_temp
 
-                    # Try System N temperatures
-                    if temp_key := get_system_temp_input(label):
-                        if isinstance(values, dict):
-                            reading = values.get(temp_key)
-                            if reading is not None:
-                                if temp := self._parse_temperature(str(reading)):
-                                    if VALID_MB_TEMP_RANGE[0] <= temp <= VALID_MB_TEMP_RANGE[1]:
-                                        return round(temp, 1)
+            # Step 2: Dynamic detection fallback
+            temps = find_temperature_inputs(sensors_data)
+            mb_temps = temps.get('mb', set())
+            
+            if mb_temps:
+                # Filter valid temps and use median for stability
+                valid_temps = [t for t in mb_temps if t.is_valid]
+                
+                if valid_temps:
+                    # Take median value as it's more stable for motherboard temps
+                    sorted_temps = sorted(valid_temps, key=lambda x: x.value)
+                    median_idx = len(sorted_temps) // 2
+                    temp = sorted_temps[median_idx].value
+                    self._last_valid_temp = round(temp, 1)
+                    self._last_update = dt_util.utcnow()
+                    self._detected_source = f"{sorted_temps[median_idx].chip}/{sorted_temps[median_idx].label}"
+                    return self._last_valid_temp
 
-                    # Try EC_TEMP[N] sensors
-                    if temp_key := get_ec_temp_input(label):
-                        if isinstance(values, dict):
-                            reading = values.get(temp_key)
-                            if reading is not None:
-                                if temp := self._parse_temperature(str(reading)):
-                                    if VALID_MB_TEMP_RANGE[0] <= temp <= VALID_MB_TEMP_RANGE[1]:
-                                        return round(temp, 1)
+            return self._last_valid_temp
 
-                    # Try AUXTIN[N] sensors
-                    if temp_key := get_auxtin_temp_input(label):
-                        if isinstance(values, dict):
-                            reading = values.get(temp_key)
-                            if reading is not None:
-                                if temp := self._parse_temperature(str(reading)):
-                                    if VALID_MB_TEMP_RANGE[0] <= temp <= VALID_MB_TEMP_RANGE[1]:
-                                        return round(temp, 1)
-
-            # If no valid temperature found
-            _LOGGER.debug("No valid motherboard temperature found in sensors data")
-            return None
-
-        except (KeyError, TypeError, ValueError, AttributeError) as err:
+        except Exception as err:
             _LOGGER.debug("Error getting motherboard temperature: %s", err)
-            return None
+            return self._last_valid_temp
 
-    def _parse_temperature(self, value: str) -> Optional[float]:
-        """Parse temperature value from string."""
-        try:
-            # Remove common temperature markers and convert to float
-            cleaned = value.replace('°C', '').replace(' C', '').replace('+', '').strip()
-            temp = float(cleaned)
-            return temp
-        except (ValueError, TypeError):
-            return None
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return additional state attributes."""
+        attrs = {  # Directly create attributes dictionary
+            "last_update": self._last_update.isoformat() if self._last_update else None,
+            "sensor_source": self._detected_source,
+        }
+        return attrs
 
 class UnraidFanSensor(UnraidSensorBase):
     """Fan speed sensor for Unraid."""
