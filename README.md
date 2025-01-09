@@ -1,3 +1,7 @@
+[![HACS Integration][hacsbadge]][hacs]
+[![GitHub Last Commit](https://img.shields.io/github/last-commit/domalab/ha-unraid?style=for-the-badge)](https://github.com/domalab/ha-unraid/commits/main)
+[![License](https://img.shields.io/github/license/domalab/ha-unraid?style=for-the-badge)](./LICENSE)
+
 # Unraid Integration for Home Assistant
 
 This custom integration allows you to monitor and control your Unraid server from Home Assistant. Unraid is a popular NAS (Network Attached Storage) operating system that provides flexible storage, virtualization, and application support.
@@ -101,3 +105,6 @@ This integration is released under the Apache License.
 ## Disclaimer
 
 This integration is not officially associated with or endorsed by UNRAID. UNRAID trademarks belong to UNRAID, and this integration is independently developed.
+
+[hacs]: https://github.com/custom-components/hacs
+[hacsbadge]: https://img.shields.io/badge/HACS-Default-orange.svg?style=for-the-badge
