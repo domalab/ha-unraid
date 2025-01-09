@@ -1,8 +1,8 @@
+# Unraid Integration for Home Assistant
+
 [![HACS Integration][hacsbadge]][hacs]
 [![GitHub Last Commit](https://img.shields.io/github/last-commit/domalab/ha-unraid?style=for-the-badge)](https://github.com/domalab/ha-unraid/commits/main)
 [![License](https://img.shields.io/github/license/domalab/ha-unraid?style=for-the-badge)](./LICENSE)
-
-# Unraid Integration for Home Assistant
 
 This custom integration allows you to monitor and control your Unraid server from Home Assistant. Unraid is a popular NAS (Network Attached Storage) operating system that provides flexible storage, virtualization, and application support.
 
@@ -69,6 +69,7 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 - UPS Power: Displays information about the UPS power consumption
 
 ## Diagnostics
+
 - UPS Status: Displays information about the connected UPS (if available).
 - Disk Health: Displays disk health information
 - VM and Docker Service: Displays information about docker and vm services
