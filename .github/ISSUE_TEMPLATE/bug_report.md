@@ -7,29 +7,55 @@ assignees: ''
 
 ---
 
-**Describe the bug**
+# :exclamation: Before You Submit :exclamation:
+
+1. **Check Existing Issues**  
+   - Search [open issues](https://github.com/domalab/ha-unraid/issues?q=is%3Aopen+is%3Aissue) or [closed issues](https://github.com/domalab/ha-unraid/issues?q=is%3Aissue+is%3Aclosed) to see if your problem has already been reported or resolved.
+
+2. **Confirm Issue**  
+   - If you find a similar issue, please add a comment there instead of creating a new report.
+
+3. **Gather Required Information**  
+   - Collect logs, screenshots, and version information before filling out this form.
+
+---
+
+## Bug Report Template
+
+### Checklist (required)
+
+- [ ] I have **searched existing open and closed issues** to ensure this is not a duplicate.  
+- [ ] I have **reproduced the issue** on the latest version to confirm it still exists.
+
+---
+
+### Describe the Bug
+
 A clear and concise description of what the bug is.
 
-**Expected behavior**
+---
+
+### Expected Behavior
+
 A clear and concise description of what you expected to happen.
 
-**Screenshots**
+---
+
+### Steps To Reproduce (if applicable)
+
+1. Go to '...'
+2. Click on '...'
+3. Scroll down to '...'
+4. See error
+
+---
+
+### Screenshots
+
 If applicable, add screenshots to help explain your problem.
 
-**Debug Log**
-Provide the debug log of the integration (Enable Debug Logging and Reload Integration and attach logs)
+---
 
-**Unraid (please complete the following information):**
- - Version [e.g. 6.12]
+### Debug Log
 
-**Home Assistant (please complete the following information):**
- - Version [e.g. 2024.12]
-
-**Home Assistant installation type (please complete the following information):**
-- \[ ] Docker / Container  
-- \[ ] Virtual Machine
-- \[ ] Raspberry Pi
-- \[ ] Baremetal
-
-**Additional context**
-Add any other context about the problem here.
+Provide the debug log of the integration (Enable Debug Logging and Reload Integration).
