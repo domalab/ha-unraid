@@ -1,7 +1,7 @@
 ---
 name: Bug report
 about: Create a report to help improve Unraid integration
-title: ''
+title: "[BUG]"
 labels: bug
 assignees: ''
 
