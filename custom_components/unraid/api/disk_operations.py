@@ -421,10 +421,10 @@ class DiskOperationsMixin:
         """Get usage information for individual disks."""
         try:
             disks = []
-            # Get usage for mounted disks with improved filtering
-            # Note: Removed grep since we'll filter in code
+            # Get usage for mounted disks with more specific path patterns
+            # Note: Using specific patterns to avoid capturing system paths
             usage_result = await self.execute_command(
-                "df -B1 /mnt/disk* /mnt/cache /mnt/* 2>/dev/null | "
+                "df -B1 /mnt/disk[0-9]* /mnt/cache* 2>/dev/null | "
                 "awk 'NR>1 {print $6,$2,$3,$4}'"
             )
 
@@ -459,7 +459,7 @@ class DiskOperationsMixin:
                         # Update disk status with SMART data if disk is active
                         if state == DiskState.ACTIVE:
                             disk_info = await self.update_disk_status(disk_info)
-                        
+                            
                         disks.append(disk_info)
 
                     except (ValueError, IndexError) as err:
