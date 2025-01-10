@@ -25,6 +25,9 @@ from .const import (
     DEFAULT_DISK_INTERVAL,
     DEFAULT_PORT,
     CONF_HAS_UPS,
+    CONF_AUTH_METHOD,
+    CONF_SSH_KEY_PATH,
+    AUTH_METHOD_PASSWORD,
 )
 
 # Suppress deprecation warnings for paramiko
@@ -83,12 +86,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.config_entries.async_update_entry(entry, options=options)
 
         # Create API instance using imported module
-        api = modules["unraid"].UnraidAPI(
-            host=entry.data[CONF_HOST],
-            username=entry.data[CONF_USERNAME],
-            password=entry.data[CONF_PASSWORD],
-            port=entry.options.get(CONF_PORT, DEFAULT_PORT),
-        )
+        auth_method = entry.data.get(CONF_AUTH_METHOD, AUTH_METHOD_PASSWORD)
+        api_kwargs = {
+            "host": entry.data[CONF_HOST],
+            "username": entry.data[CONF_USERNAME],
+            "port": entry.options.get(CONF_PORT, DEFAULT_PORT),
+            "auth_method": auth_method,
+        }
+
+        # Add authentication credentials based on method
+        if auth_method == AUTH_METHOD_PASSWORD:
+            if CONF_PASSWORD not in entry.data:
+                raise ValueError("Password required but not provided")
+            api_kwargs["password"] = entry.data[CONF_PASSWORD]
+        else:
+            if CONF_SSH_KEY_PATH not in entry.data:
+                raise ValueError("SSH key path required but not provided")
+            api_kwargs["ssh_key_path"] = entry.data[CONF_SSH_KEY_PATH]
+
+        # Create API instance
+        api = modules["unraid"].UnraidAPI(**api_kwargs)
+
+        # Test connection
+        _LOGGER.debug("Testing connection to Unraid server")
+        async with api:
+            if not await api.ping():
+                raise ConfigEntryNotReady("Failed to connect to Unraid server")
 
         # Initialize disk operations
         await api.disk_operations.initialize()
@@ -136,6 +159,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         return True
 
+    except ValueError as err:
+        _LOGGER.error("Configuration error: %s", err)
+        raise ConfigEntryNotReady from err
     except Exception as err:
         _LOGGER.error("Failed to set up Unraid integration: %s", err)
         raise ConfigEntryNotReady from err

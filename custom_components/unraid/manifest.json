@@ -9,7 +9,8 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/domalab/ha-unraid/issues",
   "requirements": [
-  "aiofiles>=23.2.1"
+  "asyncssh>=2.19.0",
+  "aiofiles>=24.1.0"
   ],
   "ssdp": [],
   "version": "2025.01.08",

@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import os
+import aiofiles # type: ignore
 from typing import Optional
 
 import asyncssh # type: ignore
+from .const import AUTH_METHOD_PASSWORD # type: ignore
 
 from .api.network_operations import NetworkOperationsMixin
 from .api.disk_operations import DiskOperationsMixin
@@ -28,7 +31,16 @@ class UnraidAPI(
 ):
     """API client for interacting with Unraid servers."""
 
-    def __init__(self, host: str, username: str, password: str, port: int = 22) -> None:
+    def __init__(
+        self,
+        host: str,
+        username: str,
+        port: int = 22,
+        password: str | None = None,
+        ssh_key_path: str | None = None,
+        auth_method: str = AUTH_METHOD_PASSWORD
+    ) -> None:
+        
         """Initialize the Unraid API client."""
         
         # Initialize Network Operations
@@ -50,6 +62,8 @@ class UnraidAPI(
         self.username = username
         self.password = password
         self.port = port
+        self.ssh_key_path = ssh_key_path
+        self.auth_method = auth_method
         self.conn: Optional[asyncssh.SSHClientConnection] = None
         self.lock = asyncio.Lock()
         self.connect_timeout = 30
@@ -60,13 +74,42 @@ class UnraidAPI(
         if self.conn is None:
             async with self.lock:
                 if self.conn is None:
-                    self.conn = await asyncssh.connect(
-                        self.host,
-                        username=self.username,
-                        password=self.password,
-                        port=self.port,
-                        known_hosts=None
-                    )
+                    try:
+                        # Prepare connection parameters
+                        conn_params = {
+                            "username": self.username,
+                            "port": self.port,
+                            "known_hosts": None,
+                        }
+
+                        if self.auth_method == AUTH_METHOD_PASSWORD:
+                            if not self.password:
+                                raise ValueError("Password required for password authentication")
+                            conn_params["password"] = self.password
+                        else:  # key authentication
+                            if not self.ssh_key_path:
+                                raise ValueError("SSH key path required for key authentication")
+                            
+                            # Verify the SSH key file exists and is readable
+                            if not os.path.isfile(self.ssh_key_path):
+                                raise FileNotFoundError(f"SSH key file not found: {self.ssh_key_path}")
+                            
+                            try:
+                                # Check if file is readable using aiofiles
+                                async with aiofiles.open(self.ssh_key_path, 'r', encoding='utf-8') as _:
+                                    pass
+                                conn_params["client_keys"] = [self.ssh_key_path]
+                            except (IOError, PermissionError) as err:
+                                raise ValueError(f"SSH key file not readable: {err}") from err
+
+                        self.conn = await asyncssh.connect(
+                            self.host,
+                            **conn_params
+                        )
+                    except (asyncssh.Error, OSError) as err:
+                        self.conn = None
+                        _LOGGER.error("Connection failed: %s", err)
+                        raise
 
     async def execute_command(
         self,
