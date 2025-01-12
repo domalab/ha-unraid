@@ -19,6 +19,12 @@ CONF_HOSTNAME = "hostname"
 MAX_HOSTNAME_LENGTH = 32
 DEFAULT_NAME = "unraid"  # Fallback name if no hostname
 
+# Configuration
+CONF_AUTH_METHOD = "auth_method"
+CONF_SSH_KEY_PATH = "ssh_key_path"
+AUTH_METHOD_PASSWORD = "password"
+AUTH_METHOD_KEY = "key"
+
 # Update intervals
 MIN_UPDATE_INTERVAL = 1          # minutes
 MAX_GENERAL_INTERVAL = 60        # minutes
