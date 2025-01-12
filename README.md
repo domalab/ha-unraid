@@ -53,8 +53,8 @@ During the setup, you'll need to provide:
 - Username: Your Unraid username (usually 'root')
 - Password: Your Unraid password
 - Port: SSH port (usually 22)
-- Ping Interval: How often to check if the server is online (in seconds). Default is 60 seconds.
-- Update Interval: How often to update sensor data (in seconds). Default is 300 seconds.
+- General Update Interval (Minutes): How often to update non-disk sensors (1-60 minutes). Default is 5 minutes.
+- Disk Update Interval (Hours): How often to update disk information (1-24 hours). Default is 1 hour
 
 Note: Setting lower intervals will provide more up-to-date information but may increase system load.
 
