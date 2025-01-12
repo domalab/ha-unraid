@@ -54,6 +54,7 @@ class UnraidAPI(
         self.lock = asyncio.Lock()
         self.connect_timeout = 30
         self.command_timeout = 60
+        self._in_context = False
 
     async def ensure_connection(self) -> None:
         """Ensure that a connection to the Unraid server is established."""
@@ -74,8 +75,16 @@ class UnraidAPI(
         timeout: Optional[int] = None
     ) -> asyncssh.SSHCompletedProcess:
         """Execute a command on the Unraid server."""
-        await self.ensure_connection()
+        cleanup_needed = False
         try:
+            if not self._in_context:
+                # For service calls, manage connection lifecycle
+                await self.ensure_connection()
+                cleanup_needed = True
+            elif self.conn is None:
+                # Safety check in case connection was lost
+                await self.ensure_connection()
+
             if timeout is None:
                 timeout = self.command_timeout
 
@@ -87,6 +96,10 @@ class UnraidAPI(
             _LOGGER.error("Command failed: %s", err)
             self.conn = None  # Reset connection on error
             raise
+
+        finally:
+            if cleanup_needed:
+                await self.disconnect()
 
     async def disconnect(self) -> None:
         """Disconnect from the Unraid server."""
@@ -115,9 +128,11 @@ class UnraidAPI(
 
     async def __aenter__(self) -> 'UnraidAPI':
         """Enter async context."""
+        self._in_context = True
         await self.ensure_connection()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context."""
+        self._in_context = False
         await self.disconnect()
