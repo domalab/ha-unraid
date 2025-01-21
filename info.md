@@ -2,15 +2,6 @@
 
 This custom integration allows you to monitor and control your Unraid server from Home Assistant. Unraid is a popular NAS (Network Attached Storage) operating system that provides flexible storage, virtualization, and application support.
 
-## Development Status
-
-This integration is in active development. Here are a few things to keep in mind:
-
-- Features may be added, changed, or removed without notice.
-- There might be bugs or unexpected behavior.
-- Regular updates may be necessary as the integration evolves.
-- Feedback and contributions are welcome to help improve the integration.
-
 ## Features
 
 - Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
@@ -65,6 +56,7 @@ Note: Setting lower intervals will provide more up-to-date information but may i
 - UPS Power: Displays information about the UPS power consumption
 
 ## Diagnostics
+
 - UPS Status: Displays information about the connected UPS (if available).
 - Disk Health: Displays disk health information
 - VM and Docker Service: Displays information about docker and vm services
