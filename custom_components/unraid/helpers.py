@@ -543,20 +543,15 @@ def is_solid_state_drive(disk_data: dict) -> bool:
         )
         return False
 
-@dataclass
+@dataclass(frozen=True)
 class TempReading:
     """Temperature reading with metadata."""
     value: float
     source: str
     chip: str
     label: str
-    last_update: datetime = None
+    last_update: datetime = field(default_factory=datetime.datetime.now)  # set default before its frozen
     is_valid: bool = True
-
-    def __post_init__(self):
-        """Initialize timestamp if not provided."""
-        if self.last_update is None:
-            self.last_update = datetime.now()
 
 def is_valid_temp_range(temp: float, is_cpu: bool = True) -> bool:
     """Check if temperature is within valid range."""
