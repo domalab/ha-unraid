@@ -7,10 +7,13 @@ from dataclasses import dataclass
 
 import voluptuous as vol # type: ignore
 from homeassistant import config_entries # type: ignore
+from homeassistant.config_entries import ConfigEntry # type: ignore
 from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PORT # type: ignore
 from homeassistant.data_entry_flow import FlowResult # type: ignore
 from homeassistant.exceptions import HomeAssistantError # type: ignore
-from homeassistant.core import callback # type: ignore
+from homeassistant.core import HomeAssistant, callback # type: ignore
+
+from .migrations import async_migrate_with_rollback
 
 from .const import (
     DOMAIN,
@@ -24,6 +27,7 @@ from .const import (
     MIN_DISK_INTERVAL,
     MAX_DISK_INTERVAL,
     CONF_HAS_UPS,
+    MIGRATION_VERSION,
 )
 from .unraid import UnraidAPI
 
@@ -148,7 +152,7 @@ async def validate_input(data: dict[str, Any]) -> dict[str, Any]:
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Unraid."""
 
-    VERSION = 1
+    VERSION = MIGRATION_VERSION
 
     def __init__(self) -> None:
         """Initialize the config flow."""
@@ -247,6 +251,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_import(self, import_data: dict[str, Any]) -> FlowResult:
         """Handle import from configuration.yaml."""
         return await self.async_step_user(import_data)
+    
+    async def async_migrate_entry(self, hass: HomeAssistant, entry: ConfigEntry) -> bool:
+        """Handle migration of config entries."""
+        _LOGGER.debug("Migrating from version %s", entry.version)
+
+        if entry.version == 1:
+            try:
+                if await async_migrate_with_rollback(hass, entry):
+                    # Update entry version after successful migration
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        version=MIGRATION_VERSION
+                    )
+                    return True
+            except Exception as err:
+                _LOGGER.error("Migration failed: %s", err)
+                return False
+
+        return True
 
     @staticmethod
     def async_get_options_flow(

@@ -14,6 +14,9 @@ from homeassistant.const import ( # type: ignore
 DOMAIN = "unraid"
 DEFAULT_PORT = 22
 
+# Migration version
+MIGRATION_VERSION = 2
+
 # Unraid Server Hostname
 CONF_HOSTNAME = "hostname"
 MAX_HOSTNAME_LENGTH = 32
