@@ -16,6 +16,7 @@ from homeassistant.exceptions import ConfigEntryNotReady  # type: ignore
 from cryptography.utils import CryptographyDeprecationWarning  # type: ignore
 from homeassistant.helpers.importlib import async_import_module  # type: ignore
 
+from .migrations import async_migrate_with_rollback
 from .const import (
     CONF_HOSTNAME,
     DOMAIN,
@@ -25,6 +26,7 @@ from .const import (
     DEFAULT_DISK_INTERVAL,
     DEFAULT_PORT,
     CONF_HAS_UPS,
+    MIGRATION_VERSION
 )
 
 # Suppress deprecation warnings for paramiko
@@ -46,6 +48,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Setting up Unraid integration")
 
     try:
+        # Migrate data if necessary
+        if entry.version < MIGRATION_VERSION:
+            if not await async_migrate_with_rollback(hass, entry):
+                raise ConfigEntryNotReady("Migration failed")
+            
         # Import required modules asynchronously
         modules = {}
         for module_name in ["unraid", "coordinator", "services", "migrations"]:
@@ -104,9 +111,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     _LOGGER.info("Updated configuration with hostname: %s", hostname)
             except Exception as hostname_err:
                 _LOGGER.warning("Could not get hostname: %s", hostname_err)
-
-        # Run entity migrations before setting up new entities
-        await modules["migrations"].async_migrate_entities(hass, entry)
 
         # Create coordinator using imported module
         coordinator = modules["coordinator"].UnraidDataUpdateCoordinator(hass, api, entry)
