@@ -539,31 +539,113 @@ class DiskOperationsMixin:
             }
 
     async def _get_cache_pool_info(self) -> Optional[Dict[str, Any]]:
-        """Get detailed cache pool information."""
+        """Get detailed cache pool information with support for ZFS, Btrfs and other filesystems."""
         try:
-            result = await self.execute_command("btrfs filesystem show /mnt/cache")
-            if result.exit_status != 0:
-                return None
-
-            pool_info = {
-                "filesystem": "btrfs",
-                "devices": [],
-                "total_devices": 0,
-                "raid_type": "single"
-            }
-
-            for line in result.stdout.splitlines():
-                if "devices:" in line.lower():
-                    pool_info["total_devices"] = int(line.split()[0])
-                elif "raid" in line.lower():
-                    pool_info["raid_type"] = line.split()[0].lower()
-                elif "/dev/" in line:
-                    device = line.split()[-1]
-                    if device.startswith("/dev/"):
+            # Check if the cache pool is ZFS-based
+            zfs_check = await self.execute_command("zpool list cache -H 2>/dev/null")
+            if zfs_check.exit_status == 0:
+                _LOGGER.debug("ZFS cache pool detected")
+                # Get ZFS pool information
+                zfs_info = await self.execute_command(
+                    "zfs list -H -o name,used,available,refer,mountpoint cache 2>/dev/null"
+                )
+                if zfs_info.exit_status != 0:
+                    _LOGGER.error("Failed to get ZFS cache pool info")
+                    return None
+                    
+                # Get ZFS pool details
+                zpool_info = await self.execute_command("zpool list -v cache 2>/dev/null")
+                
+                pool_info = {
+                    "filesystem": "zfs",
+                    "devices": [],
+                    "total_devices": 0,
+                    "raid_type": "unknown"
+                }
+                
+                # Parse zfs list output
+                if zfs_info.stdout:
+                    parts = zfs_info.stdout.strip().split('\t')
+                    if len(parts) >= 5:
+                        pool_info["name"] = parts[0]
+                        pool_info["used"] = parts[1]
+                        pool_info["available"] = parts[2]
+                        pool_info["mountpoint"] = parts[4]
+                
+                # Parse zpool list output
+                if zpool_info.stdout:
+                    lines = zpool_info.stdout.splitlines()
+                    for i, line in enumerate(lines):
+                        if i == 0 and "RAID-Z" in line.upper():
+                            pool_info["raid_type"] = "raidz"
+                        elif i == 0 and "MIRROR" in line.upper():
+                            pool_info["raid_type"] = "mirror"
+                        elif "/dev/" in line:
+                            device = line.strip().split()[0]
+                            if device.startswith("/dev/"):
+                                pool_info["devices"].append(device)
+                                
+                # Count devices
+                pool_info["total_devices"] = len(pool_info["devices"])
+                
+                # If we didn't find devices through zpool list, try blkid
+                if not pool_info["devices"]:
+                    blkid_result = await self.execute_command(
+                        "blkid | grep zfs_member | grep -v part | cut -d: -f1"
+                    )
+                    if blkid_result.exit_status == 0:
+                        for line in blkid_result.stdout.splitlines():
+                            device = line.strip()
+                            if device:
+                                pool_info["devices"].append(device)
+                                pool_info["total_devices"] += 1
+                                
+                return pool_info
+            
+            # If not ZFS, try Btrfs
+            btrfs_result = await self.execute_command("btrfs filesystem show /mnt/cache")
+            if btrfs_result.exit_status == 0:
+                _LOGGER.debug("Btrfs cache pool detected")
+                pool_info = {
+                    "filesystem": "btrfs",
+                    "devices": [],
+                    "total_devices": 0,
+                    "raid_type": "single"
+                }
+                for line in btrfs_result.stdout.splitlines():
+                    if "devices:" in line.lower():
+                        pool_info["total_devices"] = int(line.split()[0])
+                    elif "raid" in line.lower():
+                        pool_info["raid_type"] = line.split()[0].lower()
+                    elif "/dev/" in line:
+                        device = line.split()[-1]
+                        if device.startswith("/dev/"):
+                            pool_info["devices"].append(device)
+                return pool_info
+                
+            # If not ZFS or Btrfs, try to determine filesystem type
+            fs_type_result = await self.execute_command("df -T /mnt/cache | awk 'NR==2 {print $2}'")
+            if fs_type_result.exit_status == 0:
+                fs_type = fs_type_result.stdout.strip()
+                _LOGGER.debug("Cache pool filesystem detected as: %s", fs_type)
+                pool_info = {
+                    "filesystem": fs_type.lower(),
+                    "devices": [],
+                    "total_devices": 0,
+                    "raid_type": "unknown"
+                }
+                
+                # Try to get device information from mount
+                mount_info = await self.execute_command("mount | grep '/mnt/cache'")
+                if mount_info.exit_status == 0 and " on " in mount_info.stdout:
+                    device = mount_info.stdout.split(" on ")[0].strip()
+                    if device:
                         pool_info["devices"].append(device)
-
-            return pool_info
-
+                        pool_info["total_devices"] = 1
+                return pool_info
+                        
+            _LOGGER.debug("Could not determine cache pool filesystem type")
+            return None
         except (OSError, ValueError) as err:
             _LOGGER.debug("Error getting cache pool info: %s", err)
             return None

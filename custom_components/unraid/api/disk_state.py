@@ -30,17 +30,46 @@ class DiskStateManager:
         self._device_paths_cache: Dict[str, str] = {}  # Cache for device paths
     
     async def _get_device_path(self, device: str) -> str | None:
-        """Get actual device path from mount point."""
+        """Get actual device path from mount point with ZFS support."""
         try:
             # Check cache first
             if device in self._device_paths_cache:
                 return self._device_paths_cache[device]
             
+            # First try using findmnt for traditional filesystems
             mount_cmd = f"findmnt -n -o SOURCE /mnt/{device}"
             result = await self._instance.execute_command(mount_cmd)
             if result.exit_status == 0 and (device_path := result.stdout.strip()):
                 self._device_paths_cache[device] = device_path
                 return device_path
+                
+            # For ZFS pools, we need a different approach
+            if device == "cache":
+                # Check if we have a ZFS cache pool
+                zfs_check = await self._instance.execute_command("zpool list cache -H 2>/dev/null")
+                if zfs_check.exit_status == 0:
+                    _LOGGER.debug("ZFS cache pool detected when getting device path")
+                    
+                    # Try to get the first device of the ZFS pool
+                    blkid_result = await self._instance.execute_command(
+                        "blkid | grep zfs_member | grep -v part | head -1 | cut -d: -f1"
+                    )
+                    if blkid_result.exit_status == 0 and blkid_result.stdout.strip():
+                        device_path = blkid_result.stdout.strip()
+                        self._device_paths_cache[device] = device_path
+                        _LOGGER.debug("Found ZFS device path for %s: %s", device, device_path)
+                        return device_path
+                        
+            # As a final fallback, try to get from mount command
+            mount_result = await self._instance.execute_command(f"mount | grep '/mnt/{device} '")
+            if mount_result.exit_status == 0 and " on " in mount_result.stdout:
+                device_path = mount_result.stdout.split(" on ")[0].strip()
+                if device_path:
+                    self._device_paths_cache[device] = device_path
+                    _LOGGER.debug("Found device path from mount for %s: %s", device, device_path)
+                    return device_path
+                    
+            _LOGGER.debug("Could not find device path for %s", device)
             return None
         except Exception as err:
             _LOGGER.error("Error getting device path for %s: %s", device, err)
@@ -86,6 +115,13 @@ class DiskStateManager:
                         _LOGGER.error("Could not find device path for %s", device)
                         return DiskState.UNKNOWN
 
+            # Check for ZFS device
+            if 'zfs' in device_path.lower() or any(x in str(device_path).lower() for x in ['zd', 'zpool']):
+                self._device_types[device_path] = 'zfs'
+                _LOGGER.debug("ZFS device detected: %s", device_path)
+                # For ZFS, set state as ACTIVE
+                return DiskState.ACTIVE
+            
             if device_path not in self._device_types:
                 if any(x in str(device_path).lower() for x in ['nvme', 'nvm']):
                     self._device_types[device_path] = 'nvme'
@@ -162,21 +198,22 @@ class DiskStateManager:
                         )
                         state = DiskState.ACTIVE
             else:
-                # NVMe drives are always active
+                # NVMe drives and ZFS pools are always active
                 state = DiskState.ACTIVE
-                _LOGGER.debug("NVMe device %s: always active", device_path)
+                _LOGGER.debug("%s device %s: always active", device_type.upper(), device_path)
 
             # Cache the state
             self._states[device_path] = state
             self._last_check[device_path] = datetime.now(timezone.utc)
             
-            # Log final decision with full context, handle NVMe case
-            if device_type == 'nvme':
+            # Log final decision with full context, handle special device types
+            if device_type in ['nvme', 'zfs']:
                 _LOGGER.debug(
-                    "Final state for %s (%s): %s (NVMe device - no SMART/hdparm check needed)",
+                    "Final state for %s (%s): %s (%s device - no SMART/hdparm check needed)",
                     device_path,
                     device_type,
-                    state.value
+                    state.value,
+                    device_type.upper()
                 )
             else:
                 _LOGGER.debug(
