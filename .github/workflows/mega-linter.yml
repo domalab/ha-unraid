@@ -44,6 +44,7 @@ jobs:
           ENABLE_LINTERS: "PYTHON_FLAKE8,PYTHON_PYLINT,PYTHON_BLACK,PYTHON_ISORT,JSON_JSONLINT" # Enable specific linters for Python and JSON
           DISABLE_LINTERS: "COPYPASTE,SPELL" # Disable unnecessary linters
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHON_PYLINT_RCFILE: .pylintrc
 
       # Upload MegaLinter artifacts
       - name: Archive production artifacts
