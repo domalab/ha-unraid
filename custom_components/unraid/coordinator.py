@@ -647,10 +647,38 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     continue
 
                 try:
-                    # Handle the space-separated date format
+                    # Handle different space-separated date formats
                     date_str = fields[0]
                     _LOGGER.debug("Parsing date: %s", date_str)
-                    check_date = datetime.strptime(date_str, "%Y %b %d %H:%M:%S")
+                    
+                    # Try different date formats
+                    date_formats = [
+                        "%Y %b %d %H:%M:%S",  # Full format with year
+                        "%b %d %H:%M:%S"     # Format without year
+                    ]
+                    
+                    check_date = None
+                    for date_format in date_formats:
+                        try:
+                            parsed_date = datetime.strptime(date_str, date_format)
+                            
+                            # If the format doesn't include year, assume current year
+                            if date_format == "%b %d %H:%M:%S":
+                                current_year = datetime.now().year
+                                parsed_date = parsed_date.replace(year=current_year)
+                                
+                                # Handle edge case: if date is in the future, use previous year
+                                if parsed_date > datetime.now():
+                                    parsed_date = parsed_date.replace(year=current_year-1)
+                            
+                            check_date = parsed_date
+                            break
+                        except ValueError:
+                            continue
+                            
+                    if check_date is None:
+                        # If all parsing attempts failed, raise an error to be caught by outer exception handler
+                        raise ValueError(f"Could not parse date: {date_str}")
 
                     # Format duration from seconds to readable format
                     try:

@@ -157,6 +157,33 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
         self._network_lock = asyncio.Lock()
         self._network_stats = {}
         self._last_network_update = None
+        self._max_retries = 2
+        self._retry_delay = 1.0  # seconds
+        
+    async def _execute_with_retry(self, command: str):
+        """Execute command with retry mechanism for resilience."""
+        retries = 0
+        while retries <= self._max_retries:
+            try:
+                result = await self.execute_command(command)
+                return result
+            except Exception as err:
+                retries += 1
+                if retries > self._max_retries:
+                    _LOGGER.error(
+                        "Command failed after %d retries: %s", 
+                        self._max_retries, 
+                        command
+                    )
+                    raise
+                
+                _LOGGER.debug(
+                    "Retrying command (attempt %d/%d): %s", 
+                    retries, 
+                    self._max_retries + 1, 
+                    command
+                )
+                await asyncio.sleep(self._retry_delay)
 
     async def get_network_stats(self) -> Dict[str, Any]:
         """Fetch network statistics asynchronously."""
@@ -258,18 +285,26 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
                 )
                 raise ValueError(f"Interface {normalized_interface} does not exist")
 
-            # Get traffic stats separately
-            rx_cmd = f"cat /sys/class/net/{normalized_interface}/statistics/rx_bytes"
-            tx_cmd = f"cat /sys/class/net/{normalized_interface}/statistics/tx_bytes"
+            # Get traffic stats separately with improved error handling
+            rx_cmd = f"cat /sys/class/net/{normalized_interface}/statistics/rx_bytes 2>/dev/null || echo 0"
+            tx_cmd = f"cat /sys/class/net/{normalized_interface}/statistics/tx_bytes 2>/dev/null || echo 0"
             
-            rx_result = await self.execute_command(rx_cmd)
-            tx_result = await self.execute_command(tx_cmd)
-
-            if rx_result.exit_status != 0 or tx_result.exit_status != 0:
-                raise ValueError(f"Failed to get stats for {normalized_interface}")
-
-            rx_bytes = int(rx_result.stdout.strip())
-            tx_bytes = int(tx_result.stdout.strip())
+            # Execute commands with retry mechanism
+            rx_result = await self._execute_with_retry(rx_cmd)
+            tx_result = await self._execute_with_retry(tx_cmd)
+            
+            # Parse values with fallback to 0 for invalid results
+            try:
+                rx_bytes = int(rx_result.stdout.strip())
+            except (ValueError, AttributeError):
+                _LOGGER.warning("Could not parse RX bytes for %s, using 0", normalized_interface)
+                rx_bytes = 0
+                
+            try:
+                tx_bytes = int(tx_result.stdout.strip())
+            except (ValueError, AttributeError):
+                _LOGGER.warning("Could not parse TX bytes for %s, using 0", normalized_interface)
+                tx_bytes = 0
 
             # Get interface info concurrently
             info = await self._get_interface_info(normalized_interface)

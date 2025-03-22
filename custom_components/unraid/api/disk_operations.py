@@ -423,9 +423,10 @@ class DiskOperationsMixin:
             disks = []
             # Get usage for mounted disks with more specific path patterns
             # Note: Using specific patterns to avoid capturing system paths
+            # Running with -P flag to ensure POSIX output format for consistent parsing
             usage_result = await self.execute_command(
-                "df -B1 /mnt/disk[0-9]* /mnt/cache* 2>/dev/null | "
-                "awk 'NR>1 {print $6,$2,$3,$4}'"
+                "df -P -B1 /mnt/disk[0-9]* /mnt/cache* /mnt/user* 2>/dev/null | "
+                "grep -v '^Filesystem' | awk '{print $6,$2,$3,$4}'"
             )
 
             if usage_result.exit_status == 0:
