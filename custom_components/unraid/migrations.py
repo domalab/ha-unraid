@@ -61,25 +61,100 @@ async def update_entity_safely(
     new_unique_id: str
 ) -> None:
     """Safely update entity with new unique ID."""
-    # Check for existing entity with new ID
-    existing = ent_reg.async_get_entity_id(
+    # First remove any existing entities with the new ID
+    # to prevent duplicates - this is important during reinstallation
+    existing_id = ent_reg.async_get_entity_id(
         entity_entry.domain,
         DOMAIN,
         new_unique_id
     )
     
-    if existing and existing != entity_entry.entity_id:
-        _LOGGER.debug("Removing duplicate entity %s", existing)
-        ent_reg.async_remove(existing)
+    if existing_id and existing_id != entity_entry.entity_id:
+        _LOGGER.info("Removing duplicate entity %s with unique_id: %s", existing_id, new_unique_id)
+        ent_reg.async_remove(existing_id)
     
+    # Now update the entity with the new unique_id
+    _LOGGER.debug("Updating entity %s with new unique_id: %s", entity_entry.entity_id, new_unique_id)
     ent_reg.async_update_entity(
-        entity_entry.entity_id,
+        entity_entry.entity_id, 
         new_unique_id=new_unique_id
     )
+
+async def async_cleanup_orphaned_entities(hass: HomeAssistant, entry: ConfigEntry) -> int:
+    """Remove orphaned entities from previous installation.
+    
+    Returns the count of removed entities.
+    """
+    ent_reg = er.async_get(hass)
+    hostname = entry.data.get(CONF_HOSTNAME, DEFAULT_NAME)
+    hostname_clean = normalize_name(hostname).lower()
+    removed_count = 0
+    
+    # First, get ALL registered entities (not just for this config entry)
+    all_entities = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
+    
+    # Create a list to track unique_ids we've seen to avoid duplication
+    processed_unique_ids = set()
+    
+    # Stage 1: Remove all entities for THIS config entry
+    for entity_entry in all_entities:
+        try:
+            _LOGGER.info("Removing entity for current config entry: %s", entity_entry.entity_id)
+            ent_reg.async_remove(entity_entry.entity_id)
+            removed_count += 1
+        except Exception as err:
+            _LOGGER.error("Failed to remove entity %s: %s", entity_entry.entity_id, err)
+    
+    # Stage 2: Find ALL entities across ALL config entries with this hostname
+    # This will catch orphaned entities from previous installations
+    all_entities = ent_reg.entities.values()
+    for entity_entry in all_entities:
+        try:
+            unique_id = entity_entry.unique_id
+            
+            # Skip if we've already processed this unique_id
+            if unique_id in processed_unique_ids:
+                continue
+                
+            # Check if this is an Unraid entity with our hostname
+            if (DOMAIN in unique_id.lower() and 
+                hostname_clean in unique_id.lower() and 
+                "server" in unique_id.lower()):
+                
+                _LOGGER.info("Removing orphaned entity: %s, unique_id: %s", 
+                            entity_entry.entity_id, unique_id)
+                ent_reg.async_remove(entity_entry.entity_id)
+                removed_count += 1
+                processed_unique_ids.add(unique_id)
+                
+        except Exception as entity_err:
+            _LOGGER.error(
+                "Failed to clean up entity %s: %s",
+                entity_entry.entity_id,
+                entity_err
+            )
+    
+    if removed_count > 0:
+        _LOGGER.info("Removed %s orphaned entities during cleanup", removed_count)
+    
+    return removed_count
+
+def normalize_name(name: str) -> str:
+    """Normalize a name for use in entity IDs."""
+    # Convert to lowercase and replace invalid characters with underscores
+    normalized = re.sub(r'[^a-zA-Z0-9_]', '_', name.lower())
+    # Remove consecutive underscores
+    normalized = re.sub(r'_+', '_', normalized)
+    # Remove leading/trailing underscores
+    return normalized.strip('_')
 
 async def async_migrate_with_rollback(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate entities with rollback support."""
     ent_reg = er.async_get(hass)
+    
+    # Perform cleanup of orphaned entities first
+    # This helps prevent duplicate entities when reinstalling
+    await async_cleanup_orphaned_entities(hass, entry)
     
     # Store original states for rollback
     original_states = {

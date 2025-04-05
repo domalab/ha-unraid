@@ -559,8 +559,15 @@ class SystemOperationsMixin:
         """Parse the output of the thermal zones command."""
         thermal_zones = {}
         for line in output.splitlines():
-            zone_type, temp = line.split()
-            thermal_zones[zone_type] = float(temp) / 1000  # Convert milli-Celsius to Celsius
+            try:
+                parts = line.split()
+                if len(parts) >= 2:
+                    zone_type, temp = parts[0], parts[1]
+                    thermal_zones[zone_type] = float(temp) / 1000  # Convert milli-Celsius to Celsius
+                else:
+                    _LOGGER.debug("Skipping malformed thermal zone line: %s", line)
+            except (ValueError, IndexError) as err:
+                _LOGGER.debug("Error parsing thermal zone data: %s (line: %s)", err, line)
         return thermal_zones
 
     async def system_reboot(self, delay: int = 0) -> bool:

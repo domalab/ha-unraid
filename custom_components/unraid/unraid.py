@@ -7,6 +7,7 @@ from typing import Optional
 
 import asyncssh # type: ignore
 
+from .api.connection_manager import ConnectionManager
 from .api.network_operations import NetworkOperationsMixin
 from .api.disk_operations import DiskOperationsMixin
 from .api.docker_operations import DockerOperationsMixin
@@ -50,79 +51,59 @@ class UnraidAPI(
         self.username = username
         self.password = password
         self.port = port
-        self.conn: Optional[asyncssh.SSHClientConnection] = None
-        self.lock = asyncio.Lock()
+        
+        # Use ConnectionManager instead of direct connection
+        self.connection_manager = ConnectionManager()
         self.connect_timeout = 30
         self.command_timeout = 60
         self._in_context = False
+        self._setup_done = False
 
     async def ensure_connection(self) -> None:
-        """Ensure that a connection to the Unraid server is established."""
-        if self.conn is None:
-            async with self.lock:
-                if self.conn is None:
-                    self.conn = await asyncssh.connect(
-                        self.host,
-                        username=self.username,
-                        password=self.password,
-                        port=self.port,
-                        known_hosts=None
-                    )
+        """Ensure that the connection manager is initialized."""
+        if not self._setup_done:
+            await self.connection_manager.initialize(
+                self.host,
+                self.username,
+                self.password,
+                self.port
+            )
+            self._setup_done = True
 
     async def execute_command(
         self,
         command: str,
         timeout: Optional[int] = None
     ) -> asyncssh.SSHCompletedProcess:
-        """Execute a command on the Unraid server."""
-        cleanup_needed = False
+        """Execute a command on the Unraid server using the connection pool."""
+        await self.ensure_connection()
+        
+        if timeout is None:
+            timeout = self.command_timeout
+
         try:
-            if not self._in_context:
-                # For service calls, manage connection lifecycle
-                await self.ensure_connection()
-                cleanup_needed = True
-            elif self.conn is None:
-                # Safety check in case connection was lost
-                await self.ensure_connection()
+            result = await self.connection_manager.execute_command(
+                command,
+                timeout=timeout
+            )
+            return result
 
-            if timeout is None:
-                timeout = self.command_timeout
-
-            async with asyncio.timeout(timeout):
-                result = await self.conn.run(command)
-                return result
-
-        except (asyncssh.Error, asyncio.TimeoutError, OSError) as err:
+        except Exception as err:
             _LOGGER.error("Command failed: %s", err)
-            self.conn = None  # Reset connection on error
             raise
-
-        finally:
-            if cleanup_needed:
-                await self.disconnect()
 
     async def disconnect(self) -> None:
         """Disconnect from the Unraid server."""
-        if self.conn:
-            try:
-                self.conn.close()
-                await self.conn.wait_closed()
-            except Exception as err:
-                _LOGGER.error("Error disconnecting from Unraid server: %s", err)
-            finally:
-                self.conn = None
+        if self._setup_done:
+            await self.connection_manager.shutdown()
+            self._setup_done = False
 
     async def ping(self) -> bool:
         """Check if the Unraid server is accessible via SSH."""
         try:
-            async with asyncio.timeout(self.connect_timeout):
-                await self.ensure_connection()
-                await self.conn.run("echo")
-
-            _LOGGER.debug("Successfully pinged Unraid server at %s", self.host)
-            return True
-
-        except (asyncssh.Error, asyncio.TimeoutError, OSError) as err:
+            await self.ensure_connection()
+            return await self.connection_manager.health_check()
+        except Exception as err:
             _LOGGER.error("Failed to ping Unraid server at %s: %s", self.host, err)
             return False
 
@@ -135,4 +116,4 @@ class UnraidAPI(
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context."""
         self._in_context = False
-        await self.disconnect()
+        # We don't disconnect here to maintain the connection pool

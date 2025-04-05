@@ -10,6 +10,7 @@ from .smart_operations import SmartDataManager
 from .disk_state import DiskStateManager, DiskState
 from .disk_utils import is_valid_disk_name
 from .disk_mapping import get_unraid_disk_mapping, get_disk_info
+from .connection_manager import ConnectionManager, SSHConnection, ConnectionState, ConnectionMetrics
 
 __all__ = [
     "DiskOperationsMixin",
@@ -26,4 +27,8 @@ __all__ = [
     "is_valid_disk_name",
     "get_unraid_disk_mapping",
     "get_disk_info",
+    "ConnectionManager",
+    "SSHConnection",
+    "ConnectionState",
+    "ConnectionMetrics",
 ]

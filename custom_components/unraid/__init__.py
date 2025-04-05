@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import warnings
+import asyncio
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry  # type: ignore
 from homeassistant.const import (  # type: ignore
@@ -10,13 +12,19 @@ from homeassistant.const import (  # type: ignore
     CONF_PASSWORD,
     CONF_PORT,
     CONF_USERNAME,
+    Platform,
 )
 from homeassistant.core import HomeAssistant  # type: ignore
 from homeassistant.exceptions import ConfigEntryNotReady  # type: ignore
 from cryptography.utils import CryptographyDeprecationWarning  # type: ignore
-from homeassistant.helpers.importlib import async_import_module  # type: ignore
 
-from .migrations import async_migrate_with_rollback
+# Suppress deprecation warnings for paramiko
+warnings.filterwarnings(
+    "ignore",
+    category=CryptographyDeprecationWarning,
+    message="TripleDES has been moved"
+)
+
 from .const import (
     CONF_HOSTNAME,
     DOMAIN,
@@ -29,14 +37,28 @@ from .const import (
     MIGRATION_VERSION
 )
 
-# Suppress deprecation warnings for paramiko
-warnings.filterwarnings(
-    "ignore",
-    category=CryptographyDeprecationWarning,
-    message="TripleDES has been moved"
-)
+# Pre-import all modules at the module level to avoid blocking calls
+from .migrations import async_migrate_with_rollback, async_cleanup_orphaned_entities
+from .coordinator import UnraidDataUpdateCoordinator
+from .unraid import UnraidAPI
+from .api.logging_helper import setup_logging_filters, restore_logging_levels
+from . import services
 
+# Pre-import all platform modules
 _LOGGER = logging.getLogger(__name__)
+
+# Pre-import all platform modules
+_PLATFORM_IMPORTS = {}
+
+# Import all platform modules at module load time
+for platform in PLATFORMS:
+    try:
+        module_path = f"custom_components.{DOMAIN}.{platform}"
+        _PLATFORM_IMPORTS[platform] = __import__(module_path, fromlist=["_"])
+        _LOGGER.debug("Pre-imported platform %s", platform)
+    except ImportError as err:
+        _LOGGER.warning("Error pre-importing platform %s: %s", platform, err)
+        # Don't raise error here, we'll check if imports succeeded during setup
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Unraid component."""
@@ -45,34 +67,32 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Unraid from a config entry."""
-    _LOGGER.debug("Setting up Unraid integration")
+    # Set up logging filters to reduce verbosity
+    setup_logging_filters()
+    
+    _LOGGER.info("Setting up Unraid integration, cleaning up any previous entities")
 
     try:
-        # Migrate data if necessary
+        # First step: Force cleanup of any existing entities
+        # This is critical to prevent duplicates
+        try:
+            # Run the cleanup before doing anything else
+            removed_count = await async_cleanup_orphaned_entities(hass, entry)
+            _LOGGER.info("Entity cleanup completed, removed %s entities", removed_count)
+        except Exception as cleanup_err:
+            _LOGGER.error("Error during entity cleanup: %s", cleanup_err)
+            # Continue despite cleanup errors
+        
+        # Now perform any necessary migrations
         if entry.version < MIGRATION_VERSION:
             if not await async_migrate_with_rollback(hass, entry):
-                raise ConfigEntryNotReady("Migration failed")
+                _LOGGER.warning("Migration process failed, but continuing with setup")
             
-        # Import required modules asynchronously
-        modules = {}
-        for module_name in ["unraid", "coordinator", "services", "migrations"]:
-            try:
-                modules[module_name] = await async_import_module(
-                    hass, f"custom_components.{DOMAIN}.{module_name}"
-                )
-            except ImportError as err:
-                _LOGGER.error("Error importing module %s: %s", module_name, err)
-                raise ConfigEntryNotReady from err
-
-        # Import platform modules
-        for platform in PLATFORMS:
-            try:
-                await async_import_module(
-                    hass, f"custom_components.{DOMAIN}.{platform}"
-                )
-            except ImportError as err:
-                _LOGGER.error("Error importing platform %s: %s", platform, err)
-                raise ConfigEntryNotReady from err
+        # Verify all platforms were imported successfully
+        missing_platforms = [p for p in PLATFORMS if p not in _PLATFORM_IMPORTS]
+        if missing_platforms:
+            _LOGGER.error("Missing required platform modules: %s", missing_platforms)
+            raise ConfigEntryNotReady(f"Missing platform modules: {missing_platforms}")
 
         # Migrate data from data to options if necessary
         if CONF_GENERAL_INTERVAL not in entry.options:
@@ -89,16 +109,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             
             hass.config_entries.async_update_entry(entry, options=options)
 
-        # Create API instance using imported module
-        api = modules["unraid"].UnraidAPI(
-            host=entry.data[CONF_HOST],
-            username=entry.data[CONF_USERNAME],
-            password=entry.data[CONF_PASSWORD],
-            port=entry.options.get(CONF_PORT, DEFAULT_PORT),
-        )
+        # Extract configuration
+        host = entry.data[CONF_HOST]
+        username = entry.data[CONF_USERNAME]
+        password = entry.data[CONF_PASSWORD]
+        port = entry.data.get(CONF_PORT, 22)
 
-        # Initialize disk operations
-        await api.disk_operations.initialize()
+        # Create API client
+        api = UnraidAPI(host, username, password, port)
+
+        # Create coordinator
+        coordinator = UnraidDataUpdateCoordinator(hass, api, entry)
+
+        # Get initial data
+        await coordinator.async_config_entry_first_refresh()
+
+        # Store the coordinator
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+        # Set up all platforms
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        
+        # Set up services
+        await services.async_setup_services(hass)
+
+        # Register update listener for options
+        entry.async_on_unload(entry.add_update_listener(update_listener))
+
+        # Register cleanup callback
+        async def async_unload_coordinator():
+            """Unload coordinator resources."""
+            _LOGGER.debug("Unloading coordinator resources")
+            await coordinator.async_stop()
+            # Restore logging levels on unload
+            restore_logging_levels()
+
+        entry.async_on_unload(async_unload_coordinator)
 
         # Get hostname during setup if not already stored
         if CONF_HOSTNAME not in entry.data:
@@ -112,32 +158,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as hostname_err:
                 _LOGGER.warning("Could not get hostname: %s", hostname_err)
 
-        # Create coordinator using imported module
-        coordinator = modules["coordinator"].UnraidDataUpdateCoordinator(hass, api, entry)
-        
-        # Initialize coordinator
-        await coordinator.async_setup()
-        
-        # Perform first refresh
-        try:
-            await coordinator.async_config_entry_first_refresh()
-        except Exception as refresh_err:
-            _LOGGER.warning(
-                "Initial refresh failed, continuing setup: %s", 
-                refresh_err
-            )
-
-        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-
-        # Set up platforms
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        
-        # Set up services using imported module
-        await modules["services"].async_setup_services(hass)
-
-        # Add update listener
-        entry.async_on_unload(entry.add_update_listener(async_update_listener))
-        
+        _LOGGER.info("Unraid integration setup completed successfully")
         return True
 
     except Exception as err:
@@ -146,50 +167,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
-    
-    # Stop coordinator and cleanup connections
-    await coordinator.async_unload()
-    
-    # Import services module for unloading
-    try:
-        services_module = await async_import_module(
-            hass, f"custom_components.{DOMAIN}.services"
-        )
-        
-        # Unload platforms
-        if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-            hass.data[DOMAIN].pop(entry.entry_id)
-            await services_module.async_unload_services(hass)
-            return unload_ok
-        
-        return False
-        
-    except ImportError as err:
-        _LOGGER.error("Error importing services module for unload: %s", err)
-        return False
+    # Unload platforms
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    # Remove entry from data
+    if unload_ok:
+        coordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        # Ensure coordinator is properly cleaned up
+        await coordinator.async_stop()
+        # Restore logging levels
+        restore_logging_levels()
+
+    return unload_ok
+
+async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
-    try:
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-    except KeyError:
-        _LOGGER.error("Could not find coordinator for config entry %s", entry.entry_id)
-        return
-
-    try:
-        # Handle UPS status updates
-        if CONF_HAS_UPS in entry.options:
-            try:
-                await coordinator.async_update_ups_status(entry.options[CONF_HAS_UPS])
-            except Exception as err:
-                _LOGGER.error("Error updating UPS status: %s", err)
-        
-        # Reload the config entry
-        await hass.config_entries.async_reload(entry.entry_id)
-        
-    except Exception as err:
-        _LOGGER.error("Error handling options update: %s", err)
+    await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Update options."""

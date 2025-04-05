@@ -42,20 +42,21 @@ class EntityNaming:
 
     def get_entity_id(self, name: str) -> str:
         """Get normalized entity ID."""
-        # Use normalized name
+        # Cleanup the hostname and normalize the name
+        hostname_clean = normalize_name(self.hostname)
         clean_name = normalize_name(name)
         
-        # Create base unique ID
-        base_id = f"unraid_server_{self.component}_{clean_name}"
+        # Create a completely deterministic unique ID with a consistent format
+        # This ensures the same entity_id is generated across reinstallations
+        # Format: unraid_server_hostname_component_name
+        unique_id = f"unraid_server_{hostname_clean}_{self.component}_{clean_name}"
         
-        # Use migration's cleaning function for consistency
-        entity_id = clean_and_validate_unique_id(base_id, self.hostname)
-        
+        # Log the generated unique_id for debugging
         _LOGGER.debug(
-            "Generated entity_id: %s | hostname: %s | component: %s | clean_name: %s",
-            entity_id, self.hostname, self.component, clean_name
+            "Generated unique_id: %s | hostname: %s | component: %s | clean_name: %s",
+            unique_id, hostname_clean, self.component, clean_name
         )
-        return entity_id
+        return unique_id
 
     def get_entity_name(self, name: str, component_type: str = None) -> str:
         """Get formatted entity name."""
