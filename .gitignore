@@ -167,3 +167,5 @@ cython_debug/
 custom_components/.DS_Store
 .gitignore
 .gitignore
+.DS_Store
+.DS_Store

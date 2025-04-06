@@ -159,3 +159,64 @@ system_shutdown:
           min: 0
           max: 3600
           unit_of_measurement: seconds
+
+get_optimization_stats:
+  name: Get Optimization Stats
+  description: >-
+    Get statistics about the optimization components, including cache usage
+    and sensor prioritization metrics.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+
+clear_cache:
+  name: Clear Cache
+  description: >-
+    Clear the cache used by the integration. This can help if you're experiencing
+    stale data or want to force fresh data to be loaded.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    prefix:
+      name: Cache Prefix
+      description: >-
+        Optional prefix to clear only specific cache items. Leave empty to clear
+        the entire cache. Examples: "system_stats", "array_state", "vms".
+      required: false
+      default: ""
+      example: "system_stats"
+      selector:
+        text:
+
+force_sensor_update:
+  name: Force Sensor Update
+  description: >-
+    Force an immediate update of a specific sensor regardless of its
+    normal update schedule.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    sensor_id:
+      name: Sensor ID
+      description: >-
+        The ID of the sensor to update. Examples: "cpu_usage", "array_status", 
+        "network_eth0", "vm_windows10", etc.
+      required: true
+      example: "cpu_usage"
+      selector:
+        text:

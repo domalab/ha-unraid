@@ -42,10 +42,14 @@ from .migrations import async_migrate_with_rollback, async_cleanup_orphaned_enti
 from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
 from .api.logging_helper import setup_logging_filters, restore_logging_levels
+from .api.log_filter import LogManager
 from . import services
 
 # Pre-import all platform modules
 _LOGGER = logging.getLogger(__name__)
+
+# Set up log manager at the module level so it's initialized once
+_LOG_MANAGER = LogManager()
 
 # Pre-import all platform modules
 _PLATFORM_IMPORTS = {}
@@ -63,6 +67,10 @@ for platform in PLATFORMS:
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Unraid component."""
     hass.data.setdefault(DOMAIN, {})
+    
+    # Configure log filtering
+    _LOG_MANAGER.configure()
+    
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -132,6 +140,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Set up services
         await services.async_setup_services(hass)
+        
+        # Register additional services for optimization stats
+        await services.async_setup_optimization_services(hass)
 
         # Register update listener for options
         entry.async_on_unload(entry.add_update_listener(update_listener))
@@ -143,6 +154,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await coordinator.async_stop()
             # Restore logging levels on unload
             restore_logging_levels()
+            # Reset log filter
+            _LOG_MANAGER.reset()
 
         entry.async_on_unload(async_unload_coordinator)
 
@@ -177,6 +190,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_stop()
         # Restore logging levels
         restore_logging_levels()
+        # Reset log filter
+        _LOG_MANAGER.reset()
 
     return unload_ok
 

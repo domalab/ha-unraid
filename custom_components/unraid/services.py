@@ -27,6 +27,11 @@ SERVICE_STOP_USER_SCRIPT = "stop_user_script"
 SERVICE_SYSTEM_REBOOT = "system_reboot"
 SERVICE_SYSTEM_SHUTDOWN = "system_shutdown"
 
+# New optimization services
+SERVICE_GET_OPTIMIZATION_STATS = "get_optimization_stats"
+SERVICE_CLEAR_CACHE = "clear_cache"
+SERVICE_FORCE_SENSOR_UPDATE = "force_sensor_update"
+
 SERVICE_FORCE_UPDATE_SCHEMA = vol.Schema({
     vol.Optional("config_entry"): cv.string,
 })
@@ -68,6 +73,21 @@ SERVICE_SYSTEM_SHUTDOWN_SCHEMA = vol.Schema({
         cv.positive_int,
         vol.Range(min=0, max=3600)
     ),
+})
+
+# Schemas for optimization services
+SERVICE_GET_OPTIMIZATION_STATS_SCHEMA = vol.Schema({
+    vol.Required("entry_id"): cv.string,
+})
+
+SERVICE_CLEAR_CACHE_SCHEMA = vol.Schema({
+    vol.Required("entry_id"): cv.string,
+    vol.Optional("prefix", default=""): cv.string,
+})
+
+SERVICE_FORCE_SENSOR_UPDATE_SCHEMA = vol.Schema({
+    vol.Required("entry_id"): cv.string,
+    vol.Required("sensor_id"): cv.string,
 })
 
 def _format_response(output: str, max_length: int = 1000) -> str:
@@ -303,6 +323,93 @@ async def system_shutdown(hass: HomeAssistant, call: ServiceCall) -> dict[str, A
         _LOGGER.error(error_msg)
         raise HomeAssistantError(error_msg) from err
 
+# New optimization service handlers
+
+async def get_optimization_stats(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Get optimization statistics."""
+    entry_id = call.data["entry_id"]
+    
+    try:
+        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        
+        # Get cache and sensor stats
+        cache_stats = coordinator.get_cache_stats()
+        sensor_stats = coordinator.get_sensor_stats()
+        
+        response = {
+            "cache": cache_stats,
+            "sensors": sensor_stats,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        return response
+        
+    except Exception as err:
+        error_msg = f"Error getting optimization stats: {str(err)}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+async def clear_cache(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Clear the cache, optionally with a specific prefix."""
+    entry_id = call.data["entry_id"]
+    prefix = call.data.get("prefix", "")
+    
+    try:
+        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        
+        if prefix:
+            # Clear cache items with the given prefix
+            count = coordinator._cache_manager.invalidate_by_prefix(prefix)
+            response = {
+                "success": True,
+                "items_cleared": count,
+                "prefix": prefix
+            }
+            _LOGGER.info("Cache cleared for prefix '%s': %d items removed", prefix, count)
+        else:
+            # Clear entire cache
+            coordinator._cache_manager.clear()
+            response = {
+                "success": True,
+                "message": "Entire cache cleared"
+            }
+            _LOGGER.info("Entire cache cleared")
+        
+        return response
+        
+    except Exception as err:
+        error_msg = f"Error clearing cache: {str(err)}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
+async def force_sensor_update(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Force update of a specific sensor."""
+    entry_id = call.data["entry_id"]
+    sensor_id = call.data["sensor_id"]
+    
+    try:
+        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        
+        # Request update for the specific sensor
+        coordinator.request_sensor_update(sensor_id)
+        
+        # Trigger an update
+        await coordinator.async_request_refresh()
+        
+        response = {
+            "success": True,
+            "sensor_id": sensor_id,
+            "message": f"Update requested for sensor {sensor_id}"
+        }
+        
+        _LOGGER.info("Force update requested for sensor: %s", sensor_id)
+        return response
+        
+    except Exception as err:
+        error_msg = f"Error forcing sensor update: {str(err)}"
+        _LOGGER.error(error_msg)
+        raise HomeAssistantError(error_msg) from err
+
 _REGISTERED_SERVICES: Set[str] = set()
 
 async def async_setup_services(hass: HomeAssistant) -> None:
@@ -330,6 +437,28 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             )
             _REGISTERED_SERVICES.add(service_name)
             _LOGGER.debug("Registered service: %s", service_name)
+
+async def async_setup_optimization_services(hass: HomeAssistant) -> None:
+    """Set up optimization services for Unraid integration."""
+    
+    # Define optimization service mappings
+    services = {
+        SERVICE_GET_OPTIMIZATION_STATS: (get_optimization_stats, SERVICE_GET_OPTIMIZATION_STATS_SCHEMA),
+        SERVICE_CLEAR_CACHE: (clear_cache, SERVICE_CLEAR_CACHE_SCHEMA),
+        SERVICE_FORCE_SENSOR_UPDATE: (force_sensor_update, SERVICE_FORCE_SENSOR_UPDATE_SCHEMA),
+    }
+    
+    # Register each service
+    for service_name, (handler, schema) in services.items():
+        if service_name not in _REGISTERED_SERVICES:
+            hass.services.async_register(
+                DOMAIN,
+                service_name,
+                partial(handler, hass),
+                schema=schema
+            )
+            _REGISTERED_SERVICES.add(service_name)
+            _LOGGER.debug("Registered optimization service: %s", service_name)
 
 async def async_unload_services(hass: HomeAssistant) -> None:
     """Unload Unraid services."""

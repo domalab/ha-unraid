@@ -5,7 +5,9 @@ import logging
 import asyncio
 import hashlib
 import json
-from typing import Any, Dict, Optional
+import time
+import gc
+from typing import Any, Dict, Optional, List, Set
 
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
@@ -34,6 +36,9 @@ from .const import (
 from .unraid import UnraidAPI
 from .helpers import get_unraid_disk_mapping, parse_speed_string
 from .api.disk_mapping import get_disk_info
+from .api.cache_manager import CacheManager, CacheItemPriority
+from .api.sensor_priority import SensorPriorityManager, SensorPriority, SensorCategory
+from .api.log_filter import LogManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -104,6 +109,17 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         # Initialize network tracking
         self._previous_network_stats = {}
         self._last_network_update = dt_util.utcnow()
+        
+        # Performance optimization components
+        self._cache_manager = CacheManager(max_size_bytes=25 * 1024 * 1024)  # 25MB limit
+        self._sensor_manager = SensorPriorityManager()
+        self._log_manager = LogManager()
+        self._log_manager.configure()
+        self._update_requested_sensors: Set[str] = set()
+        
+        # Resource monitoring
+        self._last_memory_check = dt_util.utcnow()
+        self._memory_warning_emitted = False
 
         # Initialize parent class
         super().__init__(
@@ -326,200 +342,618 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
     async def _async_update_data(self) -> Dict[str, Any]:
         """Fetch data from Unraid."""
         try:
+            # Check memory usage periodically - don't update if we're over limit
+            await self._check_memory_usage()
+            
             _LOGGER.debug("Starting data update cycle")
             async with self.api:
-                _LOGGER.debug("Established SSH session")
                 # Initialize data structure
                 data: Dict[str, Any] = {}
+                cache_hits = 0
+                cache_misses = 0
+                start_time = time.time()
+                
+                # Track what data is needed based on sensor priorities
+                # Check if self.async_contexts exists before calling len()
+                has_contexts = hasattr(self, 'async_contexts') and self.async_contexts is not None
+                critical_update = bool(self._update_requested_sensors) or (has_contexts and bool(self.async_contexts))
 
                 # Step 1: Update core system stats (Always run)
                 try:
                     # Get base system stats first
                     _LOGGER.debug("Fetching system stats...")
-                    system_stats = await self.api.get_system_stats()
+                    
+                    # Try to get system stats from cache first
+                    system_stats_key = self._get_cache_key("system_stats")
+                    
+                    if critical_update:
+                        # Force update if specifically requested
+                        system_stats = await self.api.get_system_stats()
+                        cache_misses += 1
+                        
+                        # Cache the result for future use
+                        if system_stats:
+                            self._cache_manager.set(
+                                system_stats_key,
+                                system_stats,
+                                ttl=120,  # 2 minute cache for system stats
+                                priority=CacheItemPriority.HIGH
+                            )
+                    else:
+                        # Get from cache with fallback to API call
+                        system_stats = self._cache_manager.get(system_stats_key)
+                        
+                        if system_stats:
+                            cache_hits += 1
+                            _LOGGER.debug("Using cached system stats")
+                        else:
+                            system_stats = await self.api.get_system_stats()
+                            cache_misses += 1
+                            
+                            # Cache the result
+                            if system_stats:
+                                self._cache_manager.set(
+                                    system_stats_key,
+                                    system_stats,
+                                    ttl=120,  # 2 minute cache for system stats
+                                    priority=CacheItemPriority.HIGH
+                                )
+                    
                     if system_stats:
-                        # Add CPU info explicitly
-                        cpu_info = await self.api._get_cpu_info()  # Note the underscore for the private method
+                        # Add CPU info with caching
+                        cpu_info_key = self._get_cache_key("cpu_info")
+                        
+                        # CPU info is volatile - cache for shorter period
+                        cpu_info = None
+                        if not critical_update:
+                            cpu_info = self._cache_manager.get(cpu_info_key)
+                            if cpu_info:
+                                cache_hits += 1
+                        
+                        if not cpu_info:
+                            cpu_info = {}
+                            # Get CPU info from system stats if needed
+                            system_stats_data = await self.api.get_system_stats()
+                            if system_stats_data and "cpu_info" in system_stats_data:
+                                cpu_info = system_stats_data.get("cpu_info", {})
+                            cache_misses += 1
+                            
+                            if cpu_info:
+                                self._cache_manager.set(
+                                    cpu_info_key,
+                                    cpu_info,
+                                    ttl=60,  # 1 minute cache for CPU info (more volatile)
+                                    priority=CacheItemPriority.HIGH
+                                )
+                        
                         if cpu_info:
-                            _LOGGER.debug("Adding CPU info to system stats: %s", cpu_info)
                             system_stats.update(cpu_info)
                         
-                        _LOGGER.debug(
-                            "Got system stats: %s",
-                            {
-                                k: '...' if k == 'individual_disks' else v
-                                for k, v in system_stats.items()
-                            }
-                        )
                         data["system_stats"] = system_stats
                 except (ConnectionError, TimeoutError, OSError, ValueError) as err:
                     _LOGGER.error("Error getting system stats: %s", err)
                     data["system_stats"] = {}
 
-                # Get array state and parity info
-                array_state = await self._get_array_state()
+                # Get array state and parity info - always critical
+                array_state_key = self._get_cache_key("array_state")
+                array_state = None
+                
+                # Array state is critical - shorter cache or force update if needed
+                if critical_update:
+                    array_state = await self._get_array_state()
+                    cache_misses += 1
+                    
+                    # Cache for very short period (it's important)
+                    if array_state:
+                        self._cache_manager.set(
+                            array_state_key,
+                            array_state,
+                            ttl=30,  # 30 second cache for array state
+                            priority=CacheItemPriority.CRITICAL
+                        )
+                else:
+                    # Try cache first
+                    array_state = self._cache_manager.get(array_state_key)
+                    if array_state:
+                        cache_hits += 1
+                    else:
+                        array_state = await self._get_array_state()
+                        cache_misses += 1
+                        
+                        if array_state:
+                            self._cache_manager.set(
+                                array_state_key,
+                                array_state,
+                                ttl=30,
+                                priority=CacheItemPriority.CRITICAL
+                            )
+                
                 if array_state:
                     data["array_state"] = array_state
-                    _LOGGER.debug(
-                        "Got array state with parity history: %s",
-                        {k: v for k, v in array_state.items() if k != "parity_history"}
-                    )
 
-                # Step 2: Get VMs, Docker Containers, and User Scripts
+                # Step 2: Get VMs, Docker Containers, and User Scripts - use priority-based updates
+                # Initialize default values in case they don't exist yet
+                vms = []
+                containers = []
+                scripts = []
+                
+                # Only update these if they are due according to sensor priority
+                vm_key = self._get_cache_key("vms")
+                docker_key = self._get_cache_key("docker_containers")
+                scripts_key = self._get_cache_key("user_scripts")
+                
+                # Check if any sensors related to these categories need updates
+                # Safely get VM and container IDs from existing data
+                vm_ids = []
+                container_ids = []
+                
+                if hasattr(self, 'data') and self.data is not None:
+                    if isinstance(self.data.get("vms"), list):
+                        vm_ids = [vm.get("name", "") for vm in self.data.get("vms", []) if isinstance(vm, dict)]
+                    
+                    if isinstance(self.data.get("docker_containers"), list):
+                        container_ids = [c.get("name", "") for c in self.data.get("docker_containers", []) if isinstance(c, dict)]
+                
+                need_vm_update = critical_update or any(
+                    self._sensor_manager.should_update(f"vm_{vm_id}")
+                    for vm_id in vm_ids if vm_id
+                )
+                
+                need_docker_update = critical_update or any(
+                    self._sensor_manager.should_update(f"docker_{container_id}")
+                    for container_id in container_ids if container_id
+                )
+                
+                need_scripts_update = critical_update or self._sensor_manager.should_update("user_scripts")
+                
                 try:
-                    # Run these tasks concurrently
-                    vms, containers, scripts = await asyncio.gather(
-                        self.api.get_vms(),
-                        self.api.get_docker_containers(),
-                        self.api.get_user_scripts()
-                    )
-
+                    # Run these tasks concurrently if needed, otherwise use cache
+                    tasks = []
+                    
+                    # VM update task
+                    if need_vm_update:
+                        tasks.append(self.api.get_vms())
+                        cache_misses += 1
+                    else:
+                        vms = self._cache_manager.get(vm_key, [])
+                        if vms:
+                            cache_hits += 1
+                        else:
+                            tasks.append(self.api.get_vms())
+                            cache_misses += 1
+                    
+                    # Docker update task
+                    if need_docker_update:
+                        tasks.append(self.api.get_docker_containers())
+                        cache_misses += 1
+                    else:
+                        containers = self._cache_manager.get(docker_key, [])
+                        if containers:
+                            cache_hits += 1
+                        else:
+                            tasks.append(self.api.get_docker_containers())
+                            cache_misses += 1
+                    
+                    # Scripts update task
+                    if need_scripts_update:
+                        tasks.append(self.api.get_user_scripts())
+                        cache_misses += 1
+                    else:
+                        scripts = self._cache_manager.get(scripts_key, [])
+                        if scripts:
+                            cache_hits += 1
+                        else:
+                            tasks.append(self.api.get_user_scripts())
+                            cache_misses += 1
+                            
+                    # Run needed tasks concurrently
+                    if tasks:
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+                        
+                        # Process results based on which tasks were run
+                        task_index = 0
+                        
+                        # Process VM results if that task was run
+                        if need_vm_update or not self._cache_manager.get(vm_key):
+                            vms = results[task_index] if not isinstance(results[task_index], Exception) else []
+                            task_index += 1
+                            
+                            # Cache VM results
+                            if vms:
+                                self._cache_manager.set(
+                                    vm_key,
+                                    vms,
+                                    ttl=300,  # 5 minute cache for VMs
+                                    priority=CacheItemPriority.MEDIUM
+                                )
+                        
+                        # Process Docker results if that task was run
+                        if need_docker_update or not self._cache_manager.get(docker_key):
+                            containers = results[task_index] if not isinstance(results[task_index], Exception) else []
+                            task_index += 1
+                            
+                            # Cache Docker results
+                            if containers:
+                                self._cache_manager.set(
+                                    docker_key,
+                                    containers,
+                                    ttl=300,  # 5 minute cache for containers
+                                    priority=CacheItemPriority.MEDIUM
+                                )
+                        
+                        # Process Scripts results if that task was run
+                        if need_scripts_update or not self._cache_manager.get(scripts_key):
+                            scripts = results[task_index] if not isinstance(results[task_index], Exception) else []
+                            
+                            # Cache Scripts results
+                            if scripts:
+                                self._cache_manager.set(
+                                    scripts_key,
+                                    scripts,
+                                    ttl=600,  # 10 minute cache for scripts (rarely change)
+                                    priority=CacheItemPriority.LOW
+                                )
+                    
                     # Process results
                     data["vms"] = vms
                     data["docker_containers"] = containers
                     data["user_scripts"] = scripts
+                    
+                    # Record sensor updates - ensure lists are iterable
+                    if isinstance(vms, list):
+                        for vm in vms:
+                            if isinstance(vm, dict):
+                                vm_id = vm.get("name", "unknown")
+                                self._sensor_manager.record_update(f"vm_{vm_id}", vm.get("state"))
+                    
+                    if isinstance(containers, list):
+                        for container in containers:
+                            if isinstance(container, dict):
+                                container_id = container.get("name", "unknown")
+                                self._sensor_manager.record_update(f"docker_{container_id}", container.get("state"))
+                    
+                    if isinstance(scripts, list):
+                        self._sensor_manager.record_update("user_scripts", len(scripts))
 
                 except (ConnectionError, TimeoutError, OSError, ValueError) as err:
-                    _LOGGER.error("Error getting base data: %s", err)
+                    _LOGGER.error("Error getting VM/Docker/Scripts data: %s", err)
                     data.update({
-                        "vms": [],
-                        "docker_containers": [],
-                        "user_scripts": []
+                        "vms": self._cache_manager.get(vm_key, []),
+                        "docker_containers": self._cache_manager.get(docker_key, []),
+                        "user_scripts": self._cache_manager.get(scripts_key, [])
                     })
 
-                # Step 3: Update disk-related data (Always run)
+                # Step 3: Update disk-related data based on priority and schedule
                 if "system_stats" in data:
+                    # Check if disk update is due based on schedule or forced update
+                    disk_update_needed = (
+                        critical_update or 
+                        self.disk_update_due or
+                        any(s.startswith("disk_") for s in self._update_requested_sensors)
+                    )
+                    
                     try:
-                        # Get disk configuration
-                        disk_cfg_result = await self.api.execute_command(
-                            "cat /boot/config/disk.cfg"
-                        )
-                        if disk_cfg_result and disk_cfg_result.exit_status == 0:
-                            disk_config = {}
-                            for line in disk_cfg_result.stdout.splitlines():
-                                line = line.strip()
-                                if line and not line.startswith("#"):
-                                    try:
-                                        key, value = line.split("=", 1)
-                                        disk_config[key] = value.strip('"')
-                                    except ValueError:
-                                        continue
-                            data["disk_config"] = disk_config
-                    except (OSError, ConnectionError, TimeoutError) as err:
-                        _LOGGER.error("Error getting disk config: %s", err)
-
-                    # Handle disk updates
-                    if self.disk_update_due:
-                        try:
+                        # Handle disk updates
+                        if disk_update_needed:
+                            _LOGGER.debug("Disk update needed, running full update")
                             data["system_stats"] = await self._async_update_disk_data(
                                 data["system_stats"]
                             )
-                        except (ConnectionError, TimeoutError, OSError, ValueError) as err:
-                            _LOGGER.error("Error updating disk data: %s", err)
-                    elif self.data and "system_stats" in self.data:
-                        # Reuse previous disk data
-                        data["system_stats"]["individual_disks"] = (
-                            self.data["system_stats"].get("individual_disks", [])
-                        )
-                        data["system_stats"]["array_usage"] = (
-                            self.data["system_stats"].get("array_usage", {})
-                        )
+                        elif self.data and "system_stats" in self.data:
+                            # Reuse previous disk data
+                            data["system_stats"]["individual_disks"] = (
+                                self.data["system_stats"].get("individual_disks", [])
+                            )
+                            data["system_stats"]["array_usage"] = (
+                                self.data["system_stats"].get("array_usage", {})
+                            )
 
-                    # Update disk mapping and network stats
-                    data["system_stats"] = await self._async_update_disk_mapping(
-                        data["system_stats"]
-                    )
-                    await self._async_update_network_stats(data["system_stats"])
+                        # Update disk mapping with cache
+                        if disk_update_needed or "disk_mapping" not in data["system_stats"]:
+                            # Force mapping update when needed
+                            data["system_stats"] = await self._async_update_disk_mapping(
+                                data["system_stats"]
+                            )
+                        
+                        # Update network stats based on priority
+                        need_network_update = critical_update or any(
+                            self._sensor_manager.should_update(f"network_{iface}")
+                            for iface in self._previous_network_stats
+                        ) if self._previous_network_stats else True
+                        
+                        if need_network_update:
+                            await self._async_update_network_stats(data["system_stats"])
+                            
+                            # Record sensor updates
+                            network_stats = data["system_stats"].get("network_stats", {})
+                            if isinstance(network_stats, dict):
+                                for interface in network_stats:
+                                    stats = network_stats[interface]
+                                    if isinstance(stats, dict):
+                                        self._sensor_manager.record_update(
+                                            f"network_{interface}",
+                                            stats.get("rx_speed", 0)
+                                        )
+
+                    except Exception as err:
+                        _LOGGER.error("Error updating disk/network data: %s", err)
 
                 # Step 4: UPS data if enabled
                 if self.has_ups:
+                    ups_key = self._get_cache_key("ups_info")
+                    need_ups_update = critical_update or self._sensor_manager.should_update("ups_status")
+                    
                     try:
-                        ups_info = await self.api.get_ups_info()
-                        if ups_info:
+                        ups_info = None
+                        
+                        if need_ups_update:
+                            ups_info = await self.api.get_ups_info()
+                            cache_misses += 1
+                            
+                            # Cache UPS info
+                            if ups_info and isinstance(ups_info, dict):
+                                self._cache_manager.set(
+                                    ups_key,
+                                    ups_info,
+                                    ttl=120,  # 2 minute cache for UPS
+                                    priority=CacheItemPriority.HIGH
+                                )
+                                
+                                # Record sensor update
+                                status = ups_info.get("STATUS")
+                                if status is not None:
+                                    self._sensor_manager.record_update("ups_status", status)
+                        else:
+                            ups_info = self._cache_manager.get(ups_key)
+                            if ups_info:
+                                cache_hits += 1
+                            else:
+                                ups_info = await self.api.get_ups_info()
+                                cache_misses += 1
+                                
+                                if ups_info and isinstance(ups_info, dict):
+                                    self._cache_manager.set(
+                                        ups_key,
+                                        ups_info,
+                                        ttl=120,
+                                        priority=CacheItemPriority.HIGH
+                                    )
+                                    
+                        if ups_info and isinstance(ups_info, dict):
                             data["ups_info"] = ups_info
                     except (ConnectionError, TimeoutError, OSError, ValueError) as err:
                         _LOGGER.error("Error getting UPS info: %s", err)
                 
-                # Step 5 Add parity schedule parsing
+                # Step 5: Add parity schedule parsing with caching
+                parity_key = self._get_cache_key("parity_schedule")
+                need_parity_update = critical_update or self._sensor_manager.should_update("parity_schedule")
+                
                 try:
-                    result = await self.api.execute_command(
-                        "cat /boot/config/plugins/dynamix/parity-check.cron"
-                    )
-                    next_check = "Unknown"
+                    next_check = None
                     
-                    if result and result.exit_status == 0:
-                        _LOGGER.debug("Found parity check cron: %s", result.stdout)
+                    if need_parity_update:
+                        next_check = await self._parse_parity_schedule()
+                        cache_misses += 1
                         
-                        # Parse the cron entries
-                        for line in result.stdout.splitlines():
-                            if "mdcmd check" in line and not line.startswith('#'):
-                                # Split the cron entry
-                                parts = line.strip().split()
-                                if len(parts) >= 5:
-                                    minute, hour, dom, month, dow = parts[:5]
-                                    
-                                    now = dt_util.now()
-                                    next_run = None
-                                    
-                                    # Parse based on the cron pattern
-                                    if dom == "1" and month == "1":  # Yearly on Jan 1st
-                                        next_run = now.replace(
-                                            month=1, 
-                                            day=1, 
-                                            hour=int(hour), 
-                                            minute=int(minute), 
-                                            second=0, 
-                                            microsecond=0
-                                        )
-                                        if next_run <= now:
-                                            next_run = next_run.replace(year=next_run.year + 1)
-                                    elif dom == "1" and month == "*":  # Monthly on 1st
-                                        next_run = now.replace(
-                                            day=1, 
-                                            hour=int(hour), 
-                                            minute=int(minute), 
-                                            second=0, 
-                                            microsecond=0
-                                        )
-                                        if next_run <= now:
-                                            if next_run.month == 12:
-                                                next_run = next_run.replace(year=next_run.year + 1, month=1)
-                                            else:
-                                                next_run = next_run.replace(month=next_run.month + 1)
-                                    
-                                    if next_run:
-                                        # Format the date nicely
-                                        if (next_run - now).days == 0:
-                                            next_check = f"Today at {next_run.strftime('%H:%M')}"
-                                        elif (next_run - now).days == 1:
-                                            next_check = f"Tomorrow at {next_run.strftime('%H:%M')}"
-                                        else:
-                                            next_check = next_run.strftime("%b %d %Y at %H:%M")
-                                        break
-                    
-                    # If no cron schedule found, fall back to config file check
-                    if next_check == "Unknown":
-                        parity_config = data.get("disk_config", {})
-                        if not parity_config.get("parity.mode") == "4":  # If not manual mode
-                            next_check = "Schedule configuration error"
+                        if next_check:
+                            self._cache_manager.set(
+                                parity_key,
+                                next_check,
+                                ttl=3600,  # 1 hour cache (rarely changes)
+                                priority=CacheItemPriority.LOW
+                            )
+                            
+                            # Record sensor update
+                            if isinstance(next_check, str):
+                                self._sensor_manager.record_update("parity_schedule", next_check)
+                    else:
+                        next_check = self._cache_manager.get(parity_key)
+                        if next_check:
+                            cache_hits += 1
                         else:
-                            next_check = "Manual Only"
+                            next_check = await self._parse_parity_schedule()
+                            cache_misses += 1
+                            
+                            if next_check:
+                                self._cache_manager.set(
+                                    parity_key,
+                                    next_check,
+                                    ttl=3600,
+                                    priority=CacheItemPriority.LOW
+                                )
                     
-                    data["next_parity_check"] = next_check
-                    _LOGGER.debug("Set next parity check to: %s", next_check)
+                    if next_check and isinstance(next_check, str):
+                        data["next_parity_check"] = next_check
                     
                 except Exception as err:
                     _LOGGER.error("Error parsing parity schedule: %s", err)
                     data["next_parity_check"] = "Unknown"
 
-                _LOGGER.debug("Data update complete. Keys collected: %s", list(data.keys()))
+                # Clear requested sensor updates
+                self._update_requested_sensors.clear()
+                
+                # Calculate and log update performance
+                elapsed = time.time() - start_time
+                _LOGGER.debug(
+                    "Data update complete in %.2fs. Cache hits: %d, misses: %d, hit rate: %.1f%%",
+                    elapsed,
+                    cache_hits,
+                    cache_misses,
+                    (cache_hits / max(1, cache_hits + cache_misses)) * 100
+                )
 
-                await self._update_disk_mappings(data)
                 return data
 
         except Exception as err:
             _LOGGER.error("Error communicating with Unraid: %s", err)
             raise UpdateFailed(f"Error communicating with Unraid: {err}") from err
+            
+    async def _check_memory_usage(self) -> None:
+        """Check memory usage and log warnings if needed."""
+        # Only check once per minute
+        if (dt_util.utcnow() - self._last_memory_check).total_seconds() < 60:
+            return
+            
+        self._last_memory_check = dt_util.utcnow()
+        
+        try:
+            # Get memory usage - use psutil if available, otherwise skip
+            import psutil
+            
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / 1024 / 1024
+            
+            # Log warning if over 90MB
+            if memory_mb > 90 and not self._memory_warning_emitted:
+                _LOGGER.warning(
+                    "High memory usage detected: %.1f MB - consider adjusting cache size",
+                    memory_mb
+                )
+                self._memory_warning_emitted = True
+            elif memory_mb < 85 and self._memory_warning_emitted:
+                # Reset warning flag if memory drops below threshold
+                self._memory_warning_emitted = False
+                
+            # If extremely high, force garbage collection and cache cleanup
+            if memory_mb > 110:
+                _LOGGER.warning(
+                    "Critically high memory usage: %.1f MB - forcing cache cleanup",
+                    memory_mb
+                )
+                
+                # Force cleanup
+                self._cache_manager._cleanup()
+                
+                # Force Python garbage collection
+                gc.collect()
+                
+        except (ImportError, Exception) as err:
+            # If psutil not available, silently continue
+            pass
+            
+    async def _parse_parity_schedule(self) -> Optional[str]:
+        """Parse the parity check schedule."""
+        try:
+            result = await self.api.execute_command(
+                "cat /boot/config/plugins/dynamix/parity-check.cron"
+            )
+            next_check = "Unknown"
+            
+            if result and result.exit_status == 0:
+                # Parse the cron entries
+                for line in result.stdout.splitlines():
+                    if "mdcmd check" in line and not line.startswith('#'):
+                        # Split the cron entry
+                        parts = line.strip().split()
+                        if len(parts) >= 5:
+                            minute, hour, dom, month, dow = parts[:5]
+                            
+                            now = dt_util.now()
+                            next_run = None
+                            
+                            # Parse based on the cron pattern
+                            if dom == "1" and month == "1":  # Yearly on Jan 1st
+                                next_run = now.replace(
+                                    month=1, 
+                                    day=1, 
+                                    hour=int(hour), 
+                                    minute=int(minute), 
+                                    second=0, 
+                                    microsecond=0
+                                )
+                                if next_run <= now:
+                                    next_run = next_run.replace(year=next_run.year + 1)
+                            elif dom == "1" and month == "*":  # Monthly on 1st
+                                next_run = now.replace(
+                                    day=1, 
+                                    hour=int(hour), 
+                                    minute=int(minute), 
+                                    second=0, 
+                                    microsecond=0
+                                )
+                                if next_run <= now:
+                                    if next_run.month == 12:
+                                        next_run = next_run.replace(year=next_run.year + 1, month=1)
+                                    else:
+                                        next_run = next_run.replace(month=next_run.month + 1)
+                            
+                            if next_run:
+                                # Format the date nicely
+                                if (next_run - now).days == 0:
+                                    next_check = f"Today at {next_run.strftime('%H:%M')}"
+                                elif (next_run - now).days == 1:
+                                    next_check = f"Tomorrow at {next_run.strftime('%H:%M')}"
+                                else:
+                                    next_check = next_run.strftime("%b %d %Y at %H:%M")
+                                break
+            
+            # If no cron schedule found, check disk config
+            if next_check == "Unknown":
+                # Get disk config from cache if possible
+                disk_config_key = self._get_cache_key("disk_config")
+                disk_config = self._cache_manager.get(disk_config_key, {})
+                
+                if not disk_config:
+                    # Try to read disk config
+                    result = await self.api.execute_command("cat /boot/config/disk.cfg")
+                    if result and result.exit_status == 0:
+                        disk_config = {}
+                        for line in result.stdout.splitlines():
+                            line = line.strip()
+                            if line and not line.startswith("#"):
+                                try:
+                                    key, value = line.split("=", 1)
+                                    disk_config[key] = value.strip('"')
+                                except ValueError:
+                                    continue
+                        
+                        # Cache the disk config
+                        self._cache_manager.set(
+                            disk_config_key,
+                            disk_config,
+                            ttl=3600,  # 1 hour cache
+                            priority=CacheItemPriority.LOW
+                        )
+                
+                if disk_config:
+                    if not disk_config.get("parity.mode") == "4":  # If not manual mode
+                        next_check = "Schedule configuration error"
+                    else:
+                        next_check = "Manual Only"
+            
+            return next_check
+                
+        except Exception as err:
+            _LOGGER.error("Error parsing parity schedule: %s", err)
+            return "Unknown"
+
+    def _get_cache_key(self, key_type: str, identifier: str = "") -> str:
+        """Generate a standardized cache key."""
+        if identifier:
+            return f"{key_type}:{self.hostname}:{identifier}"
+        return f"{key_type}:{self.hostname}"
+        
+    def register_sensor(
+        self, 
+        sensor_id: str, 
+        category: Optional[SensorCategory] = None,
+        priority: Optional[SensorPriority] = None
+    ) -> None:
+        """Register a sensor with the priority system."""
+        self._sensor_manager.register_sensor(sensor_id, category, priority)
+        
+    def request_sensor_update(self, sensor_id: str) -> None:
+        """Request a specific sensor to be updated in the next update cycle."""
+        self._update_requested_sensors.add(sensor_id)
+        
+    def get_sensor_stats(self) -> Dict[str, Any]:
+        """Get statistics about sensor prioritization."""
+        return self._sensor_manager.get_sensor_stats()
+        
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get statistics about cache usage."""
+        return self._cache_manager.get_stats()
 
     async def _async_update_network_stats(
         self,
