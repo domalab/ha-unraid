@@ -48,6 +48,15 @@ class SystemOperationsMixin:
         """Fetch system statistics from the Unraid server."""
         _LOGGER.debug("Fetching system stats from Unraid server")
 
+        try:
+            # Try the optimized batched command approach
+            system_stats = await self.collect_system_stats()
+            if system_stats:
+                return system_stats
+        except Exception as err:
+            _LOGGER.warning("Optimized system stats collection failed, falling back to individual commands: %s", err)
+
+        # Fallback to original implementation if optimized approach fails
         # Get array state first
         array_state = await self._parse_array_state()
 
@@ -162,12 +171,12 @@ class SystemOperationsMixin:
 
     async def _get_cpu_info(self) -> Dict[str, Any]:
         """Get CPU information with caching and robust error handling.
-        
+
         Returns:
             Dict containing:
                 - cpu_arch: CPU architecture (e.g. x86_64)
                 - cpu_cores: Number of CPU cores
-                - cpu_model: CPU model name 
+                - cpu_model: CPU model name
                 - cpu_threads_per_core: Number of threads per core
                 - cpu_sockets: Number of physical CPU sockets
                 - cpu_max_freq: Maximum CPU frequency in MHz
@@ -175,28 +184,28 @@ class SystemOperationsMixin:
         """
         cache_key = "_cpu_info_cache"
         cache_time_key = "_cpu_info_cache_time"
-        
+
         # Check cache age - refresh every 24 hours
         if hasattr(self, cache_key) and hasattr(self, cache_time_key):
             cache_age = datetime.now() - getattr(self, cache_time_key)
             if cache_age.total_seconds() < 86400:  # 24 hours
                 return getattr(self, cache_key)
-            
+
         try:
             # Get detailed CPU info using lscpu -J
             result = await self.execute_command("lscpu -J")
             if result.exit_status != 0:
                 raise RuntimeError(f"lscpu command failed: {result.stderr}")
-                
+
             cpu_data = json.loads(result.stdout)
-            
+
             # Helper function to safely extract values from lscpu output
             def get_lscpu_value(field_name: str) -> Optional[str]:
                 for entry in cpu_data.get("lscpu", []):
                     if entry.get("field", "").startswith(field_name):
                         return entry.get("data")
                 return None
-                
+
             # Extract relevant CPU information
             cpu_info = {
                 "cpu_arch": get_lscpu_value("Architecture:") or "unknown",
@@ -207,7 +216,7 @@ class SystemOperationsMixin:
                 "cpu_max_freq": float(get_lscpu_value("CPU max MHz:") or 0),
                 "cpu_min_freq": float(get_lscpu_value("CPU min MHz:") or 0),
             }
-            
+
             # Validate core count with fallback methods if needed
             if cpu_info["cpu_cores"] == 0:
                 # Fallback 1: Try nproc
@@ -245,7 +254,7 @@ class SystemOperationsMixin:
             # Cache the results with timestamp
             setattr(self, cache_key, cpu_info)
             setattr(self, cache_time_key, datetime.now())
-            
+
             return cpu_info
 
         except json.JSONDecodeError as err:
@@ -264,7 +273,7 @@ class SystemOperationsMixin:
             model_result = await self.execute_command(
                 "cat /proc/cpuinfo | grep 'model name' | head -n1 | cut -d':' -f2"
             )
-            
+
             return {
                 "cpu_arch": arch_result.stdout.strip() if arch_result.exit_status == 0 else "unknown",
                 "cpu_cores": int(cores_result.stdout.strip()) if cores_result.exit_status == 0 else 0,
@@ -288,19 +297,19 @@ class SystemOperationsMixin:
 
     async def _get_cpu_usage(self) -> Optional[float]:
         """Fetch CPU usage information from the Unraid system.
-        
+
         Returns:
             Float between 0-100 representing total CPU usage percentage,
             or None if the data could not be retrieved.
         """
         try:
             _LOGGER.debug("Fetching CPU usage")
-            
+
             # Get per-CPU usage stats
             result = await self.execute_command(
                 "top -bn1 | grep '^%Cpu' | awk '{print 100 - $8}'"
             )
-            
+
             if result.exit_status != 0:
                 _LOGGER.error("CPU usage command failed with exit status %d", result.exit_status)
                 return None
@@ -310,15 +319,15 @@ class SystemOperationsMixin:
                 usage = float(result.stdout.strip())
                 if 0 <= usage <= 100:
                     return round(usage, 2)
-                    
+
                 _LOGGER.warning("CPU usage outside valid range (0-100): %f", usage)
                 return None
-                
+
             except ValueError as err:
-                _LOGGER.error("Failed to parse CPU usage from output '%s': %s", 
+                _LOGGER.error("Failed to parse CPU usage from output '%s': %s",
                             result.stdout.strip(), err)
                 return None
-                
+
         except (asyncssh.Error, asyncio.TimeoutError) as err:
             _LOGGER.error("Connection error getting CPU usage: %s", err)
             return None
@@ -352,7 +361,7 @@ class SystemOperationsMixin:
             cached = memory_info.get('Cached', 0)
             buffers = memory_info.get('Buffers', 0)
             available = memory_info.get('MemAvailable', 0)
-            
+
             # Calculate used memory (total - free - cached - buffers)
             used = total - free - cached - buffers
 
@@ -509,7 +518,7 @@ class SystemOperationsMixin:
                 # Parse sensors output
                 sensors_dict = self._parse_sensors_output(result.stdout)
                 temp_data['sensors'] = sensors_dict
-                
+
                 # Extract fan data
                 fans = extract_fans_data(sensors_dict)
                 if fans:
@@ -535,7 +544,7 @@ class SystemOperationsMixin:
         sensors_data = {}
         current_sensor = None
         key_counters = {}  # Track duplicate keys per sensor
-        
+
         for line in output.splitlines():
             if ':' not in line:
                 current_sensor = line.strip()
@@ -545,14 +554,14 @@ class SystemOperationsMixin:
                 key, value = line.split(':', 1)
                 key = key.strip()
                 value = value.split('(')[0].strip()
-                
+
                 # Handle duplicate keys by adding a number
                 if key in sensors_data[current_sensor]:
                     key_counters[current_sensor][key] = key_counters[current_sensor].get(key, 1) + 1
                     key = f"{key} #{key_counters[current_sensor][key]}"
-                
+
                 sensors_data[current_sensor][key] = value
-        
+
         return sensors_data
 
     def _parse_thermal_zones(self, output: str) -> Dict[str, float]:
@@ -668,20 +677,301 @@ class SystemOperationsMixin:
 
         return "UTC"  # Default to UTC instead of PST
 
+    async def collect_system_stats(self) -> Dict[str, Any]:
+        """Collect system statistics using a single batched command."""
+        try:
+            # Use a single command to collect all system statistics
+            _LOGGER.debug("Collecting system statistics with batched command")
+            cmd = (
+                "echo '===ARRAY_STATE==='; "
+                "mdcmd status; "
+                "echo '===CPU_USAGE==='; "
+                "top -bn1 | grep '^%Cpu' | awk '{print 100 - $8}'; "
+                "echo '===MEMORY_INFO==='; "
+                "cat /proc/meminfo; "
+                "echo '===UPTIME==='; "
+                "cat /proc/uptime; "
+                "echo '===TEMPERATURE==='; "
+                "sensors; "
+                "echo '===THERMAL_ZONES==='; "
+                "paste <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp); "
+                "echo '===BOOT_USAGE==='; "
+                "df -k /boot | awk 'NR==2 {print $2,$3,$4}'; "
+                "echo '===CACHE_USAGE==='; "
+                "mountpoint -q /mnt/cache && df -k /mnt/cache | awk 'NR==2 {print $2,$3,$4}' || echo 'not_mounted'; "
+                "echo '===LOG_USAGE==='; "
+                "df -k /var/log | awk 'NR==2 {print $2,$3,$4,$5}'; "
+                "echo '===DOCKER_VDISK==='; "
+                "df -k /var/lib/docker | awk 'NR==2 {print $2,$3,$4}' 2>/dev/null || echo 'not_mounted'"
+            )
+
+            result = await self.execute_command(cmd)
+
+            if result.exit_status == 0:
+                # Split the output into sections
+                sections = {}
+                current_section = None
+                section_content = []
+
+                for line in result.stdout.splitlines():
+                    if line.startswith('===') and line.endswith('==='):
+                        # Save previous section if it exists
+                        if current_section:
+                            sections[current_section] = '\n'.join(section_content)
+                        # Start new section
+                        current_section = line.strip('=').strip()
+                        section_content = []
+                    elif current_section:
+                        section_content.append(line)
+
+                # Save the last section
+                if current_section and section_content:
+                    sections[current_section] = '\n'.join(section_content)
+
+                # Parse each section
+                system_stats = {}
+
+                # Parse array state
+                if 'ARRAY_STATE' in sections:
+                    array_state = self._parse_array_state_from_output(sections['ARRAY_STATE'])
+                    system_stats['array_state'] = {
+                        "state": array_state.state,
+                        "num_disks": array_state.num_disks,
+                        "num_disabled": array_state.num_disabled,
+                        "num_invalid": array_state.num_invalid,
+                        "num_missing": array_state.num_missing,
+                        "synced": array_state.synced,
+                        "sync_action": array_state.sync_action,
+                        "sync_progress": array_state.sync_progress,
+                        "sync_errors": array_state.sync_errors,
+                    }
+
+                # Parse CPU usage
+                if 'CPU_USAGE' in sections:
+                    try:
+                        cpu_usage = float(sections['CPU_USAGE'].strip())
+                        if 0 <= cpu_usage <= 100:
+                            system_stats['cpu_usage'] = round(cpu_usage, 2)
+                    except (ValueError, TypeError):
+                        _LOGGER.debug("Could not parse CPU usage from output: %s", sections['CPU_USAGE'])
+
+                # Parse memory info
+                if 'MEMORY_INFO' in sections:
+                    system_stats['memory_usage'] = self._parse_memory_info(sections['MEMORY_INFO'])
+
+                # Parse uptime
+                if 'UPTIME' in sections:
+                    try:
+                        uptime_match = re.search(r'(\d+(\.\d+)?)', sections['UPTIME'])
+                        if uptime_match:
+                            system_stats['uptime'] = float(uptime_match.group(1))
+                    except (ValueError, TypeError):
+                        _LOGGER.debug("Could not parse uptime from output: %s", sections['UPTIME'])
+
+                # Parse temperature data
+                if 'TEMPERATURE' in sections:
+                    sensors_dict = self._parse_sensors_output(sections['TEMPERATURE'])
+                    temp_data = {'sensors': sensors_dict}
+
+                    # Extract fan data
+                    fans = extract_fans_data(sensors_dict)
+                    if fans:
+                        temp_data['fans'] = fans
+
+                    system_stats['temperature_data'] = temp_data
+
+                # Parse thermal zones
+                if 'THERMAL_ZONES' in sections and sections['THERMAL_ZONES'].strip():
+                    thermal_zones = self._parse_thermal_zones(sections['THERMAL_ZONES'])
+                    if 'temperature_data' not in system_stats:
+                        system_stats['temperature_data'] = {}
+                    system_stats['temperature_data']['thermal_zones'] = thermal_zones
+
+                # Parse boot usage
+                if 'BOOT_USAGE' in sections and sections['BOOT_USAGE'].strip():
+                    try:
+                        total, used, free = map(int, sections['BOOT_USAGE'].strip().split())
+                        percentage = (used / total) * 100 if total > 0 else 0
+                        system_stats['boot_usage'] = {
+                            "percentage": round(percentage, 2),
+                            "total": total * 1024,  # Convert to bytes
+                            "used": used * 1024,    # Convert to bytes
+                            "free": free * 1024     # Convert to bytes
+                        }
+                    except (ValueError, TypeError):
+                        _LOGGER.debug("Could not parse boot usage from output: %s", sections['BOOT_USAGE'])
+
+                # Parse cache usage
+                if 'CACHE_USAGE' in sections:
+                    cache_output = sections['CACHE_USAGE'].strip()
+                    if cache_output == 'not_mounted':
+                        system_stats['cache_usage'] = {
+                            "percentage": 0,
+                            "total": 0,
+                            "used": 0,
+                            "free": 0,
+                            "status": "not_mounted"
+                        }
+                    else:
+                        try:
+                            total, used, free = map(int, cache_output.split())
+                            percentage = (used / total) * 100 if total > 0 else 0
+                            system_stats['cache_usage'] = {
+                                "percentage": round(percentage, 2),
+                                "total": total * 1024,  # Convert to bytes
+                                "used": used * 1024,    # Convert to bytes
+                                "free": free * 1024,    # Convert to bytes
+                                "status": "mounted"
+                            }
+                        except (ValueError, TypeError):
+                            _LOGGER.debug("Could not parse cache usage from output: %s", cache_output)
+
+                # Parse log filesystem usage
+                if 'LOG_USAGE' in sections and sections['LOG_USAGE'].strip():
+                    try:
+                        total, used, free, percentage = sections['LOG_USAGE'].strip().split()
+                        system_stats['log_filesystem'] = {
+                            "total": int(total) * 1024,
+                            "used": int(used) * 1024,
+                            "free": int(free) * 1024,
+                            "percentage": float(percentage.strip('%'))
+                        }
+                    except (ValueError, TypeError):
+                        _LOGGER.debug("Could not parse log usage from output: %s", sections['LOG_USAGE'])
+
+                # Parse docker vdisk usage
+                if 'DOCKER_VDISK' in sections:
+                    docker_output = sections['DOCKER_VDISK'].strip()
+                    if docker_output == 'not_mounted':
+                        system_stats['docker_vdisk'] = {
+                            "percentage": 0,
+                            "total": 0,
+                            "used": 0,
+                            "free": 0
+                        }
+                    else:
+                        try:
+                            total, used, free = map(int, docker_output.split())
+                            percentage = (used / total) * 100 if total > 0 else 0
+                            system_stats['docker_vdisk'] = {
+                                "percentage": round(percentage, 2),
+                                "total": total * 1024,  # Convert to bytes
+                                "used": used * 1024,    # Convert to bytes
+                                "free": free * 1024     # Convert to bytes
+                            }
+                        except (ValueError, TypeError):
+                            _LOGGER.debug("Could not parse docker vdisk usage from output: %s", docker_output)
+
+                # Get UPS info separately as it's not part of the batched command
+                system_stats['ups_info'] = await self.get_ups_info()
+
+                # Get array usage separately as it requires parsing the array state first
+                system_stats['array_usage'] = await self.get_array_usage()
+
+                # Get individual disks separately as it's more complex
+                system_stats['individual_disks'] = await self.get_individual_disk_usage()
+
+                return system_stats
+
+            _LOGGER.warning("Batched system stats command failed with exit status %d", result.exit_status)
+            return {}
+
+        except Exception as err:
+            _LOGGER.error("Error collecting system statistics with batched command: %s", err)
+            return {}
+
+    def _parse_array_state_from_output(self, output: str) -> ArrayState:
+        """Parse array state from mdcmd output string."""
+        try:
+            # Parse mdcmd output
+            state_dict = {}
+            for line in output.splitlines():
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    state_dict[key] = value.strip()
+
+            return ArrayState(
+                state=state_dict.get("mdState", "UNKNOWN").upper(),
+                num_disks=int(state_dict.get("mdNumDisks", 0)),
+                num_disabled=int(state_dict.get("mdNumDisabled", 0)),
+                num_invalid=int(state_dict.get("mdNumInvalid", 0)),
+                num_missing=int(state_dict.get("mdNumMissing", 0)),
+                synced=bool(int(state_dict.get("sbSynced", 0))),
+                sync_action=state_dict.get("mdResyncAction"),
+                sync_progress=float(state_dict.get("mdResync", 0)),
+                sync_errors=int(state_dict.get("mdResyncCorr", 0))
+            )
+        except (ValueError, TypeError) as err:
+            _LOGGER.error("Error parsing array state from output: %s", err)
+            return ArrayState(
+                state="ERROR",
+                num_disks=0,
+                num_disabled=0,
+                num_invalid=0,
+                num_missing=0,
+                synced=False
+            )
+
+    def _parse_memory_info(self, output: str) -> Dict[str, Any]:
+        """Parse memory info from /proc/meminfo output."""
+        try:
+            # Parse meminfo into a dictionary
+            memory_info = {}
+            for line in output.splitlines():
+                try:
+                    key, value = line.split(':')
+                    # Convert kB to bytes and strip 'kB'
+                    value = int(value.strip().split()[0]) * 1024
+                    memory_info[key.strip()] = value
+                except (ValueError, IndexError):
+                    continue
+
+            # Calculate memory values
+            total = memory_info.get('MemTotal', 0)
+            free = memory_info.get('MemFree', 0)
+            cached = memory_info.get('Cached', 0)
+            buffers = memory_info.get('Buffers', 0)
+            available = memory_info.get('MemAvailable', 0)
+
+            # Calculate used memory (total - free - cached - buffers)
+            used = total - free - cached - buffers
+
+            # Validate values to prevent division by zero or negative values
+            if total <= 0:
+                _LOGGER.error("Invalid total memory value: %d", total)
+                return {"percentage": None}
+
+            # Format values for reporting
+            memory_stats = {
+                "percentage": round((used / total) * 100, 2),
+                "total": format_bytes(total),
+                "used": format_bytes(used),
+                "free": format_bytes(free),
+                "cached": format_bytes(cached),
+                "buffers": format_bytes(buffers),
+                "available": format_bytes(available),
+            }
+
+            return memory_stats
+
+        except Exception as err:
+            _LOGGER.error("Error parsing memory info: %s", err)
+            return {"percentage": None}
+
     def _sanitize_hostname(self, hostname: str) -> str:
         """Sanitize hostname for entity ID compatibility."""
         # Remove invalid characters
         sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', hostname.lower())
-        
+
         # Replace consecutive underscores
         sanitized = re.sub(r'_+', '_', sanitized)
-        
+
         # Trim to max length
         sanitized = sanitized[:32]  # Using constant would be better
-        
+
         # Remove leading/trailing underscores
         sanitized = sanitized.strip('_')
-        
+
         # Capitalize first letter
         sanitized = sanitized.capitalize() if sanitized else None
         return sanitized

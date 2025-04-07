@@ -159,7 +159,7 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
         self._last_network_update = None
         self._max_retries = 2
         self._retry_delay = 1.0  # seconds
-        
+
     async def _execute_with_retry(self, command: str):
         """Execute command with retry mechanism for resilience."""
         retries = 0
@@ -171,90 +171,179 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
                 retries += 1
                 if retries > self._max_retries:
                     _LOGGER.error(
-                        "Command failed after %d retries: %s", 
-                        self._max_retries, 
+                        "Command failed after %d retries: %s",
+                        self._max_retries,
                         command
                     )
                     raise
-                
+
                 _LOGGER.debug(
-                    "Retrying command (attempt %d/%d): %s", 
-                    retries, 
-                    self._max_retries + 1, 
+                    "Retrying command (attempt %d/%d): %s",
+                    retries,
+                    self._max_retries + 1,
                     command
                 )
                 await asyncio.sleep(self._retry_delay)
 
     async def get_network_stats(self) -> Dict[str, Any]:
-        """Fetch network statistics asynchronously."""
+        """Fetch network statistics using a batched command."""
         try:
             async with self._network_lock:
-                # Get active interfaces
-                interfaces = await self._get_active_interfaces()
-                
-                # Gather stats for all interfaces concurrently
-                tasks = [
-                    self._get_interface_stats(interface)
-                    for interface in interfaces
-                ]
-                
-                # Execute all tasks concurrently
-                stats_results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                # Process results
+                # Use a single command to collect all network interface data
+                # Filter out virtual interfaces (veth*, vnet*) and only include physical interfaces
+                _LOGGER.debug("Collecting network interface data with batched command")
+                result = await self.execute_command(
+                    "for iface in $(ls -1 /sys/class/net/ | grep -v -E '^(lo|bond|tun|tap|docker|veth|vnet)'); do "
+                    "  rx=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null || echo 0); "
+                    "  tx=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null || echo 0); "
+                    "  speed=$(cat /sys/class/net/$iface/speed 2>/dev/null || echo unknown); "
+                    "  duplex=$(cat /sys/class/net/$iface/duplex 2>/dev/null || echo unknown); "
+                    "  carrier=$(cat /sys/class/net/$iface/carrier 2>/dev/null || echo 0); "
+                    "  echo \"$iface|$rx|$tx|$speed|$duplex|$carrier\"; "
+                    "done; "
+                    "# Include bridge interfaces if configured"
+                    "for iface in $(ls -1 /sys/class/net/ | grep -E '^br'); do "
+                    "  rx=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null || echo 0); "
+                    "  tx=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null || echo 0); "
+                    "  speed=$(cat /sys/class/net/$iface/speed 2>/dev/null || echo unknown); "
+                    "  duplex=$(cat /sys/class/net/$iface/duplex 2>/dev/null || echo unknown); "
+                    "  carrier=$(cat /sys/class/net/$iface/carrier 2>/dev/null || echo 0); "
+                    "  echo \"$iface|$rx|$tx|$speed|$duplex|$carrier\"; "
+                    "done"
+                )
+
+                if result.exit_status != 0:
+                    _LOGGER.error("Network stats command failed with exit status %d", result.exit_status)
+                    return {}
+
+                # Parse the result
                 network_stats = {}
                 current_time = datetime.now(timezone.utc)
-                
-                for interface, stats in zip(interfaces, stats_results):
-                    if isinstance(stats, Exception):
-                        _LOGGER.error(
-                            "Error getting stats for interface %s: %s",
-                            interface,
-                            stats
-                        )
-                        continue
-                        
-                    # Calculate rates if we have previous data
-                    if interface in self._network_stats:
-                        rates = await self._calculate_rates(
-                            interface,
-                            stats,
-                            current_time
-                        )
-                        stats.update(rates)
-                    
-                    # Store current stats
-                    self._network_stats[interface] = NetworkStats(
-                        rx_bytes=stats["rx_bytes"],
-                        tx_bytes=stats["tx_bytes"],
-                        last_update=current_time
-                    )
-                    
-                    network_stats[interface] = stats
+
+                for line in result.stdout.splitlines():
+                    parts = line.split("|")
+                    if len(parts) == 6:
+                        try:
+                            interface, rx, tx, speed, duplex, carrier = parts
+                            rx_bytes = int(rx)
+                            tx_bytes = int(tx)
+                            link_detected = carrier == "1"
+
+                            stats = {
+                                "rx_bytes": rx_bytes,
+                                "tx_bytes": tx_bytes,
+                                "speed": speed,
+                                "duplex": duplex,
+                                "link_detected": link_detected,
+                                "connected": link_detected
+                            }
+
+                            # Calculate rates if we have previous data
+                            if interface in self._network_stats:
+                                rates = await self._calculate_rates(
+                                    interface,
+                                    stats,
+                                    current_time
+                                )
+                                stats.update(rates)
+
+                            # Store current stats
+                            self._network_stats[interface] = NetworkStats(
+                                rx_bytes=rx_bytes,
+                                tx_bytes=tx_bytes,
+                                last_update=current_time
+                            )
+
+                            network_stats[interface] = stats
+                        except ValueError as e:
+                            _LOGGER.warning("Error parsing network stats for %s: %s", interface, e)
 
                 self._last_network_update = current_time
                 return network_stats
 
         except Exception as err:
             _LOGGER.error("Error getting network stats: %s", err)
+            # Fallback to original implementation if batched command fails
+            try:
+                return await self._get_network_stats_original()
+            except Exception as fallback_err:
+                _LOGGER.error("Fallback network stats method also failed: %s", fallback_err)
+                return {}
+
+    async def _get_network_stats_original(self) -> Dict[str, Any]:
+        """Original implementation of network stats collection as fallback."""
+        try:
+            # Get active interfaces
+            interfaces = await self._get_active_interfaces()
+
+            # Gather stats for all interfaces concurrently
+            tasks = [
+                self._get_interface_stats(interface)
+                for interface in interfaces
+            ]
+
+            # Execute all tasks concurrently
+            stats_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Process results
+            network_stats = {}
+            current_time = datetime.now(timezone.utc)
+
+            for interface, stats in zip(interfaces, stats_results):
+                if isinstance(stats, Exception):
+                    _LOGGER.error(
+                        "Error getting stats for interface %s: %s",
+                        interface,
+                        stats
+                    )
+                    continue
+
+                # Calculate rates if we have previous data
+                if interface in self._network_stats:
+                    rates = await self._calculate_rates(
+                        interface,
+                        stats,
+                        current_time
+                    )
+                    stats.update(rates)
+
+                # Store current stats
+                self._network_stats[interface] = NetworkStats(
+                    rx_bytes=stats["rx_bytes"],
+                    tx_bytes=stats["tx_bytes"],
+                    last_update=current_time
+                )
+
+                network_stats[interface] = stats
+
+            self._last_network_update = current_time
+            return network_stats
+
+        except Exception as err:
+            _LOGGER.error("Error in original network stats method: %s", err)
             return {}
 
     async def _get_active_interfaces(self) -> list[str]:
-        """Get list of active network interfaces."""
+        """Get list of active network interfaces.
+
+        Only includes physical interfaces (eth*) and bridge interfaces (br*) if configured.
+        Excludes virtual interfaces (veth*, vnet*) and other non-physical interfaces.
+        """
         try:
+            # Get physical interfaces (eth*) and bridge interfaces (br*)
             result = await self.execute_command(
-                "ip -br link show | grep -E '^(eth|bond)' | awk '{print $1}'"
+                "ip -br link show | grep -E '^(eth|br)' | grep -v -E 'veth|vnet' | awk '{print $1}'"
             )
-            
+
             if result.exit_status != 0:
                 return []
-                
+
             return [
                 interface.strip()
                 for interface in result.stdout.splitlines()
                 if interface.strip()
             ]
-            
+
         except Exception as err:
             _LOGGER.error("Error getting active interfaces: %s", err)
             return []
@@ -270,7 +359,7 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
                 if '@' in normalized_interface:
                     normalized_interface = normalized_interface.split('@')[0]
                 normalized_interface = normalized_interface.replace('o', '0')
-            
+
             _LOGGER.debug(
                 "Processing interface: %s (normalized: %s)",
                 original_interface,
@@ -288,18 +377,18 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
             # Get traffic stats separately with improved error handling
             rx_cmd = f"cat /sys/class/net/{normalized_interface}/statistics/rx_bytes 2>/dev/null || echo 0"
             tx_cmd = f"cat /sys/class/net/{normalized_interface}/statistics/tx_bytes 2>/dev/null || echo 0"
-            
+
             # Execute commands with retry mechanism
             rx_result = await self._execute_with_retry(rx_cmd)
             tx_result = await self._execute_with_retry(tx_cmd)
-            
+
             # Parse values with fallback to 0 for invalid results
             try:
                 rx_bytes = int(rx_result.stdout.strip())
             except (ValueError, AttributeError):
                 _LOGGER.warning("Could not parse RX bytes for %s, using 0", normalized_interface)
                 rx_bytes = 0
-                
+
             try:
                 tx_bytes = int(tx_result.stdout.strip())
             except (ValueError, AttributeError):
@@ -330,13 +419,13 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
             cmd = f"test -d /sys/class/net/{interface}"
             result = await self.execute_command(cmd)
             exists = result.exit_status == 0
-            
+
             _LOGGER.debug(
                 "Interface existence check: %s (exists=%s)",
                 interface,
                 exists
             )
-            
+
             return exists
         except Exception as err:
             _LOGGER.error(

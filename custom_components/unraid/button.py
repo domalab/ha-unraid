@@ -56,16 +56,16 @@ BUTTON_TYPES: tuple[UnraidButtonDescription, ...] = (
 def get_script_buttons(coordinator: UnraidDataUpdateCoordinator) -> list[ButtonEntity]:
     """Get button entities for user scripts."""
     buttons = []
-    
+
     if not coordinator.data:
         _LOGGER.warning("No data available from coordinator")
         return buttons
-        
+
     scripts = coordinator.data.get("user_scripts", [])
     if not scripts:
         _LOGGER.debug("No user scripts found")
         return buttons
-    
+
     for script in scripts:
         # Create foreground button if supported
         if not script.get("background_only", False):
@@ -81,7 +81,7 @@ def get_script_buttons(coordinator: UnraidDataUpdateCoordinator) -> list[ButtonE
                     ),
                 )
             )
-        
+
         # Create background button if supported
         if not script.get("foreground_only", False):
             buttons.append(
@@ -96,7 +96,7 @@ def get_script_buttons(coordinator: UnraidDataUpdateCoordinator) -> list[ButtonE
                     ),
                 )
             )
-    
+
     return buttons
 
 def truncate_output(output: str, max_length: int = 1000) -> str:
@@ -123,14 +123,14 @@ async def async_setup_entry(
         UnraidButton(coordinator, description)
         for description in BUTTON_TYPES
     ]
-    
+
     # Add script buttons
     try:
         script_buttons = get_script_buttons(coordinator)
         entities.extend(script_buttons)
     except Exception as err:
         _LOGGER.error("Error setting up script buttons: %s", err)
-    
+
     async_add_entities(entities)
 
 class UnraidButton(ButtonEntity):
@@ -148,22 +148,22 @@ class UnraidButton(ButtonEntity):
         """Initialize the button."""
         self.coordinator = coordinator
         self.entity_description = description
-        
+
         # Initialize entity naming
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
             component="button"
         )
-        
+
         # Set unique_id and name using naming utility
         self._attr_unique_id = naming.get_entity_id(description.key)
-        self._attr_name = f"{naming.clean_hostname()} {description.name}"
-        
+        self._attr_name = f"Unraid {description.name}"
+
         # Set name and icon
         if description.icon:
             self._attr_icon = description.icon
-                
+
         # Set device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
@@ -183,9 +183,9 @@ class UnraidButton(ButtonEntity):
                 self.entity_description.key,
                 self.coordinator.hostname
             )
-            
+
             await self.entity_description.press_fn(self.coordinator.api)
-            
+
         except Exception as err:
             _LOGGER.error(
                 "Failed to execute %s command: %s",
@@ -193,7 +193,7 @@ class UnraidButton(ButtonEntity):
                 err
             )
             raise HomeAssistantError(f"Failed to execute {self.name} command: {err}") from err
-        
+
 class UnraidScriptButton(ButtonEntity):
     """Representation of an Unraid script button."""
 
@@ -213,19 +213,19 @@ class UnraidScriptButton(ButtonEntity):
             hostname=coordinator.hostname,
             component="script"
         )
-        
+
         self._attr_extra_state_attributes = {}  # Instance-level attribute
         self.coordinator = coordinator
         self.entity_description: UnraidScriptButtonDescription = description
-        
+
         # Set unique_id and name using naming utility
         self._attr_unique_id = naming.get_entity_id(description.key)
-        self._attr_name = f"{naming.clean_hostname()} {description.name}"
-        
+        self._attr_name = f"Unraid {description.name}"
+
         # Set icon if provided
         if description.icon:
             self._attr_icon = description.icon
-                
+
         # Set device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
@@ -239,14 +239,14 @@ class UnraidScriptButton(ButtonEntity):
         try:
             script_name = self.entity_description.script_name
             background = self.entity_description.background
-            
+
             _LOGGER.info(
                 "Executing script %s in %s mode on Unraid instance: %s",
                 script_name,
                 "background" if background else "foreground",
                 self.coordinator.hostname,
             )
-            
+
             # Update running state and add execution info
             self._attr_extra_state_attributes.update({
                 "running": True,
@@ -255,16 +255,16 @@ class UnraidScriptButton(ButtonEntity):
                 "status": "running"
             })
             self.async_write_ha_state()
-            
+
             # Execute script
             result = await self.coordinator.api.execute_user_script(
                 script_name,
                 background=background
             )
-            
+
             # For background scripts, keep running state true
             is_running = background
-            
+
             # Update completion state with truncated output
             self._attr_extra_state_attributes.update({
                 "running": is_running,
@@ -273,10 +273,10 @@ class UnraidScriptButton(ButtonEntity):
                 "completed_at": dt_util.now().isoformat() if not is_running else None
             })
             self.async_write_ha_state()
-            
+
             # Request a coordinator update to refresh script states
             await self.coordinator.async_request_refresh()
-            
+
         except Exception as err:
             # Get the script name safely
             try:
@@ -286,7 +286,7 @@ class UnraidScriptButton(ButtonEntity):
 
             # Create error message
             error_msg = f"Failed to execute script {script_name}: {str(err)}"
-            
+
             # Update state attributes
             self._attr_extra_state_attributes.update({
                 "running": False,
@@ -295,6 +295,6 @@ class UnraidScriptButton(ButtonEntity):
                 "error_at": dt_util.now().isoformat()
             })
             self.async_write_ha_state()
-            
+
             _LOGGER.error(error_msg)
             raise HomeAssistantError(error_msg) from err

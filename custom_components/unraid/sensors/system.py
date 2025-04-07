@@ -50,7 +50,7 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
 
         description = UnraidSensorEntityDescription(
             key="cpu_usage",
-            name=f"{naming.get_entity_name('cpu', 'cpu')} Usage",
+            name="CPU Usage",
             native_unit_of_measurement=PERCENTAGE,
             device_class=SensorDeviceClass.POWER_FACTOR,
             state_class=SensorStateClass.MEASUREMENT,
@@ -58,7 +58,7 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
             suggested_display_precision=1,
             value_fn=lambda data: data.get("system_stats", {}).get("cpu_usage"),
             available_fn=lambda data: (
-                "system_stats" in data 
+                "system_stats" in data
                 and data.get("system_stats", {}).get("cpu_usage") is not None
             ),
         )
@@ -68,7 +68,7 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         data = self.coordinator.data.get("system_stats", {})
-        
+
         attributes = {
             "last_update": dt_util.now().isoformat(),
             "core_count": data.get("cpu_cores", 0),
@@ -87,9 +87,9 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
                 "temperature_warning": data.get("cpu_temp_warning", False),
                 "temperature_critical": data.get("cpu_temp_critical", False),
             })
-        
+
         # Only include non-zero/unknown values
-        return {k: v for k, v in attributes.items() 
+        return {k: v for k, v in attributes.items()
                 if v not in (0, "unknown", "0 MHz")}
 
 class UnraidRAMUsageSensor(UnraidSensorBase):
@@ -106,7 +106,7 @@ class UnraidRAMUsageSensor(UnraidSensorBase):
 
         description = UnraidSensorEntityDescription(
             key="ram_usage",
-            name=f"{naming.get_entity_name('ram', 'ram')} Usage",
+            name="RAM Usage",
             native_unit_of_measurement=PERCENTAGE,
             device_class=SensorDeviceClass.POWER_FACTOR,
             state_class=SensorStateClass.MEASUREMENT,
@@ -148,7 +148,7 @@ class UnraidCPUTempSensor(UnraidSensorBase):
             coordinator,
             UnraidSensorEntityDescription(
                 key="cpu_temperature",
-                name=f"{naming.get_entity_name('cpu', 'cpu')} Temperature",
+                name="CPU Temperature",
                 native_unit_of_measurement=UnitOfTemperature.CELSIUS,
                 device_class=SensorDeviceClass.TEMPERATURE,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -166,7 +166,7 @@ class UnraidCPUTempSensor(UnraidSensorBase):
         try:
             temp_data = data["system_stats"].get("temperature_data", {})
             sensors_data = temp_data.get("sensors", {})
-            
+
             if not sensors_data:
                 return self._last_valid_temp
 
@@ -209,7 +209,7 @@ class UnraidCPUTempSensor(UnraidSensorBase):
             # Step 2: Dynamic detection fallback
             temps = find_temperature_inputs(sensors_data)
             cpu_temps = temps.get('cpu', set())
-            
+
             if cpu_temps:
                 # Filter valid temps and sort by value (highest usually most relevant for CPU)
                 valid_temps = sorted(
@@ -217,7 +217,7 @@ class UnraidCPUTempSensor(UnraidSensorBase):
                     key=lambda x: x.value,
                     reverse=True
                 )
-                
+
                 if valid_temps:
                     temp = valid_temps[0].value
                     self._last_valid_temp = round(temp, 1)
@@ -255,7 +255,7 @@ class UnraidMotherboardTempSensor(UnraidSensorBase):
             coordinator,
             UnraidSensorEntityDescription(
                 key="motherboard_temperature",
-                name=f"{naming.get_entity_name('motherboard', 'motherboard')} Temperature",
+                name="Motherboard Temperature",
                 icon="mdi:thermometer",
                 device_class=SensorDeviceClass.TEMPERATURE,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -272,7 +272,7 @@ class UnraidMotherboardTempSensor(UnraidSensorBase):
         try:
             temp_data = data["system_stats"].get("temperature_data", {})
             sensors_data = temp_data.get("sensors", {})
-            
+
             if not sensors_data:
                 return self._last_valid_temp
 
@@ -318,11 +318,11 @@ class UnraidMotherboardTempSensor(UnraidSensorBase):
             # Step 2: Dynamic detection fallback
             temps = find_temperature_inputs(sensors_data)
             mb_temps = temps.get('mb', set())
-            
+
             if mb_temps:
                 # Filter valid temps and use median for stability
                 valid_temps = [t for t in mb_temps if t.is_valid]
-                
+
                 if valid_temps:
                     # Take median value as it's more stable for motherboard temps
                     sorted_temps = sorted(valid_temps, key=lambda x: x.value)
@@ -359,16 +359,16 @@ class UnraidFanSensor(UnraidSensorBase):
             hostname=coordinator.hostname,
             component="fan"
         )
-        
+
         # Get clean fan label
         display_name = fan_data["label"]
-        
+
         _LOGGER.debug(
             "Initializing fan sensor - ID: %s, Label: %s",
             fan_id,
             display_name
         )
-        
+
         super().__init__(
             coordinator,
             UnraidSensorEntityDescription(
@@ -400,7 +400,7 @@ class UnraidFanSensor(UnraidSensorBase):
                 .get("fans", {})
                 .get(self._fan_id, {})
             )
-            
+
             return {
                 "device": fan_data.get("device"),
                 "label": fan_data.get("label"),
@@ -426,7 +426,7 @@ class UnraidDockerVDiskSensor(UnraidSensorBase):
             coordinator,
             UnraidSensorEntityDescription(
                 key="docker_vdisk",
-                name=f"{naming.get_entity_name('vDisk', 'docker')} Usage",
+                name="Docker vDisk Usage",
                 native_unit_of_measurement=PERCENTAGE,
                 device_class=SensorDeviceClass.POWER_FACTOR,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -471,7 +471,7 @@ class UnraidLogFileSystemSensor(UnraidSensorBase):
             coordinator,
             UnraidSensorEntityDescription(
                 key="log_filesystem",
-                name=f"{naming.get_entity_name('Log Filesystem')} Usage",
+                name="Log Filesystem Usage",
                 native_unit_of_measurement=PERCENTAGE,
                 device_class=SensorDeviceClass.POWER_FACTOR,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -516,7 +516,7 @@ class UnraidBootUsageSensor(UnraidSensorBase):
             coordinator,
             UnraidSensorEntityDescription(
                 key="boot_usage",
-                name=f"{naming.get_entity_name('Flash Device', 'boot')} Usage",
+                name="Flash Device Usage",
                 native_unit_of_measurement=PERCENTAGE,
                 device_class=SensorDeviceClass.POWER_FACTOR,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -559,11 +559,11 @@ class UnraidUptimeSensor(UnraidSensorBase):
 
         description = UnraidSensorEntityDescription(
             key="uptime",
-            name=f"{naming.get_entity_name('uptime', 'uptime')} Status",
+            name="Uptime Status",
             icon="mdi:clock-outline",
             value_fn=self._format_uptime,
             available_fn=lambda data: (
-                "system_stats" in data 
+                "system_stats" in data
                 and data.get("system_stats", {}).get("uptime") is not None
             ),
         )
@@ -613,7 +613,7 @@ class UnraidSystemSensors:
             .get("temperature_data", {})
             .get("fans", {})
         )
-        
+
         if fan_data:
             for fan_id, fan_info in fan_data.items():
                 self.entities.append(

@@ -7,6 +7,7 @@ import aiofiles # type: ignore
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass
 import re
+import json
 from datetime import datetime
 
 from .disk_utils import is_valid_disk_name
@@ -77,7 +78,7 @@ class DiskOperationsMixin:
         self._smart_manager = SmartDataManager(self)
         self._state_manager = DiskStateManager(self)
         _LOGGER.debug("Created SmartDataManager and DiskStateManager")
-        
+
         self._disk_lock = asyncio.Lock()
         self._cached_disk_info: Dict[str, DiskInfo] = {}
         self._last_update: Dict[str, datetime] = {}
@@ -87,14 +88,14 @@ class DiskOperationsMixin:
     def disk_operations(self) -> 'DiskOperationsMixin':
         """Return self as disk operations interface."""
         return self
-    
+
     async def initialize(self) -> None:
         """Initialize disk operations."""
         _LOGGER.debug("Starting disk operations initialization")
         try:
             await self._state_manager.update_spindown_delays()
             _LOGGER.debug("Updated spin-down delays successfully")
-            
+
             # Log the current disk states
             for disk in await self.get_individual_disk_usage():
                 if disk_name := disk.get("name"):
@@ -103,7 +104,7 @@ class DiskOperationsMixin:
                         _LOGGER.debug("Initial state for disk %s: %s", disk_name, state.value)
                     except Exception as err:
                         _LOGGER.warning("Could not get initial state for disk %s: %s", disk_name, err)
-                        
+
         except Exception as err:
             _LOGGER.error("Error during disk operations initialization: %s", err)
 
@@ -119,7 +120,7 @@ class DiskOperationsMixin:
                 )
 
                 mappings = {}
-                
+
                 # Parse disks.ini first (primary source)
                 if not isinstance(command_results[0], Exception) and command_results[0].exit_status == 0:
                     disks_ini_mappings = await parse_disks_ini(self.execute_command)
@@ -189,15 +190,15 @@ class DiskOperationsMixin:
 
             if not disk_name:
                 return disk_info
-            
+
             # Get disk mappings to get serial
             mappings = await self.get_disk_mappings()
             if disk_name in mappings:
                 disk_info["serial"] = mappings[disk_name].get("serial")
-                _LOGGER.debug("Added serial for disk %s: %s", 
+                _LOGGER.debug("Added serial for disk %s: %s",
                             disk_name, disk_info.get("serial"))
 
-            # Map device name to proper device path 
+            # Map device name to proper device path
             if not device:
                 if disk_name.startswith("disk"):
                     try:
@@ -371,17 +372,17 @@ class DiskOperationsMixin:
 
             sync_info = {}
             lines = result.stdout.splitlines()
-            
+
             # Process lines asynchronously
             tasks = []
             for line in lines:
                 if '=' not in line:
                     continue
-                    
+
                 key, value = line.split('=', 1)
                 key = key.strip()
                 value = value.strip()
-                
+
                 if key in ["mdResyncPos", "mdResyncSize", "mdResyncSpeed", "mdResyncCorr"]:
                     tasks.append(self._process_sync_value(key, value))
                 elif key == "mdResyncAction":
@@ -402,7 +403,7 @@ class DiskOperationsMixin:
         except (ValueError, TypeError, OSError) as err:
             _LOGGER.debug("Error getting sync status: %s", err)
             return None
-        
+
     async def _process_sync_value(self, key: str, value: str) -> Tuple[str, Union[int, Exception]]:
         """Process sync values asynchronously."""
         try:
@@ -417,9 +418,233 @@ class DiskOperationsMixin:
         except ValueError as err:
             return key, err
 
+    async def collect_disk_info(self) -> List[Dict[str, Any]]:
+        """Collect information about disks using batched commands."""
+        _LOGGER.debug("Collecting disk information with batched command")
+        disks = []
+
+        try:
+            # Get array status for mapping md devices to physical devices
+            array_info_result = await self.execute_command("mdcmd status")
+            array_info = array_info_result.stdout if array_info_result.exit_status == 0 else ""
+
+            # Get all disk information in a single command
+            cmd = (
+                # Get disk usage
+                "echo '===DISK_USAGE==='; "
+                "df -P -B1 /mnt/disk[0-9]* /mnt/cache* /mnt/user* 2>/dev/null | grep -v '^Filesystem' | awk '{print $6,$2,$3,$4}'; "
+                # Get mount points and devices
+                "echo '===MOUNT_INFO==='; "
+                "mount | grep -E '/mnt/' | awk '{print $1,$3,$5}'; "
+                # Get ZFS pool information
+                "echo '===ZFS_POOLS==='; "
+                "if command -v zpool >/dev/null 2>&1; then zpool list -H -o name,size,alloc,free,capacity,health; else echo 'zfs_not_installed'; fi; "
+                # Get SMART data for all disks
+                "echo '===SMART_DATA==='; "
+                # First get a list of all physical devices
+                "for dev in $(ls -1 /dev/sd[a-z] /dev/nvme[0-9]n[0-9] 2>/dev/null); do "
+                "  echo \"$dev\"; "
+                "  if [[ $dev == *nvme* ]]; then "
+                "    nvme smart-log -o json $dev 2>/dev/null || smartctl -d nvme -a -j $dev 2>/dev/null || echo '{}'; "
+                "  else "
+                "    smartctl -A -j $dev 2>/dev/null || echo '{}'; "
+                "  fi; "
+                "  echo '---NEXT_DEVICE---'; "
+                "done"
+            )
+
+            result = await self.execute_command(cmd)
+
+            if result.exit_status == 0:
+                # Split the output into sections
+                sections = result.stdout.split('===DISK_USAGE===')[1].split('===MOUNT_INFO===')
+                disk_usage_output = sections[0].strip()
+
+                sections = sections[1].split('===ZFS_POOLS===')
+                mount_info_output = sections[0].strip()
+
+                sections = sections[1].split('===SMART_DATA===')
+                zfs_pools_output = sections[0].strip()
+                smart_data_output = sections[1].strip()
+
+                # Parse mount info to create a mapping of mount points to devices and filesystem types
+                mount_to_device = {}
+                mount_to_fs_type = {}
+                for line in mount_info_output.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        device, mount_point, fs_type = parts[0], parts[1], parts[2]
+                        mount_to_device[mount_point] = device
+                        mount_to_fs_type[mount_point] = fs_type
+
+                # Parse array info to map md devices to physical devices
+                md_to_physical = {}
+                disk_name_to_md = {}
+
+                if array_info:
+                    # First find the mapping from disk number to md device
+                    for line in array_info.splitlines():
+                        if '=' in line:
+                            key, value = line.split('=', 1)
+                            key = key.strip()
+                            value = value.strip()
+
+                            if key.startswith("diskName.") and value.startswith("md"):
+                                disk_num = key.split(".")[1]
+                                md_match = re.search(r'md(\d+)', value)
+                                if md_match:
+                                    md_num = md_match.group(1)
+                                    disk_name_to_md[disk_num] = md_num
+
+                    # Now find the physical device for each disk
+                    for line in array_info.splitlines():
+                        if '=' in line:
+                            key, value = line.split('=', 1)
+                            key = key.strip()
+                            value = value.strip()
+
+                            if key.startswith("rdevName."):
+                                disk_num = key.split(".")[1]
+                                if disk_num in disk_name_to_md and value.startswith("sd"):
+                                    md_num = disk_name_to_md[disk_num]
+                                    md_device = f"/dev/md{md_num}p1"
+                                    physical_device = f"/dev/{value}"
+                                    md_to_physical[md_device] = physical_device
+
+                # Parse SMART data
+                device_to_smart_data = {}
+                current_device = None
+                current_data = ""
+
+                for line in smart_data_output.splitlines():
+                    if line.startswith("/dev/"):
+                        current_device = line.strip()
+                        current_data = ""
+                    elif line == "---NEXT_DEVICE---":
+                        if current_device and current_data:
+                            try:
+                                device_to_smart_data[current_device] = json.loads(current_data)
+                            except json.JSONDecodeError:
+                                _LOGGER.warning("Failed to parse SMART data for %s", current_device)
+                        current_device = None
+                        current_data = ""
+                    elif current_device:
+                        current_data += line + "\n"
+
+                # Parse disk usage and create disk entries
+                for line in disk_usage_output.splitlines():
+                    try:
+                        parts = line.split()
+                        if len(parts) != 4:
+                            continue
+
+                        mount_point, total, used, free = parts
+                        disk_name = mount_point.replace('/mnt/', '')
+
+                        # Skip invalid or system disks while allowing custom pools
+                        if not is_valid_disk_name(disk_name):
+                            _LOGGER.debug("Skipping invalid disk name: %s", disk_name)
+                            continue
+
+                        # Get current disk state
+                        state = await self._state_manager.get_disk_state(disk_name)
+
+                        disk_info = {
+                            "name": disk_name,
+                            "mount_point": mount_point,
+                            "total": int(total),
+                            "used": int(used),
+                            "free": int(free),
+                            "percentage": round((int(used) / int(total) * 100), 1) if int(total) > 0 else 0,
+                            "state": state.value,
+                            "smart_data": {},  # Will be populated with SMART data
+                            "smart_status": "Unknown",
+                            "temperature": None,
+                            "device": None,
+                        }
+
+                        # Add filesystem type if available
+                        if mount_point in mount_to_fs_type:
+                            disk_info["filesystem"] = mount_to_fs_type[mount_point]
+
+                        # Get device path
+                        device_path = None
+                        if mount_point in mount_to_device:
+                            device_path = mount_to_device[mount_point]
+                            # Map md device to physical device if needed
+                            if device_path in md_to_physical:
+                                device_path = md_to_physical[device_path]
+                            disk_info["device"] = device_path
+
+                        # Add SMART data if available and disk is active
+                        if state == DiskState.ACTIVE and device_path and device_path in device_to_smart_data:
+                            smart_data = device_to_smart_data[device_path]
+
+                            # Extract SMART status
+                            if "smart_status" in smart_data:
+                                disk_info["smart_status"] = "Passed" if smart_data["smart_status"].get("passed", True) else "Failed"
+
+                            # Extract temperature
+                            temperature = None
+                            is_nvme = "nvme" in device_path.lower()
+
+                            if is_nvme:
+                                # Try different temperature field locations for NVMe
+                                nvme_data = smart_data.get("nvme_smart_health_information_log", {})
+                                if isinstance(nvme_data, dict) and "temperature" in nvme_data:
+                                    temperature = nvme_data["temperature"]
+                                elif "temperature" in smart_data:
+                                    temp_data = smart_data["temperature"]
+                                    if isinstance(temp_data, dict) and "current" in temp_data:
+                                        temperature = temp_data["current"]
+                                    elif isinstance(temp_data, (int, float)):
+                                        temperature = temp_data
+
+                                # Fix for NVMe temperature values reported in tenths of a degree
+                                if temperature is not None and temperature > 100 and temperature < 1000:
+                                    temperature = temperature / 10
+                            else:
+                                # For SATA drives
+                                if "temperature" in smart_data and "current" in smart_data["temperature"]:
+                                    temperature = smart_data["temperature"]["current"]
+                                else:
+                                    # Try to find temperature in attributes
+                                    for attr in smart_data.get("ata_smart_attributes", {}).get("table", []):
+                                        if attr.get("name") == "Temperature_Celsius" and "raw" in attr:
+                                            temperature = attr["raw"].get("value")
+                                            break
+
+                            if temperature is not None:
+                                disk_info["temperature"] = int(temperature)
+
+                            # Store the full SMART data
+                            disk_info["smart_data"] = smart_data
+
+                        disks.append(disk_info)
+                    except (ValueError, IndexError) as err:
+                        _LOGGER.debug("Error parsing disk line '%s': %s", line, err)
+
+                return disks
+            else:
+                _LOGGER.warning("Batched disk info command failed with exit status %d", result.exit_status)
+                return []
+
+        except Exception as err:
+            _LOGGER.error("Error collecting disk information with batched command: %s", err)
+            return []
+
     async def get_individual_disk_usage(self) -> List[Dict[str, Any]]:
         """Get usage information for individual disks."""
         try:
+            # Try the optimized batched command approach first
+            _LOGGER.debug("Fetching individual disk usage with optimized approach")
+            disks = await self.collect_disk_info()
+            if disks:
+                return disks
+
+            # Fallback to original implementation if optimized approach fails
+            _LOGGER.warning("Optimized disk info collection failed, falling back to individual commands")
+
             disks = []
             # Get usage for mounted disks with more specific path patterns
             # Note: Using specific patterns to avoid capturing system paths
@@ -434,15 +659,15 @@ class DiskOperationsMixin:
                     try:
                         mount_point, total, used, free = line.split()
                         disk_name = mount_point.replace('/mnt/', '')
-                        
+
                         # Skip invalid or system disks while allowing custom pools
                         if not is_valid_disk_name(disk_name):
                             _LOGGER.debug("Skipping invalid disk name: %s", disk_name)
                             continue
-                        
+
                         # Get current disk state
                         state = await self._state_manager.get_disk_state(disk_name)
-                        
+
                         disk_info = {
                             "name": disk_name,
                             "mount_point": mount_point,
@@ -456,11 +681,11 @@ class DiskOperationsMixin:
                             "temperature": None,
                             "device": None,
                         }
-                        
+
                         # Update disk status with SMART data if disk is active
                         if state == DiskState.ACTIVE:
                             disk_info = await self.update_disk_status(disk_info)
-                            
+
                         disks.append(disk_info)
 
                     except (ValueError, IndexError) as err:

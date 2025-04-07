@@ -17,6 +17,15 @@ DEFAULT_PORT = 22
 # Migration version
 MIGRATION_VERSION = 2
 
+# Entity naming format version
+# Version 1: unraid_server_hostname_component_name
+# Version 2: unraid_hostname_component_name
+ENTITY_NAMING_VERSION = 2
+
+# Configuration option for entity naming format
+CONF_ENTITY_FORMAT = "entity_format"
+DEFAULT_ENTITY_FORMAT = 2  # Default to new format for new installations
+
 # Unraid Server Hostname
 CONF_HOSTNAME = "hostname"
 MAX_HOSTNAME_LENGTH = 32

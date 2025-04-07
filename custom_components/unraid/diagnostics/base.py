@@ -36,11 +36,12 @@ class UnraidBinarySensorBase(CoordinatorEntity, BinarySensorEntity):
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
-            component=description.key.split('_')[0]
+            component=description.key.split('_')[0],
+            naming_version=coordinator.entity_format  # Use entity format from coordinator
         )
 
         self._attr_unique_id = naming.get_entity_id(description.key)
-        self._attr_name = f"{naming.clean_hostname()} {description.name}"
+        self._attr_name = f"Unraid {description.name}"
 
         _LOGGER.debug(
             "Binary Sensor initialized | unique_id: %s | name: %s | description.key: %s",

@@ -33,7 +33,7 @@ class DockerOperationsMixin:
 
     async def check_docker_running(self) -> bool:
         """Check if Docker is running using multiple methods.
-        
+
         Returns:
             bool: True if Docker service is running, False otherwise.
         """
@@ -43,7 +43,7 @@ class DockerOperationsMixin:
             if service_check.exit_status == 0 and "is currently running" in service_check.stdout:
                 _LOGGER.debug("Docker validated through rc.d script")
                 return True
-                
+
             # Method 2: Process check
             process_check = await self.execute_command("pgrep -f dockerd")
             if process_check.exit_status == 0:
@@ -52,7 +52,7 @@ class DockerOperationsMixin:
                 if sock_check.exit_status == 0:
                     _LOGGER.debug("Docker validated through process and socket checks")
                     return True
-                
+
             _LOGGER.debug(
                 "Docker service checks failed - rc.d: %s, process: %s",
                 service_check.exit_status,
@@ -64,47 +64,76 @@ class DockerOperationsMixin:
             return False
 
     async def get_docker_containers(self) -> List[Dict[str, Any]]:
-        """Fetch information about Docker containers."""
+        """Fetch information about Docker containers using batched commands."""
         try:
             _LOGGER.debug("Fetching Docker container information")
-            
+
             # Use new service check method
             if not await self.check_docker_running():
                 _LOGGER.debug("Docker service is not running, no containers available")
                 return []
 
-            # Get basic container info with proven format
-            result = await self.execute_command("docker ps -a --format '{{.Names}}|{{.State}}|{{.ID}}|{{.Image}}'")
+            # Get container list with basic information in a single command
+            # Note: Removed RunningFor, CPU, Memory, Network I/O, and Block I/O metrics as per optimization requirements
+            result = await self.execute_command(
+                "docker ps -a --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Image}}'"
+            )
+
             if result.exit_status != 0:
-                _LOGGER.debug("No Docker containers found or docker command not available")
+                _LOGGER.error("Failed to get container list: %s", result.stderr)
                 return []
 
+            # Parse container list
             containers = []
+            running_containers = []
+
             for line in result.stdout.splitlines():
-                parts = line.split('|')
-                if len(parts) == 4:  # Now expecting 4 parts
-                    container_name = parts[0].strip()
+                try:
+                    parts = line.split('|')
+                    if len(parts) != 4:  # Updated to match the new format (4 fields instead of 5)
+                        continue
+
+                    container_id, name, status, image = parts
+
+                    # Determine container state
+                    state = "unknown"
+                    if status.startswith("Up"):
+                        state = "running"
+                        running_containers.append(container_id)
+                    elif status.startswith("Exited"):
+                        state = "exited"
+                    elif status.startswith("Created"):
+                        state = "created"
+                    elif status.startswith("Restarting"):
+                        state = "restarting"
+
+                    # Store basic container info
+                    # Note: Removed running_for, CPU, memory, network I/O, and block I/O metrics as per optimization requirements
+                    container_info = {
+                        "id": container_id,
+                        "name": name,
+                        "state": state,
+                        "status": status,
+                        "image": image
+                    }
+
                     # Get container icon if available
-                    icon_path = f"/var/lib/docker/unraid/images/{container_name}-icon.png"
+                    icon_path = f"/var/lib/docker/unraid/images/{name}-icon.png"
                     icon_result = await self.execute_command(
                         f"[ -f {icon_path} ] && (base64 {icon_path}) || echo ''"
                     )
                     icon_data = icon_result.stdout[0] if icon_result.exit_status == 0 else ""
+                    container_info["icon"] = icon_data
 
-                    containers.append({
-                        "name": container_name,
-                        "state": ContainerStates.parse(parts[1].strip()),
-                        "status": parts[1].strip(),
-                        "id": parts[2].strip(),
-                        "image": parts[3].strip(),
-                        "icon": icon_data
-                    })
+                    containers.append(container_info)
+                except Exception as err:
+                    _LOGGER.warning("Error parsing container line '%s': %s", line, err)
 
             return containers
         except (asyncssh.Error, OSError) as e:
             _LOGGER.debug("Error getting docker containers (this is normal if Docker is not configured): %s", str(e))
             return []
-        
+
     async def execute_container_command(self, command: str, timeout: int = 30) -> asyncssh.SSHCompletedProcess:
         """Execute Docker container command with timeout."""
         try:

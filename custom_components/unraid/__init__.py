@@ -34,11 +34,14 @@ from .const import (
     DEFAULT_DISK_INTERVAL,
     DEFAULT_PORT,
     CONF_HAS_UPS,
-    MIGRATION_VERSION
+    MIGRATION_VERSION,
+    ENTITY_NAMING_VERSION,
+    CONF_ENTITY_FORMAT,
+    DEFAULT_ENTITY_FORMAT
 )
 
 # Pre-import all modules at the module level to avoid blocking calls
-from .migrations import async_migrate_with_rollback, async_cleanup_orphaned_entities
+from .migrations import async_migrate_with_rollback, async_cleanup_orphaned_entities, migrate_entity_id_format
 from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
 from .api.logging_helper import setup_logging_filters, restore_logging_levels
@@ -67,17 +70,17 @@ for platform in PLATFORMS:
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Unraid component."""
     hass.data.setdefault(DOMAIN, {})
-    
+
     # Configure log filtering
     _LOG_MANAGER.configure()
-    
+
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Unraid from a config entry."""
     # Set up logging filters to reduce verbosity
     setup_logging_filters()
-    
+
     _LOGGER.info("Setting up Unraid integration, cleaning up any previous entities")
 
     try:
@@ -90,12 +93,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as cleanup_err:
             _LOGGER.error("Error during entity cleanup: %s", cleanup_err)
             # Continue despite cleanup errors
-        
+
         # Now perform any necessary migrations
         if entry.version < MIGRATION_VERSION:
             if not await async_migrate_with_rollback(hass, entry):
                 _LOGGER.warning("Migration process failed, but continuing with setup")
-            
+
+        # Always use entity format version 2
+        try:
+            _LOGGER.warning("Starting entity ID migration process")
+            # Always use entity format version 2
+            entity_format = 2
+            _LOGGER.warning("Using entity format: %s", entity_format)
+
+            if await migrate_entity_id_format(hass, entry, entity_format):
+                _LOGGER.warning("Entity ID migration completed successfully")
+            else:
+                _LOGGER.warning("Entity ID migration failed, but continuing with setup")
+        except Exception as migration_err:
+            _LOGGER.error("Error during entity ID migration: %s", migration_err)
+
         # Verify all platforms were imported successfully
         missing_platforms = [p for p in PLATFORMS if p not in _PLATFORM_IMPORTS]
         if missing_platforms:
@@ -107,14 +124,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             options = dict(entry.options)
             old_interval = entry.data.get("check_interval", 300)
             minutes = max(1, old_interval // 60)
-            
+
             options.update({
                 CONF_GENERAL_INTERVAL: minutes,
                 CONF_DISK_INTERVAL: DEFAULT_DISK_INTERVAL,
                 CONF_PORT: entry.data.get(CONF_PORT, DEFAULT_PORT),
                 CONF_HAS_UPS: entry.data.get(CONF_HAS_UPS, False),
             })
-            
+
             hass.config_entries.async_update_entry(entry, options=options)
 
         # Extract configuration
@@ -137,10 +154,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Set up all platforms
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        
+
         # Set up services
         await services.async_setup_services(hass)
-        
+
         # Register additional services for optimization stats
         await services.async_setup_optimization_services(hass)
 
@@ -197,11 +214,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
+    # Reload the integration
     await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Update options."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    
+
     # Update UPS status
     await coordinator.async_update_ups_status(entry.options.get(CONF_HAS_UPS, False))

@@ -126,15 +126,16 @@ class UnraidSensorBase(CoordinatorEntity, SensorEntity, SensorUpdateMixin, Value
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
-            component=description.key.split('_')[0]  # Get first part of key as component
+            component=description.key.split('_')[0],  # Get first part of key as component
+            naming_version=coordinator.entity_format  # Use entity format from coordinator
         )
 
         # Set consistent entity ID
         self._attr_unique_id = naming.get_entity_id(description.key)
-        
-        # Set name using cleaned hostname
-        self._attr_name = f"{naming.clean_hostname()} {description.name}"
-        
+
+        # Set name without hostname for cleaner UI
+        self._attr_name = f"Unraid {description.name}"
+
         _LOGGER.debug("Base Entity initialized | unique_id: %s | name: %s | description.key: %s",
                 self._attr_unique_id, self._attr_name, description.key)
 

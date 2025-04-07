@@ -28,6 +28,8 @@ from .const import (
     MAX_DISK_INTERVAL,
     CONF_HAS_UPS,
     MIGRATION_VERSION,
+    CONF_ENTITY_FORMAT,
+    DEFAULT_ENTITY_FORMAT,
 )
 from .unraid import UnraidAPI
 
@@ -135,7 +137,7 @@ def get_options_schema(
 
 async def validate_input(data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
-    
+
     Data has already been validated through schema.
     """
     api = UnraidAPI(data[CONF_HOST], data[CONF_USERNAME], data[CONF_PASSWORD], data[CONF_PORT])
@@ -214,13 +216,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 self._host = user_input[CONF_HOST]
                 info = await validate_input(user_input)
-                
+
                 await self.async_set_unique_id(
                     self._host.lower(),
                     raise_on_progress=True
                 )
                 self._abort_if_unique_id_configured()
-                
+
                 return self.async_create_entry(title=info["title"], data=user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -251,7 +253,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_import(self, import_data: dict[str, Any]) -> FlowResult:
         """Handle import from configuration.yaml."""
         return await self.async_step_user(import_data)
-    
+
     async def async_migrate_entry(self, hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Handle migration of config entries."""
         _LOGGER.debug("Migrating from version %s", entry.version)

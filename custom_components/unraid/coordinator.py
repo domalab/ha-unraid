@@ -32,6 +32,9 @@ from .const import (
     DEFAULT_GENERAL_INTERVAL,
     DEFAULT_DISK_INTERVAL,
     CONF_HAS_UPS,
+    CONF_ENTITY_FORMAT,
+    DEFAULT_ENTITY_FORMAT,
+    ENTITY_NAMING_VERSION,
 )
 from .unraid import UnraidAPI
 from .helpers import get_unraid_disk_mapping, parse_speed_string
@@ -106,17 +109,20 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         )
         self._disk_update_interval = timedelta(hours=self._disk_interval)
 
+        # Always use entity format version 2
+        self._entity_format = 2  # Use the new format by default
+
         # Initialize network tracking
         self._previous_network_stats = {}
         self._last_network_update = dt_util.utcnow()
-        
+
         # Performance optimization components
         self._cache_manager = CacheManager(max_size_bytes=25 * 1024 * 1024)  # 25MB limit
         self._sensor_manager = SensorPriorityManager()
         self._log_manager = LogManager()
         self._log_manager.configure()
         self._update_requested_sensors: Set[str] = set()
-        
+
         # Resource monitoring
         self._last_memory_check = dt_util.utcnow()
         self._memory_warning_emitted = False
@@ -135,6 +141,11 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         raw_hostname = self.entry.data.get(CONF_HOSTNAME, DEFAULT_NAME)
         _LOGGER.debug("Raw hostname retrieved from entry.data: %s", raw_hostname)
         return raw_hostname.capitalize()
+
+    @property
+    def entity_format(self) -> int:
+        """Get the entity format version."""
+        return self._entity_format
 
     @property
     def disk_update_due(self) -> bool:
@@ -163,7 +174,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         """Unload the coordinator and cleanup all resources."""
         try:
             self._busy = True
-            
+
             # Final cleanup
             try:
                 if hasattr(self.api, 'session') and self.api.session:
@@ -246,7 +257,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         try:
             if not hasattr(self.api, "get_disk_mappings"):
                 return
-                
+
             # Only update if we don't already have valid mappings
             if not data.get("disk_mappings"):
                 mappings = await self.api.get_disk_mappings()
@@ -344,7 +355,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         try:
             # Check memory usage periodically - don't update if we're over limit
             await self._check_memory_usage()
-            
+
             _LOGGER.debug("Starting data update cycle")
             async with self.api:
                 # Initialize data structure
@@ -352,7 +363,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 cache_hits = 0
                 cache_misses = 0
                 start_time = time.time()
-                
+
                 # Track what data is needed based on sensor priorities
                 # Check if self.async_contexts exists before calling len()
                 has_contexts = hasattr(self, 'async_contexts') and self.async_contexts is not None
@@ -362,15 +373,15 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 try:
                     # Get base system stats first
                     _LOGGER.debug("Fetching system stats...")
-                    
+
                     # Try to get system stats from cache first
                     system_stats_key = self._get_cache_key("system_stats")
-                    
+
                     if critical_update:
                         # Force update if specifically requested
                         system_stats = await self.api.get_system_stats()
                         cache_misses += 1
-                        
+
                         # Cache the result for future use
                         if system_stats:
                             self._cache_manager.set(
@@ -382,14 +393,14 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     else:
                         # Get from cache with fallback to API call
                         system_stats = self._cache_manager.get(system_stats_key)
-                        
+
                         if system_stats:
                             cache_hits += 1
                             _LOGGER.debug("Using cached system stats")
                         else:
                             system_stats = await self.api.get_system_stats()
                             cache_misses += 1
-                            
+
                             # Cache the result
                             if system_stats:
                                 self._cache_manager.set(
@@ -398,18 +409,18 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     ttl=120,  # 2 minute cache for system stats
                                     priority=CacheItemPriority.HIGH
                                 )
-                    
+
                     if system_stats:
                         # Add CPU info with caching
                         cpu_info_key = self._get_cache_key("cpu_info")
-                        
+
                         # CPU info is volatile - cache for shorter period
                         cpu_info = None
                         if not critical_update:
                             cpu_info = self._cache_manager.get(cpu_info_key)
                             if cpu_info:
                                 cache_hits += 1
-                        
+
                         if not cpu_info:
                             cpu_info = {}
                             # Get CPU info from system stats if needed
@@ -417,7 +428,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                             if system_stats_data and "cpu_info" in system_stats_data:
                                 cpu_info = system_stats_data.get("cpu_info", {})
                             cache_misses += 1
-                            
+
                             if cpu_info:
                                 self._cache_manager.set(
                                     cpu_info_key,
@@ -425,10 +436,10 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     ttl=60,  # 1 minute cache for CPU info (more volatile)
                                     priority=CacheItemPriority.HIGH
                                 )
-                        
+
                         if cpu_info:
                             system_stats.update(cpu_info)
-                        
+
                         data["system_stats"] = system_stats
                 except (ConnectionError, TimeoutError, OSError, ValueError) as err:
                     _LOGGER.error("Error getting system stats: %s", err)
@@ -437,12 +448,12 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 # Get array state and parity info - always critical
                 array_state_key = self._get_cache_key("array_state")
                 array_state = None
-                
+
                 # Array state is critical - shorter cache or force update if needed
                 if critical_update:
                     array_state = await self._get_array_state()
                     cache_misses += 1
-                    
+
                     # Cache for very short period (it's important)
                     if array_state:
                         self._cache_manager.set(
@@ -459,7 +470,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     else:
                         array_state = await self._get_array_state()
                         cache_misses += 1
-                        
+
                         if array_state:
                             self._cache_manager.set(
                                 array_state_key,
@@ -467,7 +478,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                 ttl=30,
                                 priority=CacheItemPriority.CRITICAL
                             )
-                
+
                 if array_state:
                     data["array_state"] = array_state
 
@@ -476,40 +487,40 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 vms = []
                 containers = []
                 scripts = []
-                
+
                 # Only update these if they are due according to sensor priority
                 vm_key = self._get_cache_key("vms")
                 docker_key = self._get_cache_key("docker_containers")
                 scripts_key = self._get_cache_key("user_scripts")
-                
+
                 # Check if any sensors related to these categories need updates
                 # Safely get VM and container IDs from existing data
                 vm_ids = []
                 container_ids = []
-                
+
                 if hasattr(self, 'data') and self.data is not None:
                     if isinstance(self.data.get("vms"), list):
                         vm_ids = [vm.get("name", "") for vm in self.data.get("vms", []) if isinstance(vm, dict)]
-                    
+
                     if isinstance(self.data.get("docker_containers"), list):
                         container_ids = [c.get("name", "") for c in self.data.get("docker_containers", []) if isinstance(c, dict)]
-                
+
                 need_vm_update = critical_update or any(
                     self._sensor_manager.should_update(f"vm_{vm_id}")
                     for vm_id in vm_ids if vm_id
                 )
-                
+
                 need_docker_update = critical_update or any(
                     self._sensor_manager.should_update(f"docker_{container_id}")
                     for container_id in container_ids if container_id
                 )
-                
+
                 need_scripts_update = critical_update or self._sensor_manager.should_update("user_scripts")
-                
+
                 try:
                     # Run these tasks concurrently if needed, otherwise use cache
                     tasks = []
-                    
+
                     # VM update task
                     if need_vm_update:
                         tasks.append(self.api.get_vms())
@@ -521,7 +532,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                         else:
                             tasks.append(self.api.get_vms())
                             cache_misses += 1
-                    
+
                     # Docker update task
                     if need_docker_update:
                         tasks.append(self.api.get_docker_containers())
@@ -533,7 +544,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                         else:
                             tasks.append(self.api.get_docker_containers())
                             cache_misses += 1
-                    
+
                     # Scripts update task
                     if need_scripts_update:
                         tasks.append(self.api.get_user_scripts())
@@ -545,19 +556,19 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                         else:
                             tasks.append(self.api.get_user_scripts())
                             cache_misses += 1
-                            
+
                     # Run needed tasks concurrently
                     if tasks:
                         results = await asyncio.gather(*tasks, return_exceptions=True)
-                        
+
                         # Process results based on which tasks were run
                         task_index = 0
-                        
+
                         # Process VM results if that task was run
                         if need_vm_update or not self._cache_manager.get(vm_key):
                             vms = results[task_index] if not isinstance(results[task_index], Exception) else []
                             task_index += 1
-                            
+
                             # Cache VM results
                             if vms:
                                 self._cache_manager.set(
@@ -566,12 +577,12 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     ttl=300,  # 5 minute cache for VMs
                                     priority=CacheItemPriority.MEDIUM
                                 )
-                        
+
                         # Process Docker results if that task was run
                         if need_docker_update or not self._cache_manager.get(docker_key):
                             containers = results[task_index] if not isinstance(results[task_index], Exception) else []
                             task_index += 1
-                            
+
                             # Cache Docker results
                             if containers:
                                 self._cache_manager.set(
@@ -580,11 +591,11 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     ttl=300,  # 5 minute cache for containers
                                     priority=CacheItemPriority.MEDIUM
                                 )
-                        
+
                         # Process Scripts results if that task was run
                         if need_scripts_update or not self._cache_manager.get(scripts_key):
                             scripts = results[task_index] if not isinstance(results[task_index], Exception) else []
-                            
+
                             # Cache Scripts results
                             if scripts:
                                 self._cache_manager.set(
@@ -593,25 +604,25 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     ttl=600,  # 10 minute cache for scripts (rarely change)
                                     priority=CacheItemPriority.LOW
                                 )
-                    
+
                     # Process results
                     data["vms"] = vms
                     data["docker_containers"] = containers
                     data["user_scripts"] = scripts
-                    
+
                     # Record sensor updates - ensure lists are iterable
                     if isinstance(vms, list):
                         for vm in vms:
                             if isinstance(vm, dict):
                                 vm_id = vm.get("name", "unknown")
                                 self._sensor_manager.record_update(f"vm_{vm_id}", vm.get("state"))
-                    
+
                     if isinstance(containers, list):
                         for container in containers:
                             if isinstance(container, dict):
                                 container_id = container.get("name", "unknown")
                                 self._sensor_manager.record_update(f"docker_{container_id}", container.get("state"))
-                    
+
                     if isinstance(scripts, list):
                         self._sensor_manager.record_update("user_scripts", len(scripts))
 
@@ -627,11 +638,11 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 if "system_stats" in data:
                     # Check if disk update is due based on schedule or forced update
                     disk_update_needed = (
-                        critical_update or 
+                        critical_update or
                         self.disk_update_due or
                         any(s.startswith("disk_") for s in self._update_requested_sensors)
                     )
-                    
+
                     try:
                         # Handle disk updates
                         if disk_update_needed:
@@ -654,16 +665,16 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                             data["system_stats"] = await self._async_update_disk_mapping(
                                 data["system_stats"]
                             )
-                        
+
                         # Update network stats based on priority
                         need_network_update = critical_update or any(
                             self._sensor_manager.should_update(f"network_{iface}")
                             for iface in self._previous_network_stats
                         ) if self._previous_network_stats else True
-                        
+
                         if need_network_update:
                             await self._async_update_network_stats(data["system_stats"])
-                            
+
                             # Record sensor updates
                             network_stats = data["system_stats"].get("network_stats", {})
                             if isinstance(network_stats, dict):
@@ -682,14 +693,14 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 if self.has_ups:
                     ups_key = self._get_cache_key("ups_info")
                     need_ups_update = critical_update or self._sensor_manager.should_update("ups_status")
-                    
+
                     try:
                         ups_info = None
-                        
+
                         if need_ups_update:
                             ups_info = await self.api.get_ups_info()
                             cache_misses += 1
-                            
+
                             # Cache UPS info
                             if ups_info and isinstance(ups_info, dict):
                                 self._cache_manager.set(
@@ -698,7 +709,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     ttl=120,  # 2 minute cache for UPS
                                     priority=CacheItemPriority.HIGH
                                 )
-                                
+
                                 # Record sensor update
                                 status = ups_info.get("STATUS")
                                 if status is not None:
@@ -710,7 +721,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                             else:
                                 ups_info = await self.api.get_ups_info()
                                 cache_misses += 1
-                                
+
                                 if ups_info and isinstance(ups_info, dict):
                                     self._cache_manager.set(
                                         ups_key,
@@ -718,23 +729,23 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                         ttl=120,
                                         priority=CacheItemPriority.HIGH
                                     )
-                                    
+
                         if ups_info and isinstance(ups_info, dict):
                             data["ups_info"] = ups_info
                     except (ConnectionError, TimeoutError, OSError, ValueError) as err:
                         _LOGGER.error("Error getting UPS info: %s", err)
-                
+
                 # Step 5: Add parity schedule parsing with caching
                 parity_key = self._get_cache_key("parity_schedule")
                 need_parity_update = critical_update or self._sensor_manager.should_update("parity_schedule")
-                
+
                 try:
                     next_check = None
-                    
+
                     if need_parity_update:
                         next_check = await self._parse_parity_schedule()
                         cache_misses += 1
-                        
+
                         if next_check:
                             self._cache_manager.set(
                                 parity_key,
@@ -742,7 +753,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                 ttl=3600,  # 1 hour cache (rarely changes)
                                 priority=CacheItemPriority.LOW
                             )
-                            
+
                             # Record sensor update
                             if isinstance(next_check, str):
                                 self._sensor_manager.record_update("parity_schedule", next_check)
@@ -753,7 +764,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                         else:
                             next_check = await self._parse_parity_schedule()
                             cache_misses += 1
-                            
+
                             if next_check:
                                 self._cache_manager.set(
                                     parity_key,
@@ -761,17 +772,17 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     ttl=3600,
                                     priority=CacheItemPriority.LOW
                                 )
-                    
+
                     if next_check and isinstance(next_check, str):
                         data["next_parity_check"] = next_check
-                    
+
                 except Exception as err:
                     _LOGGER.error("Error parsing parity schedule: %s", err)
                     data["next_parity_check"] = "Unknown"
 
                 # Clear requested sensor updates
                 self._update_requested_sensors.clear()
-                
+
                 # Calculate and log update performance
                 elapsed = time.time() - start_time
                 _LOGGER.debug(
@@ -787,23 +798,23 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         except Exception as err:
             _LOGGER.error("Error communicating with Unraid: %s", err)
             raise UpdateFailed(f"Error communicating with Unraid: {err}") from err
-            
+
     async def _check_memory_usage(self) -> None:
         """Check memory usage and log warnings if needed."""
         # Only check once per minute
         if (dt_util.utcnow() - self._last_memory_check).total_seconds() < 60:
             return
-            
+
         self._last_memory_check = dt_util.utcnow()
-        
+
         try:
             # Get memory usage - use psutil if available, otherwise skip
             import psutil
-            
+
             process = psutil.Process()
             memory_info = process.memory_info()
             memory_mb = memory_info.rss / 1024 / 1024
-            
+
             # Log warning if over 90MB
             if memory_mb > 90 and not self._memory_warning_emitted:
                 _LOGGER.warning(
@@ -814,24 +825,24 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             elif memory_mb < 85 and self._memory_warning_emitted:
                 # Reset warning flag if memory drops below threshold
                 self._memory_warning_emitted = False
-                
+
             # If extremely high, force garbage collection and cache cleanup
             if memory_mb > 110:
                 _LOGGER.warning(
                     "Critically high memory usage: %.1f MB - forcing cache cleanup",
                     memory_mb
                 )
-                
+
                 # Force cleanup
                 self._cache_manager._cleanup()
-                
+
                 # Force Python garbage collection
                 gc.collect()
-                
+
         except (ImportError, Exception) as err:
             # If psutil not available, silently continue
             pass
-            
+
     async def _parse_parity_schedule(self) -> Optional[str]:
         """Parse the parity check schedule."""
         try:
@@ -839,7 +850,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 "cat /boot/config/plugins/dynamix/parity-check.cron"
             )
             next_check = "Unknown"
-            
+
             if result and result.exit_status == 0:
                 # Parse the cron entries
                 for line in result.stdout.splitlines():
@@ -848,28 +859,28 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                         parts = line.strip().split()
                         if len(parts) >= 5:
                             minute, hour, dom, month, dow = parts[:5]
-                            
+
                             now = dt_util.now()
                             next_run = None
-                            
+
                             # Parse based on the cron pattern
                             if dom == "1" and month == "1":  # Yearly on Jan 1st
                                 next_run = now.replace(
-                                    month=1, 
-                                    day=1, 
-                                    hour=int(hour), 
-                                    minute=int(minute), 
-                                    second=0, 
+                                    month=1,
+                                    day=1,
+                                    hour=int(hour),
+                                    minute=int(minute),
+                                    second=0,
                                     microsecond=0
                                 )
                                 if next_run <= now:
                                     next_run = next_run.replace(year=next_run.year + 1)
                             elif dom == "1" and month == "*":  # Monthly on 1st
                                 next_run = now.replace(
-                                    day=1, 
-                                    hour=int(hour), 
-                                    minute=int(minute), 
-                                    second=0, 
+                                    day=1,
+                                    hour=int(hour),
+                                    minute=int(minute),
+                                    second=0,
                                     microsecond=0
                                 )
                                 if next_run <= now:
@@ -877,7 +888,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                         next_run = next_run.replace(year=next_run.year + 1, month=1)
                                     else:
                                         next_run = next_run.replace(month=next_run.month + 1)
-                            
+
                             if next_run:
                                 # Format the date nicely
                                 if (next_run - now).days == 0:
@@ -887,13 +898,13 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                 else:
                                     next_check = next_run.strftime("%b %d %Y at %H:%M")
                                 break
-            
+
             # If no cron schedule found, check disk config
             if next_check == "Unknown":
                 # Get disk config from cache if possible
                 disk_config_key = self._get_cache_key("disk_config")
                 disk_config = self._cache_manager.get(disk_config_key, {})
-                
+
                 if not disk_config:
                     # Try to read disk config
                     result = await self.api.execute_command("cat /boot/config/disk.cfg")
@@ -907,7 +918,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     disk_config[key] = value.strip('"')
                                 except ValueError:
                                     continue
-                        
+
                         # Cache the disk config
                         self._cache_manager.set(
                             disk_config_key,
@@ -915,15 +926,15 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                             ttl=3600,  # 1 hour cache
                             priority=CacheItemPriority.LOW
                         )
-                
+
                 if disk_config:
                     if not disk_config.get("parity.mode") == "4":  # If not manual mode
                         next_check = "Schedule configuration error"
                     else:
                         next_check = "Manual Only"
-            
+
             return next_check
-                
+
         except Exception as err:
             _LOGGER.error("Error parsing parity schedule: %s", err)
             return "Unknown"
@@ -933,24 +944,24 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         if identifier:
             return f"{key_type}:{self.hostname}:{identifier}"
         return f"{key_type}:{self.hostname}"
-        
+
     def register_sensor(
-        self, 
-        sensor_id: str, 
+        self,
+        sensor_id: str,
         category: Optional[SensorCategory] = None,
         priority: Optional[SensorPriority] = None
     ) -> None:
         """Register a sensor with the priority system."""
         self._sensor_manager.register_sensor(sensor_id, category, priority)
-        
+
     def request_sensor_update(self, sensor_id: str) -> None:
         """Request a specific sensor to be updated in the next update cycle."""
         self._update_requested_sensors.add(sensor_id)
-        
+
     def get_sensor_stats(self) -> Dict[str, Any]:
         """Get statistics about sensor prioritization."""
         return self._sensor_manager.get_sensor_stats()
-        
+
     def get_cache_stats(self) -> Dict[str, Any]:
         """Get statistics about cache usage."""
         return self._cache_manager.get_stats()
@@ -962,11 +973,11 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         """Update network statistics asynchronously."""
         try:
             network_stats = await self.api.get_network_stats()
-            
+
             if network_stats:
                 # Store network stats in system_stats
                 system_stats['network_stats'] = network_stats
-                
+
                 # Log debug info for significant changes
                 if self._previous_network_stats:
                     for interface, stats in network_stats.items():
@@ -974,7 +985,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                             prev_stats = self._previous_network_stats[interface]
                             rx_change = abs(stats['rx_speed'] - prev_stats.get('rx_speed', 0))
                             tx_change = abs(stats['tx_speed'] - prev_stats.get('tx_speed', 0))
-                            
+
                             # Log significant changes (more than 20% difference)
                             if rx_change > prev_stats.get('rx_speed', 0) * 0.2:
                                 _LOGGER.debug(
@@ -990,7 +1001,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     prev_stats.get('tx_speed', 0),
                                     stats['tx_speed']
                                 )
-                
+
                 # Update previous stats for next comparison
                 self._previous_network_stats = network_stats
 
@@ -1020,7 +1031,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         """Update the UPS status and trigger a refresh."""
         self.has_ups = has_ups
         await self.async_refresh()
-    
+
     async def _get_array_state(self) -> Optional[Dict[str, Any]]:
         """Get array state information."""
         try:
@@ -1084,32 +1095,32 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     # Handle different space-separated date formats
                     date_str = fields[0]
                     _LOGGER.debug("Parsing date: %s", date_str)
-                    
+
                     # Try different date formats
                     date_formats = [
                         "%Y %b %d %H:%M:%S",  # Full format with year
                         "%b %d %H:%M:%S"     # Format without year
                     ]
-                    
+
                     check_date = None
                     for date_format in date_formats:
                         try:
                             parsed_date = datetime.strptime(date_str, date_format)
-                            
+
                             # If the format doesn't include year, assume current year
                             if date_format == "%b %d %H:%M:%S":
                                 current_year = datetime.now().year
                                 parsed_date = parsed_date.replace(year=current_year)
-                                
+
                                 # Handle edge case: if date is in the future, use previous year
                                 if parsed_date > datetime.now():
                                     parsed_date = parsed_date.replace(year=current_year-1)
-                            
+
                             check_date = parsed_date
                             break
                         except ValueError:
                             continue
-                            
+
                     if check_date is None:
                         # If all parsing attempts failed, raise an error to be caught by outer exception handler
                         raise ValueError(f"Could not parse date: {date_str}")

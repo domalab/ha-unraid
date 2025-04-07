@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import logging
-import re
-from typing import Callable, Dict, Union
+from typing import Callable, Dict, Union, Optional
 from dataclasses import dataclass
 
-from .migrations import clean_and_validate_unique_id
+from .utils import normalize_name
+from .const import ENTITY_NAMING_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,37 +20,24 @@ ENTITY_NAME_PATTERNS: Dict[str, Union[str, Callable[[str], str]]] = {
     "vm": lambda name: f"VM {name}",
 }
 
-def normalize_name(name: str) -> str:
-    """Normalize a name for use in entity IDs."""
-    # Convert to lowercase and replace invalid characters with underscores
-    normalized = re.sub(r'[^a-zA-Z0-9_]', '_', name.lower())
-    # Remove consecutive underscores
-    normalized = re.sub(r'_+', '_', normalized)
-    # Remove leading/trailing underscores
-    return normalized.strip('_')
-
-def validate_entity_name(name: str) -> bool:
-    """Validate entity name follows conventions."""
-    return bool(re.match(r'^[a-z0-9_]+$', name))
-
 @dataclass
 class EntityNaming:
     """Entity naming configuration."""
     domain: str
     hostname: str
     component: str
+    naming_version: Optional[int] = None
 
     def get_entity_id(self, name: str) -> str:
         """Get normalized entity ID."""
         # Cleanup the hostname and normalize the name
         hostname_clean = normalize_name(self.hostname)
         clean_name = normalize_name(name)
-        
-        # Create a completely deterministic unique ID with a consistent format
-        # This ensures the same entity_id is generated across reinstallations
-        # Format: unraid_server_hostname_component_name
-        unique_id = f"unraid_server_{hostname_clean}_{self.component}_{clean_name}"
-        
+
+        # Always use the new format
+        # New format: unraid_hostname_component_name
+        unique_id = f"unraid_{hostname_clean}_{self.component}_{clean_name}"
+
         # Log the generated unique_id for debugging
         _LOGGER.debug(
             "Generated unique_id: %s | hostname: %s | component: %s | clean_name: %s",
@@ -59,16 +46,16 @@ class EntityNaming:
         return unique_id
 
     def get_entity_name(self, name: str, component_type: str = None) -> str:
-        """Get formatted entity name."""
+        """Get formatted entity name without hostname."""
         if component_type and component_type in ENTITY_NAME_PATTERNS:
             pattern = ENTITY_NAME_PATTERNS[component_type]
             entity_name = pattern(name) if callable(pattern) else pattern
             _LOGGER.debug(
-                "Generated entity_name: %s | hostname: %s | name: %s | component_type: %s",
-                entity_name, self.hostname, name, component_type
+                "Generated entity_name: %s | name: %s | component_type: %s",
+                entity_name, name, component_type
             )
             return entity_name
-        
+
         entity_name = name.title()
         _LOGGER.debug(
             "Generated entity_name: %s | name: %s | component_type: %s",

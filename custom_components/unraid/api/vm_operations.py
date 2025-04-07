@@ -39,7 +39,7 @@ class VMOperationsMixin:
 
     async def check_libvirt_running(self) -> bool:
         """Check if libvirt is running using multiple methods.
-        
+
         Returns:
             bool: True if libvirt service is running, False otherwise.
         """
@@ -49,7 +49,7 @@ class VMOperationsMixin:
             if service_check.exit_status == 0 and "is currently running" in service_check.stdout:
                 _LOGGER.debug("Libvirt validated through rc.d script")
                 return True
-                
+
             # Method 2: Process check
             process_check = await self.execute_command("pgrep -f libvirtd")
             if process_check.exit_status == 0:
@@ -58,7 +58,7 @@ class VMOperationsMixin:
                 if sock_check.exit_status == 0:
                     _LOGGER.debug("Libvirt validated through process and socket checks")
                     return True
-                
+
             _LOGGER.debug(
                 "Libvirt service checks failed - rc.d: %s, process: %s",
                 service_check.exit_status,
@@ -70,49 +70,126 @@ class VMOperationsMixin:
             return False
 
     async def get_vms(self) -> List[Dict[str, Any]]:
-        """Fetch information about virtual machines."""
+        """Fetch information about virtual machines using a batched command."""
         try:
             _LOGGER.debug("Checking VM service status")
-            
+
             # Use new service check method
             if not await self.check_libvirt_running():
                 _LOGGER.debug("VM system is disabled or not installed")
                 return []
 
-            # Only proceed with VM checks if service is running and enabled
+            # Collect VM information in a single command
             try:
-                result = await self.execute_command("virsh list --all --name")
-                if result.exit_status != 0:
-                    _LOGGER.debug("No VMs found")
+                # Use a single command to collect all VM information
+                cmd = (
+                    "if [ -x /etc/rc.d/rc.libvirt ] && /etc/rc.d/rc.libvirt status | grep -q 'is currently running'; then "
+                    "  for vm in $(virsh list --all --name); do "
+                    "    if [ -n \"$vm\" ]; then "
+                    "      state=$(virsh domstate \"$vm\" 2>/dev/null || echo 'unknown'); "
+                    "      info=$(virsh dominfo \"$vm\" 2>/dev/null); "
+                    "      cpus=$(echo \"$info\" | grep 'CPU(s)' | awk '{print $2}'); "
+                    "      mem=$(echo \"$info\" | grep 'Max memory' | sed 's/Max memory://g' | xargs); "
+                    "      xml=$(virsh dumpxml \"$vm\" 2>/dev/null | grep -A5 \"<os>\"); "
+                    "      echo \"$vm|$state|$cpus|$mem|$xml\"; "
+                    "    fi; "
+                    "  done; "
+                    "else "
+                    "  echo 'libvirt_not_running'; "
+                    "fi"
+                )
+
+                result = await self.execute_command(cmd)
+
+                if result.exit_status != 0 or result.stdout.strip() == 'libvirt_not_running':
+                    _LOGGER.debug("No VMs found or libvirt not running")
                     return []
 
                 vms = []
                 for line in result.stdout.splitlines():
-                    if not line.strip():
+                    if not line.strip() or '|' not in line:
                         continue
 
                     try:
-                        vm_name = line.strip()
-                        status = await self.get_vm_status(vm_name)
-                        os_type = await self.get_vm_os_info(vm_name)
-                        
-                        vms.append({
-                            "name": vm_name,
-                            "status": status,
-                            "os_type": os_type
-                        })
+                        parts = line.split('|')
+                        if len(parts) >= 5:
+                            vm_name = parts[0].strip()
+                            status = VMState.parse(parts[1].strip())
+                            cpus = parts[2].strip()
+                            memory = parts[3].strip()
+                            xml_data = parts[4].strip()
+
+                            # Determine OS type from XML data
+                            os_type = 'unknown'
+                            xml_lower = xml_data.lower()
+                            if 'windows' in xml_lower or 'win' in xml_lower:
+                                os_type = 'windows'
+                            elif 'linux' in xml_lower:
+                                os_type = 'linux'
+                            else:
+                                # Fallback to name-based detection
+                                name_lower = vm_name.lower()
+                                name_clean = name_lower.replace('-', ' ').replace('_', ' ')
+                                if any(term in name_clean for term in ['windows', 'win']):
+                                    os_type = 'windows'
+                                elif any(term in name_clean for term in [
+                                    'ubuntu', 'linux', 'debian', 'centos',
+                                    'fedora', 'rhel', 'suse', 'arch'
+                                ]):
+                                    os_type = 'linux'
+
+                            vms.append({
+                                "name": vm_name,
+                                "status": status,
+                                "os_type": os_type,
+                                "cpus": cpus,
+                                "memory": memory
+                            })
                     except Exception as vm_err:
-                        _LOGGER.debug("Error processing VM '%s': %s", line.strip(), str(vm_err))
+                        _LOGGER.debug("Error processing VM line '%s': %s", line, str(vm_err))
                         continue
 
                 return vms
 
             except Exception as virsh_err:
-                _LOGGER.debug("Error running virsh command: %s", str(virsh_err))
-                return []
+                _LOGGER.debug("Error running batched VM command: %s", str(virsh_err))
+                # Fallback to original implementation
+                return await self._get_vms_original()
 
         except Exception as err:
             _LOGGER.debug("VM system appears to be disabled: %s", str(err))
+            return []
+
+    async def _get_vms_original(self) -> List[Dict[str, Any]]:
+        """Original implementation of VM information collection as fallback."""
+        try:
+            result = await self.execute_command("virsh list --all --name")
+            if result.exit_status != 0:
+                _LOGGER.debug("No VMs found")
+                return []
+
+            vms = []
+            for line in result.stdout.splitlines():
+                if not line.strip():
+                    continue
+
+                try:
+                    vm_name = line.strip()
+                    status = await self.get_vm_status(vm_name)
+                    os_type = await self.get_vm_os_info(vm_name)
+
+                    vms.append({
+                        "name": vm_name,
+                        "status": status,
+                        "os_type": os_type
+                    })
+                except Exception as vm_err:
+                    _LOGGER.debug("Error processing VM '%s': %s", line.strip(), str(vm_err))
+                    continue
+
+            return vms
+        except Exception as err:
+            _LOGGER.debug("Error in original VM method: %s", str(err))
             return []
 
     async def get_vm_os_info(self, vm_name: str) -> str:
@@ -141,7 +218,7 @@ class VMOperationsMixin:
 
             # Check for Linux indicators
             if any(term in name_clean for term in [
-                'ubuntu', 'linux', 'debian', 'centos', 
+                'ubuntu', 'linux', 'debian', 'centos',
                 'fedora', 'rhel', 'suse', 'arch'
             ]):
                 return 'linux'
@@ -150,7 +227,7 @@ class VMOperationsMixin:
 
         except Exception as err:
             _LOGGER.debug(
-                "Error getting OS info for VM '%s': %s", 
+                "Error getting OS info for VM '%s': %s",
                 vm_name,
                 str(err)
             )
@@ -172,7 +249,7 @@ class VMOperationsMixin:
         """Start a virtual machine."""
         try:
             _LOGGER.debug("Starting VM: %s", vm_name)
-            
+
             # Check current state first
             current_state = await self.get_vm_status(vm_name)
             if current_state.lower() == "running":
@@ -205,7 +282,7 @@ class VMOperationsMixin:
         """Stop a virtual machine using ACPI shutdown."""
         try:
             _LOGGER.debug("Stopping VM: %s", vm_name)
-            
+
             # Check current state first
             current_state = await self.get_vm_status(vm_name)
             if current_state.lower() == "shut off":

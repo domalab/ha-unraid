@@ -159,6 +159,14 @@ def detect_pools(system_stats: dict) -> Dict[str, PoolInfo]:
                 if pool_name in ('user', 'disks') or re.match(r'disk\d+$', pool_name):
                     continue
 
+                # Log detailed information about detected pool
+                _LOGGER.info(
+                    "Detected potential pool: %s, mount: %s, filesystem: %s",
+                    pool_name,
+                    mount_point,
+                    disk.get("filesystem", "unknown")
+                )
+
                 # Create or update pool info
                 if pool_name not in pools:
                     pools[pool_name] = PoolInfo(
@@ -184,6 +192,69 @@ def detect_pools(system_stats: dict) -> Dict[str, PoolInfo]:
             )
             continue
 
+    # Second pass: Check disk mappings for pools that might not be in individual_disks
+    disk_mappings = system_stats.get("disk_mappings", {})
+    for disk_name, disk_info in disk_mappings.items():
+        try:
+            # Skip already processed pools and standard array disks
+            if disk_name in pools or disk_name in ('user', 'disks') or re.match(r'disk\d+$', disk_name) or disk_name in ('parity', 'parity2', 'flash'):
+                continue
+
+            # Check if this is a pool (has filesystem and is mounted)
+            filesystem = disk_info.get("filesystem", "")
+            if filesystem and filesystem not in ("", "unknown"):
+                _LOGGER.info(
+                    "Detected pool from disk mappings: %s, filesystem: %s",
+                    disk_name,
+                    filesystem
+                )
+
+                # Find corresponding disk in individual_disks
+                disk_data = None
+                for disk in system_stats.get("individual_disks", []):
+                    if disk.get("name") == disk_name:
+                        disk_data = disk
+                        break
+
+                if not disk_data:
+                    # Create a minimal disk entry if not found
+                    mount_point = f"/mnt/{disk_name}"
+                    pools[disk_name] = PoolInfo(
+                        name=disk_name,
+                        mount_point=mount_point,
+                        filesystem=filesystem
+                    )
+
+                    # Add device to pool
+                    device = disk_info.get("device", "")
+                    if device:
+                        pools[disk_name].devices.append(device)
+
+                    # Use size information from disk_info if available
+                    if "fsSize" in disk_info and "fsUsed" in disk_info:
+                        try:
+                            pools[disk_name].total_size = int(disk_info.get("fsSize", 0))
+                            pools[disk_name].used_size = int(disk_info.get("fsUsed", 0))
+                        except (ValueError, TypeError):
+                            _LOGGER.warning("Could not parse size info for pool %s", disk_name)
+        except Exception as err:
+            _LOGGER.warning(
+                "Error processing pool from disk mappings: %s - %s",
+                disk_name,
+                err
+            )
+
+    # Log summary of detected pools
+    for name, pool in pools.items():
+        _LOGGER.info(
+            "Detected pool: %s, filesystem: %s, mount: %s, size: %s, used: %s",
+            name,
+            pool.filesystem,
+            pool.mount_point,
+            format_bytes(pool.total_size),
+            format_bytes(pool.used_size)
+        )
+
     return pools
 
 def get_disk_number(disk_name: str) -> Optional[int]:
@@ -202,7 +273,7 @@ def get_disk_identifiers(coordinator_data: dict, disk_name: str) -> Tuple[Option
     """Get device path and serial number for a disk with consistent fallbacks."""
     device = None
     serial = None
-    
+
     try:
         # First try disk mappings (from disks.ini)
         if disk_mappings := coordinator_data.get("disk_mappings", {}):
@@ -217,12 +288,13 @@ def get_disk_identifiers(coordinator_data: dict, disk_name: str) -> Tuple[Option
         # Then try system stats
         if not (device and serial):
             if system_stats := coordinator_data.get("system_stats", {}):
+                # First check in individual_disks
                 for disk in system_stats.get("individual_disks", []):
                     if disk.get("name") == disk_name:
                         # Get device if not already found
                         if not device:
                             device = disk.get("device")
-                        
+
                         # Try serial from different possible locations
                         if not serial:
                             serial = (
@@ -230,6 +302,17 @@ def get_disk_identifiers(coordinator_data: dict, disk_name: str) -> Tuple[Option
                                 or disk.get("smart_data", {}).get("serial_number")
                             )
                         break
+
+                # Check if this is a pool
+                if not device:
+                    pool_info = get_pool_info(system_stats)
+                    if disk_name in pool_info:
+                        # For pools, use the pool name as the device if no device is specified
+                        device = pool_info[disk_name].get("devices", [])[0] if pool_info[disk_name].get("devices") else disk_name
+                        _LOGGER.debug(
+                            "Using pool device for %s: %s",
+                            disk_name, device
+                        )
 
         # Special handling for array disks if device still not found
         if not device and disk_name.startswith("disk"):
@@ -244,6 +327,19 @@ def get_disk_identifiers(coordinator_data: dict, disk_name: str) -> Tuple[Option
         elif not device and disk_name == "cache":
             device = "nvme0n1"
             _LOGGER.debug("Using default NVMe device for cache")
+
+        # Special handling for ZFS pools
+        elif not device:
+            # Check if this is a ZFS pool by looking at disk mappings
+            if disk_mappings := coordinator_data.get("disk_mappings", {}):
+                if disk_info := disk_mappings.get(disk_name):
+                    if disk_info.get("filesystem") == "zfs":
+                        # For ZFS pools, use the pool name as the device
+                        device = disk_name
+                        _LOGGER.debug(
+                            "Using ZFS pool name as device for %s",
+                            disk_name
+                        )
 
         return device, serial
 
@@ -316,7 +412,7 @@ def get_unraid_disk_mapping(system_stats: dict) -> Dict[str, Dict[str, Any]]:
     try:
         # Ignore special directories and tmpfs
         ignored_mounts = {
-            "disks", "remotes", "addons", "rootshare", 
+            "disks", "remotes", "addons", "rootshare",
             "user/0", "dev/shm"
         }
 
@@ -415,14 +511,14 @@ def get_pool_info(system_stats: dict) -> Dict[str, Dict[str, Any]]:
 def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]:
     """Extract fan RPM data from sensors output."""
     fan_data = {}
-    
+
     try:
         # Log available sensor data for debugging
         _LOGGER.debug(
-            "Processing sensor data for fan extraction: %d devices", 
+            "Processing sensor data for fan extraction: %d devices",
             len(sensors_data)
         )
-        
+
         for device, readings in sensors_data.items():
             if not isinstance(readings, dict):
                 continue
@@ -431,43 +527,43 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]
             chipset = None
             chipset_pattern = None
             device_lower = device.lower()
-            
+
             for chip_key in CHIPSET_FAN_PATTERNS:
                 if chip_key in device_lower:
                     chipset = chip_key
                     chipset_pattern = CHIPSET_FAN_PATTERNS[chip_key]
                     _LOGGER.debug(
-                        "Matched chipset %s for device %s", 
-                        chipset, 
+                        "Matched chipset %s for device %s",
+                        chipset,
                         device
                     )
                     break
-            
+
             # Use chipset-specific or default patterns
-            patterns = (chipset_pattern.patterns if chipset_pattern 
+            patterns = (chipset_pattern.patterns if chipset_pattern
                     else DEFAULT_FAN_PATTERNS)
-            rpm_keys = (chipset_pattern.rpm_keys if chipset_pattern 
+            rpm_keys = (chipset_pattern.rpm_keys if chipset_pattern
                     else DEFAULT_RPM_KEYS)
 
             # Look for fan readings with better pattern matching
             for key, value in readings.items():
                 key_lower = key.lower()
-                
+
                 # Improve pattern matching to be more inclusive
                 pattern_matched = False
                 matched_pattern = None
-                
+
                 for pattern in patterns:
                     if pattern in key_lower:
                         pattern_matched = True
                         matched_pattern = pattern
                         break
-                        
+
                 # Special case for system_fan which might be missed
                 if not pattern_matched and ("fan" in key_lower or "cooling" in key_lower):
                     pattern_matched = True
                     matched_pattern = "fan"
-                
+
                 if pattern_matched:
                     try:
                         # Extract fan number with more flexible matching
@@ -476,14 +572,14 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]
                             if match := re.search(pattern, key_lower):
                                 fan_num = match.group(1)
                                 break
-                        
+
                         # If no number found in key, try to extract from device name
                         if fan_num == "1" and "fan" in device_lower:
                             for pattern in FAN_NUMBER_PATTERNS:
                                 if match := re.search(pattern, device_lower):
                                     fan_num = match.group(1)
                                     break
-                        
+
                         # Get RPM value with improved parsing
                         rpm_val = None
                         if isinstance(value, dict):
@@ -513,16 +609,16 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]
                                     rpm_val = float(rpm_str)
                                 except (ValueError, TypeError):
                                     rpm_val = None
-                        
-                        if (rpm_val is not None and 
+
+                        if (rpm_val is not None and
                             MIN_VALID_RPM <= rpm_val <= MAX_VALID_RPM):
-                            
+
                             # Create a unique, sanitized base name
                             # Include the matched pattern for better identification
                             base_name = f"{device}_{matched_pattern}_{fan_num}".replace(" ", "_")
                             base_name = re.sub(r'[^a-z0-9_]', '_', base_name.lower())
                             base_name = re.sub(r'_+', '_', base_name).strip('_')
-                            
+
                             # Create a more user-friendly display name
                             if "cpu" in key_lower or "processor" in key_lower:
                                 display_name = f"CPU Fan {fan_num}"
@@ -536,7 +632,7 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]
                                 display_name = f"{chipset.upper()} Fan {fan_num}"
                             else:
                                 display_name = f"Fan {fan_num}"
-                            
+
                             fan_data[base_name] = {
                                 "rpm": int(rpm_val),
                                 "label": display_name,
@@ -545,7 +641,7 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]
                                 "channel": int(fan_num),
                                 "sensor_key": key  # Store original key for debugging
                             }
-                            
+
                             _LOGGER.debug(
                                 "Added %s fan: %s with %d RPM (from %s.%s)",
                                 chipset or "generic",
@@ -554,7 +650,7 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]
                                 device,
                                 key
                             )
-                            
+
                     except (ValueError, TypeError, KeyError) as err:
                         _LOGGER.debug(
                             "Error parsing fan for device %s, key %s: %s - %s",
@@ -569,20 +665,20 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]
         if fan_data:
             chipsets = set(f["chipset"] for f in fan_data.values())
             _LOGGER.debug(
-                "Found %d fans across %d chipsets: %s", 
+                "Found %d fans across %d chipsets: %s",
                 len(fan_data),
                 len(chipsets),
                 ", ".join(sorted(chipsets))
             )
-            
+
             # Log fan names for easier troubleshooting
             fan_names = sorted(f["label"] for f in fan_data.values())
             _LOGGER.debug("Detected fans: %s", ", ".join(fan_names))
         else:
             _LOGGER.warning("No fans detected in sensors data")
-            
+
         return fan_data
-        
+
     except Exception as err:
         _LOGGER.error("Error extracting fan data: %s", err, exc_info=True)
         return {}
@@ -599,18 +695,18 @@ def is_solid_state_drive(disk_data: dict) -> bool:
         device = disk_data.get("device")
         if device and isinstance(device, str) and "nvme" in device.lower():
             return True
-        
+
         # Check if it's a cache device
         if disk_data.get("name") == "cache":
             return True
-            
+
         # Check smart data for rotation rate (0 indicates SSD)
         smart_data = disk_data.get("smart_data", {})
         if isinstance(smart_data, dict):
             rotation_rate = smart_data.get("rotation_rate")
             if rotation_rate == 0:
                 return True
-            
+
         return False
 
     except (AttributeError, TypeError, ValueError) as err:
@@ -635,7 +731,7 @@ def is_valid_temp_range(temp: float, is_cpu: bool = True) -> bool:
     """Check if temperature is within valid range."""
     if not isinstance(temp, (int, float)):
         return False
-        
+
     valid_range = VALID_CPU_TEMP_RANGE if is_cpu else VALID_MB_TEMP_RANGE
     return valid_range[0] <= temp <= valid_range[1]
 
@@ -644,22 +740,22 @@ def parse_temperature(value: str) -> Optional[float]:
     try:
         # Remove common temperature markers
         cleaned = value.replace('°C', '').replace(' C', '').replace('+', '').strip()
-        
+
         # Convert to float and validate
         if cleaned and not cleaned.isspace():
             temp = float(cleaned)
             return temp if -50 <= temp <= 150 else None
-            
+
     except (ValueError, TypeError) as err:
         _LOGGER.debug("Error parsing temperature value '%s': %s", value, err)
-    
+
     return None
 
 def categorize_sensor(label: str, chip: str, overrides: Optional[Dict[str, str]] = None) -> Optional[str]:
     """Categorize a sensor as 'cpu' or 'mb' based on label and chip name."""
     if not label or not isinstance(label, str):
         return None
-        
+
     # Check overrides first
     if overrides and label in overrides:
         override = overrides[label].lower()
@@ -667,41 +763,41 @@ def categorize_sensor(label: str, chip: str, overrides: Optional[Dict[str, str]]
             return override
         if override == 'ignore':
             return None
-            
+
     # Convert to lowercase for matching
     label_lower = label.lower()
     chip_lower = chip.lower() if chip else ""
-    
+
     # Check if it's a known sensor chip
     for chip_prefix, valid_labels in KNOWN_SENSOR_CHIPS.items():  # Changed from KNOWN_GOOD_CHIPS
         if chip_lower.startswith(chip_prefix.lower()):
             if any(valid.lower() in label_lower for valid in valid_labels):
                 return 'cpu' if any(cpu_key in label_lower for cpu_key in CPU_KEYWORDS) else 'mb'
-                
+
     # Check dynamic patterns
-    if (CPU_CORE_PATTERN.match(label) or 
-        CPU_TCCD_PATTERN.match(label) or 
+    if (CPU_CORE_PATTERN.match(label) or
+        CPU_TCCD_PATTERN.match(label) or
         CPU_PECI_PATTERN.match(label)):
         return 'cpu'
-        
+
     if (MB_SYSTEM_PATTERN.match(label) or
         MB_EC_PATTERN.match(label) or
         MB_ACPI_PATTERN.match(label)):
         return 'mb'
-        
+
     # Skip known problematic sensors
     if MB_AUXTIN_PATTERN.match(label):
         _LOGGER.debug("Skipping known problematic AUXTIN sensor: %s", label)
         return None
-        
+
     # Check keywords
-    if any(keyword in label_lower or keyword in chip_lower 
+    if any(keyword in label_lower or keyword in chip_lower
         for keyword in CPU_KEYWORDS):
         return 'cpu'
-    if any(keyword in label_lower or keyword in chip_lower 
+    if any(keyword in label_lower or keyword in chip_lower
         for keyword in MB_KEYWORDS):
         return 'mb'
-        
+
     # Log unmatched sensor for debugging
     _LOGGER.debug(
         "Unmatched sensor - Label: '%s', Chip: '%s'",
@@ -716,12 +812,12 @@ def find_temperature_inputs(
 ) -> Dict[str, Set[TempReading]]:
     """Find all valid temperature inputs in sensors data."""
     temps: Dict[str, Set[TempReading]] = defaultdict(set)
-    
+
     try:
         for chip, readings in sensors_data.items():
             if not isinstance(readings, dict):
                 continue
-                
+
             for label, values in readings.items():
                 # Handle both nested dict and direct value cases
                 if isinstance(values, dict):
@@ -732,7 +828,7 @@ def find_temperature_inputs(
                                 category = categorize_sensor(label, chip, overrides)
                                 if category:
                                     is_valid = is_valid_temp_range(
-                                        temp, 
+                                        temp,
                                         is_cpu=(category == 'cpu')
                                     )
                                     temps[category].add(TempReading(
@@ -758,9 +854,9 @@ def find_temperature_inputs(
                                 label=label,
                                 is_valid=is_valid
                             ))
-                            
+
         return dict(temps)
-        
+
     except Exception as err:
         _LOGGER.error(
             "Error finding temperature inputs: %s",
@@ -844,7 +940,7 @@ class DiskDataHelperMixin:
             # Use centralized percentage calculation
             usage = self._calculate_usage_percentage(total, used)
             percentage = 0.0 if usage is None else usage
-            
+
             attrs = {
                 "total_size": format_bytes(total),
                 "used_space": format_bytes(used),
@@ -872,7 +968,7 @@ class DiskDataHelperMixin:
             }
 
     def _get_temperature_str(
-        self, 
+        self,
         temp_value: Optional[int],
         is_standby: bool = False
     ) -> str:
@@ -882,7 +978,7 @@ class DiskDataHelperMixin:
         if temp_value is None:
             return "N/A"
         return f"{temp_value}°C"
-    
+
 class SpeedUnit(Enum):
     """Speed units with their multipliers."""
     BYTES = (1, "B")
@@ -904,7 +1000,7 @@ class SpeedUnit(Enum):
 
 def parse_speed_string(speed_str: str) -> float:
     """Parse speed string and return value in bytes per second.
-    
+
     Handles multiple formats:
     - Raw bytes/sec (e.g., "124194045")
     - Formatted speed (e.g., "125.5 MB/s")
@@ -913,21 +1009,21 @@ def parse_speed_string(speed_str: str) -> float:
     try:
         # Clean up the string
         speed_str = speed_str.strip()
-        
+
         # Handle special cases
         if speed_str in ["Unavailable", "nan B/s", "0"]:
             return 0.0
-            
+
         # Try parsing as raw bytes/sec first
         try:
             return float(speed_str)
         except ValueError:
             pass
-            
+
         # Handle formatted speed strings
         speed_str = speed_str.replace('/s', '').strip()
         speed_str = speed_str.replace('MB B', 'MB').replace('GB B', 'GB')
-        
+
         # Split into value and unit
         parts = speed_str.split()
         if len(parts) != 2:
@@ -940,17 +1036,17 @@ def parse_speed_string(speed_str: str) -> float:
                 raise ValueError(f"Invalid speed format: {speed_str}")
         else:
             value, unit = parts
-            
+
         # Convert value to float
         speed = float(value)
-        
+
         # Handle case where unit might have extra text
         unit = unit.replace('B/s', 'B').replace('B', '').strip() + 'B'
-        
+
         # Get unit multiplier
         unit_enum = SpeedUnit.from_symbol(unit)
         return speed * unit_enum.multiplier
-            
+
     except (ValueError, IndexError) as err:
         if "Unavailable" in str(err):
             return 0.0

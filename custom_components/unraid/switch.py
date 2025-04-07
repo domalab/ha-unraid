@@ -39,25 +39,33 @@ class UnraidSwitchEntity(CoordinatorEntity, SwitchEntity):
         """Initialize the switch."""
         super().__init__(coordinator)
         self.entity_description = description
-        
+
         hostname = coordinator.hostname.capitalize()
-        
+
         # Clean the key of any existing hostname instances
         clean_key = description.key
         hostname_variations = [hostname.lower(), hostname.capitalize(), hostname.upper()]
         for variation in hostname_variations:
             clean_key = clean_key.replace(f"{variation}_", "")
-        
-        # Construct unique_id with guaranteed single hostname instance
-        self._attr_unique_id = f"unraid_server_{hostname}_{clean_key}"
+
+        # Get entity format from coordinator
+        entity_format = coordinator.entity_format
+
+        # Construct unique_id with guaranteed single hostname instance based on entity format
+        if entity_format == 1:
+            # Old format: unraid_server_hostname_component_name
+            self._attr_unique_id = f"unraid_server_{hostname.lower()}_{clean_key}"
+        else:
+            # New format: unraid_hostname_component_name
+            self._attr_unique_id = f"unraid_{hostname.lower()}_{clean_key}"
         _LOGGER.debug("Entity initialized | unique_id: %s | hostname: %s | clean_key: %s",
             self._attr_unique_id, hostname, clean_key)
-        
+
         # Keep the name simple and human-readable
-        self._attr_name = f"{hostname} {description.name}"
-        _LOGGER.debug("Entity initialized | name: %s | hostname: %s | description: %s",
-            self._attr_name, hostname, description.name)
-        
+        self._attr_name = f"Unraid {description.name}"
+        _LOGGER.debug("Entity initialized | name: %s | description: %s",
+            self._attr_name, description.name)
+
         # All switches belong to main server device
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
@@ -150,10 +158,10 @@ class UnraidVMSwitch(UnraidSwitchEntity):
         """Initialize the VM switch."""
         self._vm_name = vm_name
         self._last_known_state = None
-        
+
         # Remove any leading numbers and spaces for the entity ID
         cleaned_name = ''.join(c for c in vm_name if not c.isdigit()).strip()
-        
+
         super().__init__(
             coordinator,
             UnraidSwitchEntityDescription(
@@ -163,7 +171,7 @@ class UnraidVMSwitch(UnraidSwitchEntity):
             )
         )
         self._attr_entity_registry_enabled_default = True
-        
+
         # Get OS type for specific model info
         for vm in coordinator.data.get("vms", []):
             if vm["name"] == vm_name and "os_type" in vm:
@@ -196,7 +204,7 @@ class UnraidVMSwitch(UnraidSwitchEntity):
         """Return if the switch is available."""
         if not self.coordinator.last_update_success:
             return False
-            
+
         vms_enabled = "vms" in self.coordinator.data and isinstance(self.coordinator.data["vms"], list)
         return vms_enabled and any(vm["name"] == self._vm_name for vm in self.coordinator.data.get("vms", []))
 
@@ -207,7 +215,7 @@ class UnraidVMSwitch(UnraidSwitchEntity):
             "status": "unknown",
             "os_type": "unknown",
         }
-        
+
         for vm in self.coordinator.data.get("vms", []):
             if vm["name"] == self._vm_name:
                 attrs.update({
@@ -215,7 +223,7 @@ class UnraidVMSwitch(UnraidSwitchEntity):
                     "os_type": vm.get("os_type", "unknown"),
                 })
                 break
-                
+
         return attrs
 
     async def async_turn_on(self, **kwargs: Any) -> None:
