@@ -25,6 +25,7 @@ disable=
     import-error,
     no-name-in-module,
     wrong-import-position,
+    wrong-import-order,
     line-too-long,
     import-self,
     trailing-whitespace,
