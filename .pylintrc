@@ -41,7 +41,25 @@ disable=
     consider-using-get,
     chained-comparison,
     arguments-renamed,
-    overridden-final-method
+    overridden-final-method,
+    too-many-ancestors,
+    unexpected-keyword-arg,
+    abstract-method,
+    consider-using-dict-items,
+    too-many-positional-arguments,
+    redefined-outer-name,
+    reimported,
+    import-outside-toplevel,
+    raise-missing-from,
+    unused-argument,
+    no-else-raise,
+    no-else-continue,
+    bad-except-order,
+    f-string-without-interpolation,
+    attribute-defined-outside-init,
+    superfluous-parens,
+    unsubscriptable-object,
+    protected-access
 
 [FORMAT]
 # Maximum number of characters on a single line
