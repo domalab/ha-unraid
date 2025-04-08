@@ -49,7 +49,7 @@ class SpeedUnit(Enum):
     def __init__(self, multiplier: int, symbol: str):
         self.multiplier = multiplier
         self.symbol = symbol
-    
+
     @staticmethod
     def from_symbol(symbol: str):
         """Retrieve SpeedUnit based on symbol."""
@@ -62,7 +62,7 @@ class SpeedUnit(Enum):
 @dataclass
 class UnraidBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Describes Unraid binary sensor entity."""
-    
+
     key: str
     name: str | None = None
     device_class: BinarySensorDeviceClass | None = None
