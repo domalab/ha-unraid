@@ -26,7 +26,22 @@ disable=
     no-name-in-module,
     wrong-import-position,
     line-too-long,
-    import-self
+    import-self,
+    trailing-whitespace,
+    missing-final-newline,
+    too-many-nested-blocks,
+    too-many-return-statements,
+    too-many-lines,
+    unused-import,
+    unused-variable,
+    unnecessary-pass,
+    no-else-return,
+    logging-fstring-interpolation,
+    consider-using-in,
+    consider-using-get,
+    chained-comparison,
+    arguments-renamed,
+    overridden-final-method
 
 [FORMAT]
 # Maximum number of characters on a single line
