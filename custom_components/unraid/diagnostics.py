@@ -16,7 +16,7 @@ from homeassistant.const import ( # type: ignore
 from homeassistant.core import HomeAssistant # type: ignore
 
 from .const import DOMAIN
-from .diagnostics import SystemHealthDiagnostics
+from .diagnostics.system_health import SystemHealthDiagnostics
 
 _LOGGER = logging.getLogger(__name__)
 

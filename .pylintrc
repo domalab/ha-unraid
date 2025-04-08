@@ -1,3 +1,33 @@
 [MASTER]
 # Ignore Home Assistant modules so that missing dependency errors are not raised
 ignored-modules=homeassistant,homeassistant.*
+# A comma-separated list of file extensions that should be checked
+extension=py
+# Add files or directories to the blacklist
+ignore=CVS,tests
+# Use multiple processes to speed up Pylint
+jobs=4
+
+[MESSAGES CONTROL]
+# Disable specific messages
+disable=
+    duplicate-code,
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    too-many-arguments,
+    too-many-instance-attributes,
+    too-few-public-methods,
+    broad-exception-caught,
+    import-error,
+    no-name-in-module,
+    wrong-import-position,
+    line-too-long,
+    import-self
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=120
