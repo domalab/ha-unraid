@@ -17,6 +17,8 @@ from homeassistant.const import (  # type: ignore
 )
 from homeassistant.core import HomeAssistant  # type: ignore
 from homeassistant.exceptions import ConfigEntryNotReady  # type: ignore
+from homeassistant.helpers import config_validation as cv  # type: ignore
+import voluptuous as vol  # type: ignore
 # Repairs will be imported directly where needed
 from cryptography.utils import CryptographyDeprecationWarning  # type: ignore
 
@@ -53,6 +55,9 @@ _LOG_MANAGER = LogManager()
 
 # Platform verification dictionary
 _PLATFORM_VERIFIED = {platform: False for platform in PLATFORMS}
+
+# Define empty config schema to satisfy hassfest validation
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, _: dict) -> bool:
     """Set up the Unraid component."""

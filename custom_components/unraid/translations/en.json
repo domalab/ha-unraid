@@ -25,113 +25,63 @@
       "description": "A parity check issue has been detected on your Unraid server {hostname}. {issue_type} issue: {parity_status}{error_count}. Please check the parity status in the Unraid web interface."
     }
   },
-  "repairs": {
-    "connection_failed": {
-      "title": "Fix Unraid connection",
-      "description": "The connection to your Unraid server {hostname} has failed. Error: {error}. You can fix this by updating the connection settings.",
-      "confirm": {
-        "title": "Fix Unraid connection",
-        "description": "The connection to your Unraid server {hostname} has failed. Error: {error}. Would you like to update the connection settings?"
-      },
-      "reconfigure": {
-        "title": "Update connection settings",
-        "description": "Update the connection settings for your Unraid server {hostname}."
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Unraid",
+        "description": "Set up your Unraid server connection.",
+        "data": {
+          "host": "Host",
+          "username": "Username",
+          "password": "Password",
+          "port": "Port",
+          "general_interval": "General Update Interval (Minutes)",
+          "disk_interval": "Disk Update Interval (Hours)",
+          "has_ups": "UPS Insights"
+        },
+        "data_description": {
+          "host": "{host_description}",
+          "username": "{username_description}",
+          "password": "{password_description}",
+          "port": "{port_description}",
+          "general_interval": "{general_interval_description}",
+          "disk_interval": "{disk_interval_description}",
+          "has_ups": "Check this if you have a UPS connected to your Unraid server"
+        }
       }
     },
-    "authentication_failed": {
-      "title": "Fix Unraid authentication",
-      "description": "Authentication to your Unraid server {hostname} has failed. Error: {error}. You can fix this by updating your credentials.",
-      "confirm": {
-        "title": "Fix Unraid authentication",
-        "description": "Authentication to your Unraid server {hostname} has failed. Error: {error}. Would you like to update your credentials?"
-      },
-      "reconfigure": {
-        "title": "Update credentials",
-        "description": "Update the credentials for your Unraid server {hostname}."
-      }
+    "error": {
+      "cannot_connect": "Failed to connect to Unraid server",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error occurred",
+      "empty_host": "Hostname cannot be empty",
+      "invalid_host": "Invalid hostname or IP address",
+      "invalid_port": "Invalid port number (must be between 1 and 65535)",
+      "empty_username": "Username cannot be empty",
+      "empty_password": "Password cannot be empty"
     },
-    "disk_health": {
-      "title": "Unraid disk health issue",
-      "description": "A disk health issue has been detected on your Unraid server {hostname}. Disk: {disk_name}. {issue_type} issue: {smart_status}{temperature}. Please check the disk in the Unraid web interface.",
-      "confirm": {
-        "title": "Acknowledge disk health issue",
-        "description": "A disk health issue has been detected on your Unraid server {hostname}. Disk: {disk_name}. {issue_type} issue: {smart_status}{temperature}. Please check the disk in the Unraid web interface. Click 'Confirm' to acknowledge this issue."
-      }
-    },
-    "array_problem": {
-      "title": "Unraid array problem",
-      "description": "An array problem has been detected on your Unraid server {hostname}. {issue_type} issue: {array_status}{array_percentage}. Please check the array in the Unraid web interface.",
-      "confirm": {
-        "title": "Acknowledge array problem",
-        "description": "An array problem has been detected on your Unraid server {hostname}. {issue_type} issue: {array_status}{array_percentage}. Please check the array in the Unraid web interface. Click 'Confirm' to acknowledge this issue."
-      }
-    },
-    "parity_check_failed": {
-      "title": "Unraid parity check failed",
-      "description": "A parity check issue has been detected on your Unraid server {hostname}. {issue_type} issue: {parity_status}{error_count}. Please check the parity status in the Unraid web interface.",
-      "confirm": {
-        "title": "Acknowledge parity check issue",
-        "description": "A parity check issue has been detected on your Unraid server {hostname}. {issue_type} issue: {parity_status}{error_count}. Please check the parity status in the Unraid web interface. Click 'Confirm' to acknowledge this issue."
-      }
+    "abort": {
+      "already_configured": "This Unraid server is already configured"
     }
   },
-    "config": {
-        "step": {
-            "user": {
-                "title": "Connect to Unraid",
-                "description": "Set up your Unraid server connection.",
-                "data": {
-                    "host": "Host",
-                    "username": "Username",
-                    "password": "Password",
-                    "port": "Port",
-                    "general_interval": "General Update Interval (Minutes)",
-                    "disk_interval": "Disk Update Interval (Hours)",
-                    "has_ups": "UPS Insights"
-                },
-                "data_description": {
-                    "host": "{host_description}",
-                    "username": "{username_description}",
-                    "password": "{password_description}",
-                    "port": "{port_description}",
-                    "general_interval": "{general_interval_description}",
-                    "disk_interval": "{disk_interval_description}",
-                    "has_ups": "Check this if you have a UPS connected to your Unraid server"
-                }
-            }
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update Intervals",
+        "description": "Configure update intervals and settings",
+        "data": {
+          "general_interval": "General Update Interval (Minutes)",
+          "disk_interval": "Disk Update Interval (Hours)",
+          "port": "SSH Port",
+          "has_ups": "UPS Insights"
         },
-        "error": {
-            "cannot_connect": "Failed to connect to Unraid server",
-            "invalid_auth": "Invalid authentication",
-            "unknown": "Unexpected error occurred",
-            "empty_host": "Hostname cannot be empty",
-            "invalid_host": "Invalid hostname or IP address",
-            "invalid_port": "Invalid port number (must be between 1 and 65535)",
-            "empty_username": "Username cannot be empty",
-            "empty_password": "Password cannot be empty"
-        },
-        "abort": {
-            "already_configured": "This Unraid server is already configured"
+        "data_description": {
+          "general_interval": "How often to update non-disk sensors (1-60 minutes)",
+          "disk_interval": "How often to update disk information (1-24 hours)",
+          "port": "SSH port for connecting to your Unraid server",
+          "has_ups": "Enable if you have a UPS connected to your Unraid server"
         }
-    },
-    "options": {
-        "step": {
-            "init": {
-                "title": "Update Intervals",
-                "description": "Configure update intervals and settings",
-                "data": {
-                    "general_interval": "General Update Interval (Minutes)",
-                    "disk_interval": "Disk Update Interval (Hours)",
-                    "port": "SSH Port",
-                    "has_ups": "UPS Insights"
-                },
-                "data_description": {
-                    "general_interval": "How often to update non-disk sensors (1-60 minutes)",
-                    "disk_interval": "How often to update disk information (1-24 hours)",
-                    "port": "SSH port for connecting to your Unraid server",
-                    "has_ups": "Enable if you have a UPS connected to your Unraid server"
-                }
-            }
-        }
+      }
     }
+  }
 }
