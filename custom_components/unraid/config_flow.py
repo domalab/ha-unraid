@@ -457,7 +457,8 @@ def validate_hostname(hostname: str) -> Dict[str, str]:
         return errors
     except socket.error:
         # Not an IP address, check if it's a valid hostname
-        if not re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,61}[a-zA-Z0-9])?)*$", hostname):
+        # Using a more efficient regex that avoids potential exponential backtracking
+        if not re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$", hostname):
             errors["host"] = "invalid_host"
             return errors
 
