@@ -2,7 +2,7 @@
 # Ignore Home Assistant modules so that missing dependency errors are not raised
 ignored-modules=homeassistant,homeassistant.*
 # A comma-separated list of file extensions that should be checked
-python-files=*.py
+extension-pkg-whitelist=*.py
 # Add files or directories to the blacklist
 ignore=CVS,tests
 # Use multiple processes to speed up Pylint
