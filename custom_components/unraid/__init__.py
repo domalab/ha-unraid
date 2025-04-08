@@ -1,10 +1,12 @@
 """The Unraid integration."""
 from __future__ import annotations
 
+import asyncio
+import importlib
 import logging
 import warnings
-import asyncio
-from typing import Any
+from datetime import timedelta
+from homeassistant.helpers.event import async_track_time_interval  # type: ignore
 
 from homeassistant.config_entries import ConfigEntry  # type: ignore
 from homeassistant.const import (  # type: ignore
@@ -12,10 +14,10 @@ from homeassistant.const import (  # type: ignore
     CONF_PASSWORD,
     CONF_PORT,
     CONF_USERNAME,
-    Platform,
 )
 from homeassistant.core import HomeAssistant  # type: ignore
 from homeassistant.exceptions import ConfigEntryNotReady  # type: ignore
+# Repairs will be imported directly where needed
 from cryptography.utils import CryptographyDeprecationWarning  # type: ignore
 
 # Suppress deprecation warnings for paramiko
@@ -35,39 +37,24 @@ from .const import (
     DEFAULT_PORT,
     CONF_HAS_UPS,
     MIGRATION_VERSION,
-    ENTITY_NAMING_VERSION,
-    CONF_ENTITY_FORMAT,
-    DEFAULT_ENTITY_FORMAT
 )
 
-# Pre-import all modules at the module level to avoid blocking calls
-from .migrations import async_migrate_with_rollback, async_cleanup_orphaned_entities, migrate_entity_id_format
+# Import required modules
+from .migrations import async_migrate_with_rollback, async_cleanup_orphaned_entities
 from .coordinator import UnraidDataUpdateCoordinator
 from .unraid import UnraidAPI
-from .api.logging_helper import setup_logging_filters, restore_logging_levels
-from .api.log_filter import LogManager
+from .api.logging_helper import LogManager
+from .repairs import UnraidRepairManager
 from . import services
-
-# Pre-import all platform modules
 _LOGGER = logging.getLogger(__name__)
 
 # Set up log manager at the module level so it's initialized once
 _LOG_MANAGER = LogManager()
 
-# Pre-import all platform modules
-_PLATFORM_IMPORTS = {}
+# Platform verification dictionary
+_PLATFORM_VERIFIED = {platform: False for platform in PLATFORMS}
 
-# Import all platform modules at module load time
-for platform in PLATFORMS:
-    try:
-        module_path = f"custom_components.{DOMAIN}.{platform}"
-        _PLATFORM_IMPORTS[platform] = __import__(module_path, fromlist=["_"])
-        _LOGGER.debug("Pre-imported platform %s", platform)
-    except ImportError as err:
-        _LOGGER.warning("Error pre-importing platform %s: %s", platform, err)
-        # Don't raise error here, we'll check if imports succeeded during setup
-
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+async def async_setup(hass: HomeAssistant, _: dict) -> bool:
     """Set up the Unraid component."""
     hass.data.setdefault(DOMAIN, {})
 
@@ -78,8 +65,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Unraid from a config entry."""
-    # Set up logging filters to reduce verbosity
-    setup_logging_filters()
+    # Ensure logging is configured
+    _LOG_MANAGER.configure()
+
+    # Type annotations for better type checking
+    coordinator: UnraidDataUpdateCoordinator
 
     _LOGGER.info("Setting up Unraid integration, cleaning up any previous entities")
 
@@ -99,22 +89,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not await async_migrate_with_rollback(hass, entry):
                 _LOGGER.warning("Migration process failed, but continuing with setup")
 
-        # Always use entity format version 2
-        try:
-            _LOGGER.warning("Starting entity ID migration process")
-            # Always use entity format version 2
-            entity_format = 2
-            _LOGGER.warning("Using entity format: %s", entity_format)
+        # All entities now use the new format (unraid_hostname_component_name) by default
 
-            if await migrate_entity_id_format(hass, entry, entity_format):
-                _LOGGER.warning("Entity ID migration completed successfully")
-            else:
-                _LOGGER.warning("Entity ID migration failed, but continuing with setup")
-        except Exception as migration_err:
-            _LOGGER.error("Error during entity ID migration: %s", migration_err)
+        # Verify all platforms can be imported (non-blocking)
+        async def _verify_platform(platform):
+            try:
+                module_path = f"custom_components.{DOMAIN}.{platform}"
+                await hass.async_add_executor_job(importlib.import_module, module_path)
+                _PLATFORM_VERIFIED[platform] = True
+                _LOGGER.debug("Verified platform %s", platform)
+                return None
+            except ImportError as err:
+                _LOGGER.error("Error importing platform %s: %s", platform, err)
+                return platform
 
-        # Verify all platforms were imported successfully
-        missing_platforms = [p for p in PLATFORMS if p not in _PLATFORM_IMPORTS]
+        # Verify all platforms in parallel
+        missing_platforms = []
+        verification_tasks = [_verify_platform(platform) for platform in PLATFORMS]
+        results = await asyncio.gather(*verification_tasks)
+        missing_platforms = [p for p in results if p is not None]
+
         if missing_platforms:
             _LOGGER.error("Missing required platform modules: %s", missing_platforms)
             raise ConfigEntryNotReady(f"Missing platform modules: {missing_platforms}")
@@ -153,7 +147,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
         # Set up all platforms
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        try:
+            # Use a more careful approach to set up platforms
+            setup_platforms = []
+            for platform in PLATFORMS:
+                platform_key = f"{DOMAIN}.{platform}"
+                if platform_key in hass.data.get("setup_entities", {}):
+                    _LOGGER.debug("Platform %s already set up, skipping", platform)
+                else:
+                    setup_platforms.append(platform)
+
+            if setup_platforms:
+                _LOGGER.debug("Setting up platforms: %s", setup_platforms)
+                await hass.config_entries.async_forward_entry_setups(entry, setup_platforms)
+            else:
+                _LOGGER.debug("All platforms already set up, skipping")
+        except Exception as platforms_err:
+            _LOGGER.error("Error setting up platforms: %s", platforms_err)
 
         # Set up services
         await services.async_setup_services(hass)
@@ -164,14 +174,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Register update listener for options
         entry.async_on_unload(entry.add_update_listener(update_listener))
 
+        # We'll skip repairs registration for now as it's causing issues
+        # The repair issues will still be created, but the flows won't be registered
+        _LOGGER.debug("Skipping repairs registration to avoid platform registration issues")
+
+        # Create repair manager
+        repair_manager = UnraidRepairManager(hass, coordinator)
+
+        # Schedule periodic issue checks
+        async def async_check_issues(_=None):
+            """Check for issues periodically."""
+            await repair_manager.async_check_for_issues()
+
+        # Initial check
+        await async_check_issues()
+
+        # Schedule regular checks
+        issue_check_interval = timedelta(minutes=30)
+        issue_check_remove = async_track_time_interval(
+            hass, async_check_issues, issue_check_interval
+        )
+
+        # Register cleanup
+        entry.async_on_unload(issue_check_remove)
+
         # Register cleanup callback
         async def async_unload_coordinator():
             """Unload coordinator resources."""
             _LOGGER.debug("Unloading coordinator resources")
             await coordinator.async_stop()
-            # Restore logging levels on unload
-            restore_logging_levels()
-            # Reset log filter
+            # Reset log filter and restore logging levels
             _LOG_MANAGER.reset()
 
         entry.async_on_unload(async_unload_coordinator)
@@ -198,16 +230,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     # Unload platforms
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok = True
+
+    try:
+        # Use the recommended method to unload platforms
+        if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+            unload_ok = False
+            _LOGGER.warning("Failed to unload platforms")
+    except Exception as platforms_err:
+        unload_ok = False
+        _LOGGER.error("Error unloading platforms: %s", platforms_err)
 
     # Remove entry from data
-    if unload_ok:
+    if unload_ok and entry.entry_id in hass.data.get(DOMAIN, {}):
         coordinator = hass.data[DOMAIN].pop(entry.entry_id)
         # Ensure coordinator is properly cleaned up
         await coordinator.async_stop()
-        # Restore logging levels
-        restore_logging_levels()
-        # Reset log filter
+        # Reset log filter and restore logging levels
         _LOG_MANAGER.reset()
 
     return unload_ok

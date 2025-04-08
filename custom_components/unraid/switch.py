@@ -15,6 +15,8 @@ from .const import (
     DOMAIN,
 )
 
+from .helpers import EntityNaming
+
 from .coordinator import UnraidDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,36 +42,26 @@ class UnraidSwitchEntity(CoordinatorEntity, SwitchEntity):
         super().__init__(coordinator)
         self.entity_description = description
 
-        hostname = coordinator.hostname.capitalize()
+        # Initialize entity naming helper
+        naming = EntityNaming(
+            domain=DOMAIN,
+            hostname=coordinator.hostname,
+            component=description.key.split('_')[0]  # Get first part of key as component
+        )
 
-        # Clean the key of any existing hostname instances
-        clean_key = description.key
-        hostname_variations = [hostname.lower(), hostname.capitalize(), hostname.upper()]
-        for variation in hostname_variations:
-            clean_key = clean_key.replace(f"{variation}_", "")
-
-        # Get entity format from coordinator
-        entity_format = coordinator.entity_format
-
-        # Construct unique_id with guaranteed single hostname instance based on entity format
-        if entity_format == 1:
-            # Old format: unraid_server_hostname_component_name
-            self._attr_unique_id = f"unraid_server_{hostname.lower()}_{clean_key}"
-        else:
-            # New format: unraid_hostname_component_name
-            self._attr_unique_id = f"unraid_{hostname.lower()}_{clean_key}"
-        _LOGGER.debug("Entity initialized | unique_id: %s | hostname: %s | clean_key: %s",
-            self._attr_unique_id, hostname, clean_key)
+        # Set consistent entity ID
+        self._attr_unique_id = naming.get_entity_id(description.key)
 
         # Keep the name simple and human-readable
-        self._attr_name = f"Unraid {description.name}"
-        _LOGGER.debug("Entity initialized | name: %s | description: %s",
-            self._attr_name, description.name)
+        self._attr_name = f"{description.name}"
+
+        _LOGGER.debug("Entity initialized | unique_id: %s | name: %s",
+            self._attr_unique_id, self._attr_name)
 
         # All switches belong to main server device
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": f"Unraid Server ({hostname})",
+            "name": f"Unraid Server ({coordinator.hostname.capitalize()})",
             "manufacturer": "Lime Technology",
             "model": "Unraid Server",
         }
@@ -112,7 +104,7 @@ class UnraidDockerContainerSwitch(UnraidSwitchEntity):
             coordinator,
             UnraidSwitchEntityDescription(
                 key=f"docker_{container_name}",
-                name=f"Docker {container_name}",
+                name=f"{container_name}",
                 icon="mdi:docker",
                 value_fn=self._get_container_state,
             )
@@ -166,7 +158,7 @@ class UnraidVMSwitch(UnraidSwitchEntity):
             coordinator,
             UnraidSwitchEntityDescription(
                 key=f"vm_{cleaned_name}",
-                name=f"VM {vm_name}",
+                name=f"{vm_name}",
                 value_fn=self._get_vm_state,
             )
         )

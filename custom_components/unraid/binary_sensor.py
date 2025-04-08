@@ -9,15 +9,12 @@ from homeassistant.core import HomeAssistant # type: ignore
 from homeassistant.helpers.entity_platform import AddEntitiesCallback # type: ignore
 
 from .const import DOMAIN
-from .diagnostics import (
-    UnraidBinarySensorBase,
-    UnraidArrayDiskSensor,
-    UnraidParityDiskSensor,
-    UnraidPoolDiskSensor,
-    UnraidUPSBinarySensor,
-    SENSOR_DESCRIPTIONS,
-    UnraidParityCheckSensor,
-)
+from .diagnostics.base import UnraidBinarySensorBase
+from .diagnostics.disk import UnraidArrayDiskSensor
+from .diagnostics.pool import UnraidPoolDiskSensor
+from .diagnostics.parity import UnraidParityDiskSensor, UnraidParityCheckSensor
+from .diagnostics.ups import UnraidUPSBinarySensor
+from .diagnostics.const import SENSOR_DESCRIPTIONS
 from .coordinator import UnraidDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,14 +79,14 @@ async def async_setup_entry(
     if parity_info:
         # Store parity info in coordinator data
         coordinator.data["parity_info"] = parity_info
-        
+
         # Add parity disk sensor
         entities.append(UnraidParityDiskSensor(coordinator, parity_info))
         _LOGGER.debug(
-            "Added parity disk sensor | device: %s", 
+            "Added parity disk sensor | device: %s",
             parity_info.get("rdevName.0")
         )
-        
+
         # Add parity check sensor
         entities.append(UnraidParityCheckSensor(coordinator))
         _LOGGER.debug(
@@ -99,7 +96,7 @@ async def async_setup_entry(
 
     # Filter out tmpfs and special mounts
     ignored_mounts = {
-        "disks", "remotes", "addons", "rootshare", 
+        "disks", "remotes", "addons", "rootshare",
         "user/0", "dev/shm"
     }
 
@@ -119,7 +116,7 @@ async def async_setup_entry(
         disk_name = disk.get("name")
         if not disk_name or disk_name in processed_disks:
             continue
-            
+
         if disk_name.startswith("disk"):
             try:
                 entities.append(
@@ -142,7 +139,7 @@ async def async_setup_entry(
         disk_name = disk.get("name")
         if not disk_name or disk_name in processed_disks:
             continue
-            
+
         if not disk_name.startswith("disk"):
             try:
                 entities.append(

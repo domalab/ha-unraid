@@ -172,6 +172,48 @@ class DockerOperationsMixin:
             _LOGGER.error("Error stopping container %s: %s", container_name, str(e))
             return False
 
+    async def pause_container(self, container_name: str) -> bool:
+        """Pause a Docker container."""
+        try:
+            _LOGGER.debug("Pausing container: %s", container_name)
+            result = await self.execute_container_command(f'docker pause "{container_name}"')
+            if result.exit_status != 0:
+                _LOGGER.error("Failed to pause container %s: %s", container_name, result.stderr)
+                return False
+            _LOGGER.info("Container %s paused successfully", container_name)
+            return True
+        except (asyncio.TimeoutError, Exception) as e:
+            _LOGGER.error("Error pausing container %s: %s", container_name, str(e))
+            return False
+
+    async def resume_container(self, container_name: str) -> bool:
+        """Resume a paused Docker container."""
+        try:
+            _LOGGER.debug("Resuming container: %s", container_name)
+            result = await self.execute_container_command(f'docker unpause "{container_name}"')
+            if result.exit_status != 0:
+                _LOGGER.error("Failed to resume container %s: %s", container_name, result.stderr)
+                return False
+            _LOGGER.info("Container %s resumed successfully", container_name)
+            return True
+        except (asyncio.TimeoutError, Exception) as e:
+            _LOGGER.error("Error resuming container %s: %s", container_name, str(e))
+            return False
+
+    async def restart_container(self, container_name: str) -> bool:
+        """Restart a Docker container."""
+        try:
+            _LOGGER.debug("Restarting container: %s", container_name)
+            result = await self.execute_container_command(f'docker restart "{container_name}"')
+            if result.exit_status != 0:
+                _LOGGER.error("Failed to restart container %s: %s", container_name, result.stderr)
+                return False
+            _LOGGER.info("Container %s restarted successfully", container_name)
+            return True
+        except (asyncio.TimeoutError, Exception) as e:
+            _LOGGER.error("Error restarting container %s: %s", container_name, str(e))
+            return False
+
     async def _get_docker_vdisk_usage(self) -> Dict[str, Any]:
         """Fetch Docker vDisk information from the Unraid system."""
         try:

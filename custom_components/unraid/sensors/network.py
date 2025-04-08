@@ -21,7 +21,7 @@ from .const import (
 )
 
 from  ..api.network_operations import NetworkRateSmoothingMixin
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
 
         description = UnraidSensorEntityDescription(
             key=f"network_{interface}_{direction}",
-            name=f"{naming.get_entity_name(interface, 'network')} {direction.capitalize()}",
+            name=f"{interface} {direction.capitalize()}",
             device_class=SensorDeviceClass.DATA_RATE,
             state_class=SensorStateClass.MEASUREMENT,
             icon="mdi:arrow-down" if direction == "inbound" else "mdi:arrow-up",
@@ -85,7 +85,7 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
     def _get_unit(self, bits_per_sec: float) -> NetworkSpeedUnit:
         """Get the most appropriate unit for a network speed."""
         old_unit = getattr(self, '_unit', NetworkSpeedUnit(1, "bit/s"))
-        
+
         for unit in reversed(NETWORK_UNITS):
             if bits_per_sec >= unit.multiplier:
                 _LOGGER.debug(
@@ -99,7 +99,7 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
                     old_unit.symbol
                 )
                 return unit
-                
+
         _LOGGER.debug(
             "Using minimum unit - rate: %.2f bits/s, unit: %s",
             bits_per_sec,
@@ -149,7 +149,7 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
             if rate > 0:
                 self._unit = self._get_unit(rate)
                 converted_rate = round(rate / self._unit.multiplier, 2)
-                
+
                 _LOGGER.debug(
                     "%s %s: Final conversion %.2f bits/s → %.2f %s",
                     self._interface,
@@ -158,7 +158,7 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
                     converted_rate,
                     self._unit.symbol
                 )
-                
+
                 return converted_rate
 
             return 0.0
@@ -177,7 +177,7 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
         """Check if network interface is available."""
         try:
             network_stats = data.get("system_stats", {}).get("network_stats", {})
-            
+
             # Use the same normalization as in network_operations
             normalized_interface = self._interface.lower()
             if '.' in normalized_interface or '@' in normalized_interface:

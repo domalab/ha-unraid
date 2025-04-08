@@ -8,13 +8,9 @@ from homeassistant.core import HomeAssistant # type: ignore
 from homeassistant.helpers.entity_platform import AddEntitiesCallback # type: ignore
 
 from .const import DOMAIN
-from .sensors import (
-    UnraidSystemSensors,
-    UnraidStorageSensors,
-    UnraidNetworkSensors,
-    UnraidUPSSensors,
-)
 from .coordinator import UnraidDataUpdateCoordinator
+from .sensors.factory import SensorFactory
+from .sensors.registry import register_all_sensors
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,29 +23,11 @@ async def async_setup_entry(
     coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     try:
-        # Create all sensor entities
-        entities = []
+        # Register all sensor types
+        register_all_sensors()
 
-        # System sensors (CPU, RAM, etc.)
-        entities.extend(UnraidSystemSensors(coordinator).entities)
-        _LOGGER.debug("Added system sensors")
-
-        # Storage sensors (Array, Disks, Cache)
-        entities.extend(UnraidStorageSensors(coordinator).entities)
-        _LOGGER.debug("Added storage sensors")
-
-        # Network sensors
-        network_sensors = UnraidNetworkSensors(coordinator).entities
-        if network_sensors:
-            entities.extend(network_sensors)
-            _LOGGER.debug("Added network sensors for active interfaces")
-
-        # UPS sensors (if available)
-        if coordinator.has_ups:
-            ups_sensors = UnraidUPSSensors(coordinator).entities
-            if ups_sensors:
-                entities.extend(ups_sensors)
-                _LOGGER.debug("Added UPS sensors")
+        # Create all sensor entities using the factory
+        entities = SensorFactory.create_all_sensors(coordinator)
 
         if entities:
             async_add_entities(entities)

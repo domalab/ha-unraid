@@ -21,18 +21,12 @@ from .const import (
 )
 from ..helpers import (
     format_bytes,
-    get_acpi_temp_input,
-    get_auxtin_temp_input,
-    get_core_temp_input,
-    get_ec_temp_input,
-    get_peci_temp_input,
-    get_system_temp_input,
-    get_tccd_temp_input,
+    get_temp_input,
     parse_temperature,
     find_temperature_inputs,
     is_valid_temp_range,
 )
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -194,17 +188,16 @@ class UnraidCPUTempSensor(UnraidSensorBase):
 
                 # Try dynamic core patterns
                 for label, values in device_data.items():
-                    for getter in [get_core_temp_input, get_tccd_temp_input, get_peci_temp_input]:
-                        if temp_key := getter(label):
-                            if isinstance(values, dict):
-                                reading = values.get(temp_key)
-                                if reading is not None:
-                                    if temp := parse_temperature(str(reading)):
-                                        if is_valid_temp_range(temp, is_cpu=True):
-                                            self._last_valid_temp = round(temp, 1)
-                                            self._last_update = dt_util.utcnow()
-                                            self._detected_source = f"{device_name}/{label}"
-                                            return self._last_valid_temp
+                    if temp_key := get_temp_input(label):
+                        if isinstance(values, dict):
+                            reading = values.get(temp_key)
+                            if reading is not None:
+                                if temp := parse_temperature(str(reading)):
+                                    if is_valid_temp_range(temp, is_cpu=True):
+                                        self._last_valid_temp = round(temp, 1)
+                                        self._last_update = dt_util.utcnow()
+                                        self._detected_source = f"{device_name}/{label}"
+                                        return self._last_valid_temp
 
             # Step 2: Dynamic detection fallback
             temps = find_temperature_inputs(sensors_data)
@@ -302,18 +295,16 @@ class UnraidMotherboardTempSensor(UnraidSensorBase):
 
                 # Try dynamic patterns
                 for label, values in device_data.items():
-                    for getter in [get_acpi_temp_input, get_system_temp_input,
-                                get_ec_temp_input, get_auxtin_temp_input]:
-                        if temp_key := getter(label):
-                            if isinstance(values, dict):
-                                reading = values.get(temp_key)
-                                if reading is not None:
-                                    if temp := parse_temperature(str(reading)):
-                                        if is_valid_temp_range(temp, is_cpu=False):
-                                            self._last_valid_temp = round(temp, 1)
-                                            self._last_update = dt_util.utcnow()
-                                            self._detected_source = f"{device_name}/{label}"
-                                            return self._last_valid_temp
+                    if temp_key := get_temp_input(label):
+                        if isinstance(values, dict):
+                            reading = values.get(temp_key)
+                            if reading is not None:
+                                if temp := parse_temperature(str(reading)):
+                                    if is_valid_temp_range(temp, is_cpu=False):
+                                        self._last_valid_temp = round(temp, 1)
+                                        self._last_update = dt_util.utcnow()
+                                        self._detected_source = f"{device_name}/{label}"
+                                        return self._last_valid_temp
 
             # Step 2: Dynamic detection fallback
             temps = find_temperature_inputs(sensors_data)
@@ -373,7 +364,7 @@ class UnraidFanSensor(UnraidSensorBase):
             coordinator,
             UnraidSensorEntityDescription(
                 key=f"fan_{fan_id}",
-                name=f"{naming.get_entity_name(display_name, 'fan')}",  # Simplified name
+                name=f"{display_name.replace('NCT67 ', '')}",  # Clean display name
                 native_unit_of_measurement="rpm",
                 device_class=None,
                 state_class=SensorStateClass.MEASUREMENT,

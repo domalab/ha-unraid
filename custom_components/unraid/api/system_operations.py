@@ -12,6 +12,7 @@ import asyncio
 import asyncssh # type: ignore
 
 from .network_operations import NetworkOperationsMixin
+from .error_handling import with_error_handling, safe_parse
 from ..helpers import format_bytes, extract_fans_data
 from ..const import (
     TEMP_WARN_THRESHOLD,
@@ -44,59 +45,23 @@ class SystemOperationsMixin:
         """Set network operations instance."""
         self._network_ops = network_ops
 
+    @with_error_handling(fallback_return={})
     async def get_system_stats(self) -> Dict[str, Any]:
-        """Fetch system statistics from the Unraid server."""
+        """Fetch system statistics from the Unraid server.
+
+        This method uses a batched command approach to efficiently collect
+        all system statistics in a single SSH command.
+        """
         _LOGGER.debug("Fetching system stats from Unraid server")
 
-        try:
-            # Try the optimized batched command approach
-            system_stats = await self.collect_system_stats()
-            if system_stats:
-                return system_stats
-        except Exception as err:
-            _LOGGER.warning("Optimized system stats collection failed, falling back to individual commands: %s", err)
+        # Use the optimized batched command approach
+        system_stats = await self.collect_system_stats()
+        if system_stats:
+            return system_stats
 
-        # Fallback to original implementation if optimized approach fails
-        # Get array state first
-        array_state = await self._parse_array_state()
-
-        # Get other stats...
-        cpu_usage = await self._get_cpu_usage()
-        memory_usage = await self._get_memory_usage()
-        array_usage = await self.get_array_usage()
-        individual_disks = await self.get_individual_disk_usage()
-        cache_usage = await self._get_cache_usage()
-        boot_usage = await self._get_boot_usage()
-        uptime = await self._get_uptime()
-        ups_info = await self.get_ups_info()
-        temperature_data = await self.get_temperature_data()
-        log_filesystem = await self._get_log_filesystem_usage()
-        docker_vdisk = await self._get_docker_vdisk_usage()
-
-        return {
-            "array_state": {
-                "state": array_state.state,
-                "num_disks": array_state.num_disks,
-                "num_disabled": array_state.num_disabled,
-                "num_invalid": array_state.num_invalid,
-                "num_missing": array_state.num_missing,
-                "synced": array_state.synced,
-                "sync_action": array_state.sync_action,
-                "sync_progress": array_state.sync_progress,
-                "sync_errors": array_state.sync_errors,
-            },
-            "cpu_usage": cpu_usage,
-            "memory_usage": memory_usage,
-            "array_usage": array_usage,
-            "individual_disks": individual_disks,
-            "cache_usage": cache_usage,
-            "boot_usage": boot_usage,
-            "uptime": uptime,
-            "ups_info": ups_info,
-            "temperature_data": temperature_data,
-            "log_filesystem": log_filesystem,
-            "docker_vdisk": docker_vdisk,
-        }
+        # If batched command fails, return empty dict (handled by error_handling decorator)
+        _LOGGER.warning("System stats collection failed")
+        return {}
 
     async def _parse_array_state(self) -> ArrayState:
         """Parse detailed array state from mdcmd output."""
@@ -265,24 +230,53 @@ class SystemOperationsMixin:
             return await self._get_fallback_cpu_info()
 
     async def _get_fallback_cpu_info(self) -> Dict[str, Any]:
-        """Fallback method to get basic CPU info if primary method fails."""
-        try:
-            # Get basic CPU info using simple commands
-            arch_result = await self.execute_command("uname -m")
-            cores_result = await self.execute_command("nproc")
-            model_result = await self.execute_command(
-                "cat /proc/cpuinfo | grep 'model name' | head -n1 | cut -d':' -f2"
-            )
+        """Fallback method to get basic CPU info if primary method fails.
 
-            return {
-                "cpu_arch": arch_result.stdout.strip() if arch_result.exit_status == 0 else "unknown",
-                "cpu_cores": int(cores_result.stdout.strip()) if cores_result.exit_status == 0 else 0,
-                "cpu_model": model_result.stdout.strip() if model_result.exit_status == 0 else "unknown",
+        Uses a single command to get all required information to reduce SSH calls.
+        """
+        try:
+            # Get basic CPU info using a single command
+            cmd = (
+                "echo '===ARCH==='; uname -m; "
+                "echo '===CORES==='; nproc; "
+                "echo '===MODEL==='; cat /proc/cpuinfo | grep 'model name' | head -n1 | cut -d':' -f2"
+            )
+            result = await self.execute_command(cmd)
+
+            # Default values
+            cpu_info = {
+                "cpu_arch": "unknown",
+                "cpu_cores": 0,
+                "cpu_model": "unknown",
                 "cpu_threads_per_core": 0,
                 "cpu_sockets": 0,
                 "cpu_max_freq": 0,
                 "cpu_min_freq": 0,
             }
+
+            if result.exit_status == 0:
+                # Parse the output
+                lines = result.stdout.strip().split('\n')
+                section = None
+
+                for line in lines:
+                    if line == '===ARCH===':
+                        section = 'arch'
+                    elif line == '===CORES===':
+                        section = 'cores'
+                    elif line == '===MODEL===':
+                        section = 'model'
+                    elif section == 'arch' and line.strip():
+                        cpu_info['cpu_arch'] = line.strip()
+                    elif section == 'cores' and line.strip():
+                        try:
+                            cpu_info['cpu_cores'] = int(line.strip())
+                        except ValueError:
+                            pass
+                    elif section == 'model' and line.strip():
+                        cpu_info['cpu_model'] = line.strip()
+
+            return cpu_info
         except Exception as err:
             _LOGGER.error("Error getting fallback CPU info: %s", err)
             return {
@@ -507,35 +501,52 @@ class SystemOperationsMixin:
             _LOGGER.error("Error getting log filesystem usage: %s", str(err))
             return {}
 
+    @with_error_handling(fallback_return={})
     async def get_temperature_data(self) -> Dict[str, Any]:
         """Fetch temperature information from the Unraid system."""
         temp_data = {}
 
+        # Get sensors data
+        _LOGGER.debug("Fetching temperature data")
         try:
-            _LOGGER.debug("Fetching temperature data")
             result = await self.execute_command("sensors")
             if result.exit_status == 0:
                 # Parse sensors output
-                sensors_dict = self._parse_sensors_output(result.stdout)
+                sensors_dict = safe_parse(
+                    self._parse_sensors_output,
+                    result.stdout,
+                    default={},
+                    error_msg="Error parsing sensors output"
+                )
                 temp_data['sensors'] = sensors_dict
 
                 # Extract fan data
-                fans = extract_fans_data(sensors_dict)
+                fans = safe_parse(
+                    extract_fans_data,
+                    sensors_dict,
+                    default={},
+                    error_msg="Error extracting fan data"
+                )
                 if fans:
                     temp_data['fans'] = fans
                     _LOGGER.debug("Found fans: %s", list(fans.keys()))
                 else:
                     _LOGGER.debug("No fans found in sensor data")
+        except Exception as err:
+            _LOGGER.warning("Error getting sensors data: %s", err)
 
-        except (asyncssh.Error, asyncio.TimeoutError, OSError, ValueError) as e:
-            _LOGGER.error("Error getting sensors data: %s", str(e))
-
+        # Get thermal zone data
         try:
             result = await self.execute_command("paste <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp)")
             if result.exit_status == 0:
-                temp_data['thermal_zones'] = self._parse_thermal_zones(result.stdout)
-        except (asyncssh.Error, asyncio.TimeoutError, OSError, ValueError) as e:
-            _LOGGER.error("Error getting thermal zone data: %s", str(e))
+                temp_data['thermal_zones'] = safe_parse(
+                    self._parse_thermal_zones,
+                    result.stdout,
+                    default={},
+                    error_msg="Error parsing thermal zones"
+                )
+        except Exception as err:
+            _LOGGER.warning("Error getting thermal zone data: %s", err)
 
         return temp_data
 
@@ -634,24 +645,23 @@ class SystemOperationsMixin:
             return False
 
     async def get_hostname(self) -> str:
-        """Get the Unraid server hostname."""
-        try:
-            # Try multiple commands in case one fails
-            commands = [
-                "hostname -f",
-                "uname -n"
-            ]
+        """Get the Unraid server hostname.
 
-            for cmd in commands:
-                result = await self.execute_command(cmd)
-                if result.exit_status == 0:
-                    hostname = result.stdout.strip()
-                    if hostname:
-                        # Sanitize hostname
-                        sanitized = self._sanitize_hostname(hostname)
-                        if sanitized:
-                            _LOGGER.debug("Retrieved hostname: %s (sanitized: %s)", hostname, sanitized)
-                            return sanitized
+        Uses a single command with fallback options to reduce SSH calls.
+        """
+        try:
+            # Use a single command with || for fallback
+            cmd = "hostname -f || uname -n || echo 'unknown'"
+            result = await self.execute_command(cmd)
+
+            if result.exit_status == 0:
+                hostname = result.stdout.strip()
+                if hostname and hostname != 'unknown':
+                    # Sanitize hostname
+                    sanitized = self._sanitize_hostname(hostname)
+                    if sanitized:
+                        _LOGGER.debug("Retrieved hostname: %s (sanitized: %s)", hostname, sanitized)
+                        return sanitized
 
             _LOGGER.warning("Could not retrieve valid hostname, using default name")
             return None
@@ -660,91 +670,93 @@ class SystemOperationsMixin:
             return None
 
     async def _get_system_timezone(self) -> str:
-        """Get the system timezone."""
-        try:
-            # Get timezone from system
-            tz_result = await self.execute_command("cat /etc/timezone")
-            if tz_result.exit_status == 0:
-                return tz_result.stdout.strip()
+        """Get the system timezone.
 
-            # Fallback to timedatectl
-            tz_result = await self.execute_command("timedatectl show --property=Timezone --value")
+        Uses a single command with fallback options to reduce SSH calls.
+        """
+        try:
+            # Use a single command with || for fallback
+            cmd = "cat /etc/timezone || timedatectl show --property=Timezone --value || echo 'UTC'"
+            tz_result = await self.execute_command(cmd)
+
             if tz_result.exit_status == 0:
-                return tz_result.stdout.strip()
+                timezone = tz_result.stdout.strip()
+                if timezone:
+                    return timezone
 
         except (asyncssh.Error, asyncio.TimeoutError, OSError, ValueError) as err:
             _LOGGER.debug("Error getting system timezone: %s", err)
 
-        return "UTC"  # Default to UTC instead of PST
+        return "UTC"  # Default to UTC
 
+    @with_error_handling(fallback_return={})
     async def collect_system_stats(self) -> Dict[str, Any]:
         """Collect system statistics using a single batched command."""
-        try:
-            # Use a single command to collect all system statistics
-            _LOGGER.debug("Collecting system statistics with batched command")
-            cmd = (
-                "echo '===ARRAY_STATE==='; "
-                "mdcmd status; "
-                "echo '===CPU_USAGE==='; "
-                "top -bn1 | grep '^%Cpu' | awk '{print 100 - $8}'; "
-                "echo '===MEMORY_INFO==='; "
-                "cat /proc/meminfo; "
-                "echo '===UPTIME==='; "
-                "cat /proc/uptime; "
-                "echo '===TEMPERATURE==='; "
-                "sensors; "
-                "echo '===THERMAL_ZONES==='; "
-                "paste <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp); "
-                "echo '===BOOT_USAGE==='; "
-                "df -k /boot | awk 'NR==2 {print $2,$3,$4}'; "
-                "echo '===CACHE_USAGE==='; "
-                "mountpoint -q /mnt/cache && df -k /mnt/cache | awk 'NR==2 {print $2,$3,$4}' || echo 'not_mounted'; "
-                "echo '===LOG_USAGE==='; "
-                "df -k /var/log | awk 'NR==2 {print $2,$3,$4,$5}'; "
-                "echo '===DOCKER_VDISK==='; "
-                "df -k /var/lib/docker | awk 'NR==2 {print $2,$3,$4}' 2>/dev/null || echo 'not_mounted'"
-            )
+        # Use a single command to collect all system statistics
+        _LOGGER.debug("Collecting system statistics with batched command")
+        cmd = (
+            "echo '===ARRAY_STATE==='; "
+            "mdcmd status; "
+            "echo '===CPU_USAGE==='; "
+            "top -bn1 | grep '^%Cpu' | awk '{print 100 - $8}'; "
+            "echo '===MEMORY_INFO==='; "
+            "cat /proc/meminfo; "
+            "echo '===UPTIME==='; "
+            "cat /proc/uptime; "
+            "echo '===TEMPERATURE==='; "
+            "sensors; "
+            "echo '===THERMAL_ZONES==='; "
+            "paste <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp); "
+            "echo '===BOOT_USAGE==='; "
+            "df -k /boot | awk 'NR==2 {print $2,$3,$4}'; "
+            "echo '===CACHE_USAGE==='; "
+            "mountpoint -q /mnt/cache && df -k /mnt/cache | awk 'NR==2 {print $2,$3,$4}' || echo 'not_mounted'; "
+            "echo '===LOG_USAGE==='; "
+            "df -k /var/log | awk 'NR==2 {print $2,$3,$4,$5}'; "
+            "echo '===DOCKER_VDISK==='; "
+            "df -k /var/lib/docker | awk 'NR==2 {print $2,$3,$4}' 2>/dev/null || echo 'not_mounted'"
+        )
 
-            result = await self.execute_command(cmd)
+        result = await self.execute_command(cmd)
 
-            if result.exit_status == 0:
-                # Split the output into sections
-                sections = {}
-                current_section = None
-                section_content = []
+        if result.exit_status == 0:
+            # Split the output into sections
+            sections = {}
+            current_section = None
+            section_content = []
 
-                for line in result.stdout.splitlines():
-                    if line.startswith('===') and line.endswith('==='):
-                        # Save previous section if it exists
-                        if current_section:
-                            sections[current_section] = '\n'.join(section_content)
-                        # Start new section
-                        current_section = line.strip('=').strip()
-                        section_content = []
-                    elif current_section:
-                        section_content.append(line)
+            for line in result.stdout.splitlines():
+                if line.startswith('===') and line.endswith('==='):
+                    # Save previous section if it exists
+                    if current_section:
+                        sections[current_section] = '\n'.join(section_content)
+                    # Start new section
+                    current_section = line.strip('=').strip()
+                    section_content = []
+                elif current_section:
+                    section_content.append(line)
 
-                # Save the last section
-                if current_section and section_content:
-                    sections[current_section] = '\n'.join(section_content)
+            # Save the last section
+            if current_section and section_content:
+                sections[current_section] = '\n'.join(section_content)
 
-                # Parse each section
-                system_stats = {}
+            # Parse each section
+            system_stats = {}
 
-                # Parse array state
-                if 'ARRAY_STATE' in sections:
-                    array_state = self._parse_array_state_from_output(sections['ARRAY_STATE'])
-                    system_stats['array_state'] = {
-                        "state": array_state.state,
-                        "num_disks": array_state.num_disks,
-                        "num_disabled": array_state.num_disabled,
-                        "num_invalid": array_state.num_invalid,
-                        "num_missing": array_state.num_missing,
-                        "synced": array_state.synced,
-                        "sync_action": array_state.sync_action,
-                        "sync_progress": array_state.sync_progress,
-                        "sync_errors": array_state.sync_errors,
-                    }
+            # Parse array state
+            if 'ARRAY_STATE' in sections:
+                array_state = self._parse_array_state_from_output(sections['ARRAY_STATE'])
+                system_stats['array_state'] = {
+                    "state": array_state.state,
+                    "num_disks": array_state.num_disks,
+                    "num_disabled": array_state.num_disabled,
+                    "num_invalid": array_state.num_invalid,
+                    "num_missing": array_state.num_missing,
+                    "synced": array_state.synced,
+                    "sync_action": array_state.sync_action,
+                    "sync_progress": array_state.sync_progress,
+                    "sync_errors": array_state.sync_errors,
+                }
 
                 # Parse CPU usage
                 if 'CPU_USAGE' in sections:
@@ -862,23 +874,25 @@ class SystemOperationsMixin:
                         except (ValueError, TypeError):
                             _LOGGER.debug("Could not parse docker vdisk usage from output: %s", docker_output)
 
-                # Get UPS info separately as it's not part of the batched command
-                system_stats['ups_info'] = await self.get_ups_info()
+            # Get UPS info separately as it's not part of the batched command
+            system_stats['ups_info'] = await self.get_ups_info()
 
-                # Get array usage separately as it requires parsing the array state first
-                system_stats['array_usage'] = await self.get_array_usage()
+            # Get array usage separately as it requires parsing the array state first
+            system_stats['array_usage'] = await self.get_array_usage()
 
-                # Get individual disks separately as it's more complex
-                system_stats['individual_disks'] = await self.get_individual_disk_usage()
+            # Get individual disks separately as it's more complex
+            disks, extra_stats = await self.get_individual_disk_usage()
+            system_stats['individual_disks'] = disks
 
-                return system_stats
+            # Add any extra stats from disk operations
+            if extra_stats:
+                for key, value in extra_stats.items():
+                    system_stats[key] = value
 
-            _LOGGER.warning("Batched system stats command failed with exit status %d", result.exit_status)
-            return {}
+            return system_stats
 
-        except Exception as err:
-            _LOGGER.error("Error collecting system statistics with batched command: %s", err)
-            return {}
+        _LOGGER.warning("Batched system stats command failed with exit status %d", result.exit_status)
+        return {}
 
     def _parse_array_state_from_output(self, output: str) -> ArrayState:
         """Parse array state from mdcmd output string."""

@@ -310,3 +310,180 @@ class VMOperationsMixin:
         except Exception as err:
             _LOGGER.error("Error stopping VM '%s': %s", vm_name, str(err))
             return False
+
+    async def pause_vm(self, vm_name: str) -> bool:
+        """Pause a virtual machine."""
+        try:
+            _LOGGER.debug("Pausing VM: %s", vm_name)
+
+            # Check current state first
+            current_state = await self.get_vm_status(vm_name)
+            if current_state.lower() == "paused":
+                _LOGGER.info("VM '%s' is already paused", vm_name)
+                return True
+
+            if current_state.lower() != "running":
+                _LOGGER.error("Cannot pause VM '%s' because it is not running (current state: %s)", vm_name, current_state)
+                return False
+
+            result = await self.execute_command(f'virsh suspend "{vm_name}"')
+            success = result.exit_status == 0
+
+            if not success:
+                _LOGGER.error("Failed to pause VM '%s': %s", vm_name, result.stderr)
+                return False
+
+            # Wait for VM to pause
+            for _ in range(15):
+                await asyncio.sleep(1)
+                status = await self.get_vm_status(vm_name)
+                if status.lower() == "paused":
+                    _LOGGER.info("Successfully paused VM '%s'", vm_name)
+                    return True
+
+            _LOGGER.error("VM '%s' did not pause in time", vm_name)
+            return False
+
+        except Exception as err:
+            _LOGGER.error("Error pausing VM '%s': %s", vm_name, str(err))
+            return False
+
+    async def resume_vm(self, vm_name: str) -> bool:
+        """Resume a paused virtual machine."""
+        try:
+            _LOGGER.debug("Resuming VM: %s", vm_name)
+
+            # Check current state first
+            current_state = await self.get_vm_status(vm_name)
+            if current_state.lower() == "running":
+                _LOGGER.info("VM '%s' is already running", vm_name)
+                return True
+
+            if current_state.lower() != "paused":
+                _LOGGER.error("Cannot resume VM '%s' because it is not paused (current state: %s)", vm_name, current_state)
+                return False
+
+            result = await self.execute_command(f'virsh resume "{vm_name}"')
+            success = result.exit_status == 0
+
+            if not success:
+                _LOGGER.error("Failed to resume VM '%s': %s", vm_name, result.stderr)
+                return False
+
+            # Wait for VM to resume
+            for _ in range(15):
+                await asyncio.sleep(1)
+                status = await self.get_vm_status(vm_name)
+                if status.lower() == "running":
+                    _LOGGER.info("Successfully resumed VM '%s'", vm_name)
+                    return True
+
+            _LOGGER.error("VM '%s' did not resume in time", vm_name)
+            return False
+
+        except Exception as err:
+            _LOGGER.error("Error resuming VM '%s': %s", vm_name, str(err))
+            return False
+
+    async def restart_vm(self, vm_name: str) -> bool:
+        """Restart a virtual machine."""
+        try:
+            _LOGGER.debug("Restarting VM: %s", vm_name)
+
+            # Check current state first
+            current_state = await self.get_vm_status(vm_name)
+            if current_state.lower() != "running":
+                _LOGGER.error("Cannot restart VM '%s' because it is not running (current state: %s)", vm_name, current_state)
+                return False
+
+            result = await self.execute_command(f'virsh reboot "{vm_name}"')
+            success = result.exit_status == 0
+
+            if not success:
+                _LOGGER.error("Failed to restart VM '%s': %s", vm_name, result.stderr)
+                return False
+
+            # Wait for VM to restart (it should remain in running state)
+            for _ in range(30):
+                await asyncio.sleep(2)
+                status = await self.get_vm_status(vm_name)
+                if status.lower() == "running":
+                    _LOGGER.info("Successfully restarted VM '%s'", vm_name)
+                    return True
+
+            _LOGGER.error("VM '%s' did not restart properly", vm_name)
+            return False
+
+        except Exception as err:
+            _LOGGER.error("Error restarting VM '%s': %s", vm_name, str(err))
+            return False
+
+    async def hibernate_vm(self, vm_name: str) -> bool:
+        """Hibernate a virtual machine (suspend to disk)."""
+        try:
+            _LOGGER.debug("Hibernating VM: %s", vm_name)
+
+            # Check current state first
+            current_state = await self.get_vm_status(vm_name)
+            if current_state.lower() == VMState.SUSPENDED.value:
+                _LOGGER.info("VM '%s' is already suspended", vm_name)
+                return True
+
+            if current_state.lower() != "running":
+                _LOGGER.error("Cannot hibernate VM '%s' because it is not running (current state: %s)", vm_name, current_state)
+                return False
+
+            result = await self.execute_command(f'virsh dompmsuspend "{vm_name}" disk')
+            success = result.exit_status == 0
+
+            if not success:
+                _LOGGER.error("Failed to hibernate VM '%s': %s", vm_name, result.stderr)
+                return False
+
+            # Wait for VM to hibernate
+            for _ in range(30):
+                await asyncio.sleep(2)
+                status = await self.get_vm_status(vm_name)
+                if status.lower() == VMState.SUSPENDED.value:
+                    _LOGGER.info("Successfully hibernated VM '%s'", vm_name)
+                    return True
+
+            _LOGGER.error("VM '%s' did not hibernate in time", vm_name)
+            return False
+
+        except Exception as err:
+            _LOGGER.error("Error hibernating VM '%s': %s", vm_name, str(err))
+            return False
+
+    async def force_stop_vm(self, vm_name: str) -> bool:
+        """Force stop a virtual machine."""
+        try:
+            _LOGGER.debug("Force stopping VM: %s", vm_name)
+
+            # Check current state first
+            current_state = await self.get_vm_status(vm_name)
+            if current_state.lower() == "shut off":
+                _LOGGER.info("VM '%s' is already shut off", vm_name)
+                return True
+
+            result = await self.execute_command(f'virsh destroy "{vm_name}"')
+            success = result.exit_status == 0
+
+            if not success:
+                _LOGGER.error("Failed to force stop VM '%s': %s", vm_name, result.stderr)
+                return False
+
+            # Wait for VM to stop
+            for _ in range(15):
+                await asyncio.sleep(1)
+                status = await self.get_vm_status(vm_name)
+                if status.lower() == "shut off":
+                    _LOGGER.info("Successfully force stopped VM '%s'", vm_name)
+                    return True
+
+            _LOGGER.error("VM '%s' did not shut off in time after force stop", vm_name)
+            return False
+
+        except Exception as err:
+            _LOGGER.error("Error force stopping VM '%s': %s", vm_name, str(err))
+            return False

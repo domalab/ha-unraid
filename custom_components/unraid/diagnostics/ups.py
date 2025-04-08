@@ -11,7 +11,7 @@ from .base import UnraidBinarySensorBase
 from .const import UnraidBinarySensorEntityDescription
 from ..const import DOMAIN
 from ..coordinator import UnraidDataUpdateCoordinator
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class UnraidUPSBinarySensor(UnraidBinarySensorBase):
 
         description = UnraidBinarySensorEntityDescription(
             key="ups_status",
-            name=f"{naming.get_entity_name('ups', 'ups')} Status",
+            name="UPS Status",
             device_class=BinarySensorDeviceClass.POWER,
             entity_category=EntityCategory.DIAGNOSTIC,
             icon="mdi:battery-medium",
@@ -48,12 +48,12 @@ class UnraidUPSBinarySensor(UnraidBinarySensorBase):
         try:
             ups_info = self.coordinator.data.get("system_stats", {}).get("ups_info")
             has_ups = bool(ups_info)
-            
+
             if not has_ups:
                 _LOGGER.debug("No UPS info available in coordinator data")
-                
+
             return self.coordinator.last_update_success and has_ups
-            
+
         except Exception as err:
             _LOGGER.error("Error checking UPS availability: %s", err)
             return False
@@ -66,11 +66,11 @@ class UnraidUPSBinarySensor(UnraidBinarySensorBase):
             if status is None:
                 _LOGGER.debug("No UPS status available")
                 return None
-                
+
             is_online = status.upper() in ["ONLINE", "ON LINE"]
             _LOGGER.debug("UPS status: %s (online: %s)", status, is_online)
             return is_online
-            
+
         except (KeyError, AttributeError, TypeError) as err:
             _LOGGER.debug("Error getting UPS status: %s", err)
             return None

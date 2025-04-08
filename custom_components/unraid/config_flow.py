@@ -1,8 +1,22 @@
-"""Config flow for Unraid integration."""
+"""Config flow for Unraid integration.
+
+This module provides the configuration flow for the Unraid integration.
+It includes:
+- Initial setup flow with validation
+- Options flow for updating settings
+- Reauthorization flow for updating credentials
+- Validation functions for hostname, port, and credentials
+
+The config flow includes advanced validation to ensure that the user provides
+valid information before attempting to connect to the Unraid server, improving
+the overall user experience and reducing connection failures.
+"""
 from __future__ import annotations
 
 import logging
-from typing import Any
+import re
+import socket
+from typing import Any, Dict
 from dataclasses import dataclass
 
 import voluptuous as vol # type: ignore
@@ -28,8 +42,6 @@ from .const import (
     MAX_DISK_INTERVAL,
     CONF_HAS_UPS,
     MIGRATION_VERSION,
-    CONF_ENTITY_FORMAT,
-    DEFAULT_ENTITY_FORMAT,
 )
 from .unraid import UnraidAPI
 
@@ -138,8 +150,50 @@ def get_options_schema(
 async def validate_input(data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
-    Data has already been validated through schema.
+    This function performs comprehensive validation of the user input:
+    1. Validates the hostname/IP address format
+    2. Validates the port number is within range
+    3. Validates the credentials are not empty
+    4. Attempts to connect to the Unraid server
+
+    The function raises specific exceptions for different types of validation failures,
+    which allows the config flow to provide specific error messages to the user.
+
+    Args:
+        data: A dictionary containing the user input (host, username, password, port)
+
+    Returns:
+        A dictionary containing the title for the config entry
+
+    Raises:
+        InvalidHost: If the hostname is empty or invalid
+        InvalidPort: If the port is not within the valid range
+        InvalidCredentials: If the username or password is empty
+        CannotConnect: If the connection to the Unraid server fails
     """
+    # Validate hostname/IP
+    host_errors = validate_hostname(data[CONF_HOST])
+    if host_errors:
+        if "host" in host_errors and host_errors["host"] == "empty_host":
+            raise InvalidHost("Host cannot be empty")
+        elif "host" in host_errors and host_errors["host"] == "invalid_host":
+            raise InvalidHost("Invalid hostname or IP address")
+
+    # Validate port
+    port_errors = validate_port(data[CONF_PORT])
+    if port_errors:
+        if "port" in port_errors and port_errors["port"] == "invalid_port":
+            raise InvalidPort("Invalid port number")
+
+    # Validate credentials
+    cred_errors = validate_credentials(data[CONF_USERNAME], data[CONF_PASSWORD])
+    if cred_errors:
+        if "username" in cred_errors and cred_errors["username"] == "empty_username":
+            raise InvalidCredentials("Username cannot be empty")
+        elif "password" in cred_errors and cred_errors["password"] == "empty_password":
+            raise InvalidCredentials("Password cannot be empty")
+
+    # If all validation passes, try to connect
     api = UnraidAPI(data[CONF_HOST], data[CONF_USERNAME], data[CONF_PASSWORD], data[CONF_PORT])
 
     try:
@@ -187,6 +241,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 await self.hass.config_entries.async_reload(self.reauth_entry.entry_id)
                 return self.async_abort(reason="reauth_successful")
+            except InvalidCredentials as err:
+                _LOGGER.error("Invalid credentials: %s", err)
+                if "username" in str(err).lower():
+                    errors["username"] = "empty_username"
+                else:
+                    errors["password"] = "empty_password"
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
@@ -224,7 +284,23 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(title=info["title"], data=user_input)
+            except InvalidHost as err:
+                _LOGGER.error("Invalid host: %s", err)
+                if "empty" in str(err).lower():
+                    errors["host"] = "empty_host"
+                else:
+                    errors["host"] = "invalid_host"
+            except InvalidPort:
+                _LOGGER.error("Invalid port")
+                errors["port"] = "invalid_port"
+            except InvalidCredentials as err:
+                _LOGGER.error("Invalid credentials: %s", err)
+                if "username" in str(err).lower():
+                    errors["username"] = "empty_username"
+                else:
+                    errors["password"] = "empty_password"
             except CannotConnect:
+                _LOGGER.error("Cannot connect to Unraid server")
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception")
@@ -350,6 +426,101 @@ class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
                 ),
             },
         )
+
+def validate_hostname(hostname: str) -> Dict[str, str]:
+    """Validate hostname or IP address.
+
+    This function performs several checks on the provided hostname:
+    1. Checks if the hostname is empty
+    2. Checks if the hostname is a valid IP address
+    3. If not an IP address, checks if it's a valid hostname format
+    4. Attempts to resolve the hostname (but doesn't fail if resolution fails)
+
+    Args:
+        hostname: The hostname or IP address to validate
+
+    Returns:
+        A dictionary of errors, where the key is the field name and the value is the error code.
+        An empty dictionary means no errors were found.
+    """
+    errors: Dict[str, str] = {}
+
+    # Check if hostname is empty
+    if not hostname:
+        errors["host"] = "empty_host"
+        return errors
+
+    # Check if hostname is a valid IP address
+    try:
+        socket.inet_aton(hostname)
+        # It's a valid IP address
+        return errors
+    except socket.error:
+        # Not an IP address, check if it's a valid hostname
+        if not re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,61}[a-zA-Z0-9])?)*$", hostname):
+            errors["host"] = "invalid_host"
+            return errors
+
+        # Try to resolve the hostname
+        try:
+            socket.gethostbyname(hostname)
+        except socket.gaierror:
+            # Hostname doesn't resolve, but we'll still allow it
+            # as it might be resolvable in the user's network
+            _LOGGER.warning("Hostname %s doesn't resolve, but allowing it", hostname)
+
+    return errors
+
+def validate_port(port: int) -> Dict[str, str]:
+    """Validate port number.
+
+    This function checks if the provided port number is within the valid range (1-65535).
+
+    Args:
+        port: The port number to validate
+
+    Returns:
+        A dictionary of errors, where the key is the field name and the value is the error code.
+        An empty dictionary means no errors were found.
+    """
+    errors: Dict[str, str] = {}
+
+    if port < 1 or port > 65535:
+        errors["port"] = "invalid_port"
+
+    return errors
+
+def validate_credentials(username: str, password: str) -> Dict[str, str]:
+    """Validate username and password.
+
+    This function checks if the provided username and password are not empty.
+
+    Args:
+        username: The username to validate
+        password: The password to validate
+
+    Returns:
+        A dictionary of errors, where the key is the field name and the value is the error code.
+        An empty dictionary means no errors were found.
+    """
+    errors: Dict[str, str] = {}
+
+    if not username:
+        errors["username"] = "empty_username"
+
+    if not password:
+        errors["password"] = "empty_password"
+
+    return errors
+
+class InvalidHost(HomeAssistantError):
+    """Error raised when the host is invalid."""
+
+class InvalidPort(HomeAssistantError):
+    """Error raised when the port is invalid."""
+
+class InvalidCredentials(HomeAssistantError):
+    """Error raised when the credentials are invalid."""
 
 class CannotConnect(HomeAssistantError):
     """Error raised when we cannot connect to the Unraid server."""

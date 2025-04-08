@@ -19,7 +19,7 @@ from ..helpers import (
     get_disk_number,
     get_unraid_disk_mapping,
 )
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,26 +34,23 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         """Initialize the array disk health sensor."""
         if not disk_name.startswith("disk"):
             raise ValueError(f"Not an array disk: {disk_name}")
-            
+
         self._disk_name = disk_name
         self._disk_num = get_disk_number(disk_name)
-        
+
         if self._disk_num is None:
             raise ValueError(f"Invalid array disk number: {disk_name}")
-        
+
         # Initialize entity naming
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
             component="disk"
         )
-        
-        # Get pretty name using naming utility
-        pretty_name = naming.get_entity_name(disk_name, "disk")
 
         description = UnraidBinarySensorEntityDescription(
             key=f"disk_health_{disk_name}",
-            name=f"{pretty_name} Health",
+            name=f"{disk_name.capitalize()} Health",
             device_class=BinarySensorDeviceClass.PROBLEM,
             entity_category=EntityCategory.DIAGNOSTIC,
             icon="mdi:harddisk",
@@ -64,7 +61,7 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
 
         # Get device and serial from helpers
         self._device, self._serial = get_disk_identifiers(coordinator.data, disk_name)
-                        
+
         # Initialize tracking variables
         self._last_smart_check: datetime | None = None
         self._smart_status: bool | None = None
@@ -84,14 +81,14 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         """Get spin down delay for this array disk."""
         try:
             disk_cfg = self.coordinator.data.get("disk_config", {})
-            
+
             # Get global setting (default to NEVER/0 if not specified)
             global_setting = disk_cfg.get("spindownDelay", "0")
             if global_setting in (None, "", "-1"):
                 return SpinDownDelay.NEVER
-                
+
             global_delay = int(global_setting)
-            
+
             # Check for disk-specific setting
             disk_delay = disk_cfg.get(f"diskSpindownDelay.{self._disk_num}")
             if disk_delay and disk_delay != "-1":  # -1 means use global setting
@@ -103,9 +100,9 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                         self._disk_name,
                         disk_delay
                     )
-            
+
             return SpinDownDelay(global_delay)
-            
+
         except (ValueError, TypeError) as err:
             _LOGGER.warning(
                 "Error getting spin down delay for %s: %s. Using default Never.",
@@ -117,7 +114,7 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
     def _analyze_smart_status(self, disk_data: Dict[str, Any]) -> bool:
         """Analyze SMART status and attributes for array disk problems."""
         self._problem_attributes = {}
-        
+
         try:
             _LOGGER.debug(
                 "Starting SMART analysis for array disk %s with data: %s",
@@ -128,7 +125,7 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             # Check disk state using proper standby detection
             disk_state = disk_data.get("state", "unknown").lower()
             _LOGGER.debug("Array disk %s current state: %s", self._disk_name, disk_state)
-            
+
             if disk_state == "standby":
                 _LOGGER.debug(
                     "Array disk %s is in standby, using cached state: %s",
@@ -148,7 +145,7 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             # Check overall SMART status
             smart_status = smart_data.get("smart_status", True)
             _LOGGER.debug("Array disk %s SMART status: %s", self._disk_name, smart_status)
-            
+
             if not smart_status:
                 self._problem_attributes["smart_status"] = "FAILED"
                 has_problem = True
@@ -159,45 +156,104 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
 
             # Process SMART attributes
             attributes = smart_data.get("ata_smart_attributes", {}).get("table", [])
-            
-            # Map of critical attributes and their thresholds
+
+            # Map of critical attributes and their thresholds for raw values
             critical_attrs = {
                 "Reallocated_Sector_Ct": 0,
                 "Current_Pending_Sector": 0,
                 "Offline_Uncorrectable": 0,
-                "UDMA_CRC_Error_Count": 100,
                 "Reallocated_Event_Count": 0,
-                "Reported_Uncorrect": 0,
-                "Command_Timeout": 100
+                "Reported_Uncorrect": 0
             }
-            
+
+            # Attributes that should be evaluated based on normalized values, not raw values
+            normalized_attrs = {
+                "UDMA_CRC_Error_Count": True,
+                "Command_Timeout": True
+            }
+
             # Process each attribute
             for attr in attributes:
                 name = attr.get("name")
                 if not name:
                     continue
 
-                # Check critical attributes
-                if name in critical_attrs:
+                # Check if this is a normalized attribute (like Command_Timeout or UDMA_CRC_Error_Count)
+                if name in normalized_attrs:
+                    # For these attributes, we check if the normalized value is below threshold
+                    # or if the attribute has failed according to SMART
+                    normalized_value = attr.get("value", 100)  # Default to 100 (good)
+                    threshold_value = attr.get("thresh", 0)    # Default to 0 (minimum threshold)
+                    when_failed = attr.get("when_failed", "")
+
+                    # Only consider it a problem if the normalized value is below threshold
+                    # or if SMART has marked it as failed
+                    if normalized_value < threshold_value or when_failed:
+                        raw_value = attr.get("raw", {}).get("value", 0)
+                        try:
+                            raw_value_int = int(raw_value)
+                        except (ValueError, TypeError):
+                            raw_value_int = 0
+
+                        self._problem_attributes[name.lower()] = raw_value_int
+                        has_problem = True
+                        _LOGGER.warning(
+                            "Array disk %s has failing %s: normalized value %d below threshold %d",
+                            self._disk_name,
+                            name,
+                            normalized_value,
+                            threshold_value
+                        )
+                    else:
+                        # Log high raw values at debug level only
+                        raw_value = attr.get("raw", {}).get("value", 0)
+                        try:
+                            raw_value_int = int(raw_value)
+                        except (ValueError, TypeError):
+                            raw_value_int = 0
+
+                        _LOGGER.debug(
+                            "Array disk %s has high %s raw value: %d, but normalized value %d is above threshold %d",
+                            self._disk_name,
+                            name,
+                            raw_value_int,
+                            normalized_value,
+                            threshold_value
+                        )
+
+                # Check critical attributes based on raw values
+                elif name in critical_attrs:
                     raw_value = attr.get("raw", {}).get("value", 0)
                     threshold = critical_attrs[name]
-                    
+
+                    # Ensure raw_value is a valid integer
+                    try:
+                        raw_value_int = int(raw_value)
+                    except (ValueError, TypeError):
+                        _LOGGER.debug(
+                            "Invalid %s value for array disk %s: %s",
+                            name,
+                            self._disk_name,
+                            raw_value
+                        )
+                        continue
+
                     _LOGGER.debug(
                         "Checking %s for array disk %s: value=%s, threshold=%s",
                         name,
                         self._disk_name,
-                        raw_value,
+                        raw_value_int,
                         threshold
                     )
-                    
-                    if int(raw_value) > threshold:
-                        self._problem_attributes[name.lower()] = raw_value
+
+                    if raw_value_int > threshold:
+                        self._problem_attributes[name.lower()] = raw_value_int
                         has_problem = True
                         _LOGGER.warning(
                             "Array disk %s has high %s: %d (threshold: %d)",
                             self._disk_name,
                             name,
-                            raw_value,
+                            raw_value_int,
                             threshold
                         )
 
@@ -205,23 +261,41 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                 elif name == "Temperature_Celsius":
                     temp = attr.get("raw", {}).get("value")
                     if temp is not None:
-                        _LOGGER.debug(
-                            "Array disk %s temperature: %d°C",
-                            self._disk_name,
-                            temp
-                        )
-                        if temp > 55:  # Temperature threshold
-                            self._problem_attributes["temperature"] = f"{temp}°C"
-                            has_problem = True
-                            _LOGGER.warning(
-                                "Array disk %s temperature is high: %d°C (threshold: 55°C)",
+                        # Ensure temperature is a valid integer
+                        try:
+                            temp_int = int(temp)
+                            # Sanity check - temperature should be between 0 and 100°C
+                            if temp_int < 0 or temp_int > 100:
+                                _LOGGER.debug(
+                                    "Invalid temperature value for array disk %s: %s°C",
+                                    self._disk_name,
+                                    temp
+                                )
+                                continue
+
+                            _LOGGER.debug(
+                                "Array disk %s temperature: %d°C",
+                                self._disk_name,
+                                temp_int
+                            )
+                            if temp_int > 55:  # Temperature threshold
+                                self._problem_attributes["temperature"] = f"{temp_int}°C"
+                                has_problem = True
+                                _LOGGER.warning(
+                                    "Array disk %s temperature is high: %d°C (threshold: 55°C)",
+                                    self._disk_name,
+                                    temp_int
+                                )
+                        except (ValueError, TypeError):
+                            _LOGGER.debug(
+                                "Invalid temperature value for array disk %s: %s",
                                 self._disk_name,
                                 temp
                             )
 
             # Store final state
             self._last_problem_state = has_problem
-            
+
             if has_problem:
                 _LOGGER.warning(
                     "Array disk %s has problems: %s",
@@ -233,7 +307,7 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     "No problems found for array disk %s",
                     self._disk_name
                 )
-            
+
             return has_problem
 
         except Exception as err:
@@ -252,7 +326,7 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             # Check if disk exists in coordinator data
             disks = self.coordinator.data.get("system_stats", {}).get("individual_disks", [])
             disk_exists = any(disk["name"] == self._disk_name for disk in disks)
-            
+
             return self.coordinator.last_update_success and disk_exists
 
         except Exception as err:
@@ -316,7 +390,7 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                 if disk["name"] == self._disk_name:
                     # Get current disk state
                     is_standby = disk.get("state", "unknown").lower() == "standby"
-                    
+
                     # Get storage attributes
                     attrs = self._get_storage_attributes(
                         total=disk.get("total", 0),
@@ -338,7 +412,7 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     temp = disk.get("temperature")
                     if not is_standby and temp is not None:
                         self._last_temperature = temp
-                            
+
                     attrs["temperature"] = self._get_temperature_str(
                         self._last_temperature if is_standby else temp,
                         is_standby

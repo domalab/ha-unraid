@@ -18,7 +18,7 @@ from ..helpers import (
     get_disk_identifiers,
     get_unraid_disk_mapping,
 )
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,29 +34,24 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         # Validate pool disk name
         if disk_name.startswith("disk"):
             raise ValueError(f"Not a pool disk: {disk_name}")
-            
+
         # Skip system paths and known special names
         invalid_names = {"parity", "flash", "boot", "user"}
         if disk_name.lower() in invalid_names:
             raise ValueError(f"Invalid pool name: {disk_name}")
-            
+
         self._disk_name = disk_name
-        
+
         # Initialize entity naming
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
             component="disk"
         )
-        
-        # Get pretty name using naming utility
-        # Use "cache" type for cache disk, "pool" for others
-        component_type = "cache" if disk_name == "cache" else "pool"
-        pretty_name = naming.get_entity_name(disk_name, component_type)
 
         description = UnraidBinarySensorEntityDescription(
             key=f"disk_health_{disk_name}",
-            name=f"{pretty_name} Health",
+            name=f"{disk_name.capitalize()} Health",
             device_class=BinarySensorDeviceClass.PROBLEM,
             entity_category=EntityCategory.DIAGNOSTIC,
             icon="mdi:harddisk",
@@ -67,7 +62,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
 
         # Get device and serial from helpers
         self._device, self._serial = get_disk_identifiers(coordinator.data, disk_name)
-                        
+
         # Initialize tracking variables
         self._last_smart_check: datetime | None = None
         self._smart_status: bool | None = None
@@ -91,15 +86,15 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             disk_cfg = self.coordinator.data.get("disk_config", {})
             # Use global setting for pools (no per-disk setting)
             global_delay = disk_cfg.get("spindownDelay", "0")
-            
+
             # Handle special cases
             if global_delay in (None, "", "-1"):
                 return SpinDownDelay.NEVER
-                
+
             # Convert to SpinDownDelay enum
             delay_value = int(global_delay)
             return SpinDownDelay(delay_value)
-            
+
         except (ValueError, TypeError) as err:
             _LOGGER.warning(
                 "Error getting spin down delay for pool %s: %s. Using default Never.",
@@ -116,7 +111,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             self._disk_name,
             nvme_health
         )
-        
+
         # Media errors check
         media_errors = nvme_health.get("media_errors", 0)
         if int(media_errors) > 0:
@@ -127,7 +122,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                 self._disk_name,
                 media_errors
             )
-            
+
         # Critical warning check
         if warning := nvme_health.get("critical_warning"):
             if warning != 0:  # NVMe uses numeric warning flags
@@ -154,7 +149,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     self._disk_name,
                     temp
                 )
-                
+
         return has_problem
 
     def _analyze_sata_health(self, smart_data: Dict[str, Any], has_problem: bool) -> bool:
@@ -163,31 +158,78 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             "Processing SATA attributes for pool %s",
             self._disk_name
         )
-        
+
         attributes = smart_data.get("ata_smart_attributes", {}).get("table", [])
-        
-        # Map of critical attributes and their thresholds
+
+        # Map of critical attributes and their thresholds for raw values
         critical_attrs = {
             "Reallocated_Sector_Ct": 0,
             "Current_Pending_Sector": 0,
             "Offline_Uncorrectable": 0,
-            "UDMA_CRC_Error_Count": 100,
             "Reallocated_Event_Count": 0,
-            "Reported_Uncorrect": 0,
-            "Command_Timeout": 100
+            "Reported_Uncorrect": 0
         }
-        
+
+        # Attributes that should be evaluated based on normalized values, not raw values
+        normalized_attrs = {
+            "UDMA_CRC_Error_Count": True,
+            "Command_Timeout": True
+        }
+
         # Process each attribute
         for attr in attributes:
             name = attr.get("name")
             if not name:
                 continue
 
-            # Check critical attributes
-            if name in critical_attrs:
+            # Check if this is a normalized attribute (like Command_Timeout or UDMA_CRC_Error_Count)
+            if name in normalized_attrs:
+                # For these attributes, we check if the normalized value is below threshold
+                # or if the attribute has failed according to SMART
+                normalized_value = attr.get("value", 100)  # Default to 100 (good)
+                threshold_value = attr.get("thresh", 0)    # Default to 0 (minimum threshold)
+                when_failed = attr.get("when_failed", "")
+
+                # Only consider it a problem if the normalized value is below threshold
+                # or if SMART has marked it as failed
+                if normalized_value < threshold_value or when_failed:
+                    raw_value = attr.get("raw", {}).get("value", 0)
+                    try:
+                        raw_value_int = int(raw_value)
+                    except (ValueError, TypeError):
+                        raw_value_int = 0
+
+                    self._problem_attributes[name.lower()] = raw_value_int
+                    has_problem = True
+                    _LOGGER.warning(
+                        "Pool %s has failing %s: normalized value %d below threshold %d",
+                        self._disk_name,
+                        name,
+                        normalized_value,
+                        threshold_value
+                    )
+                else:
+                    # Log high raw values at debug level only
+                    raw_value = attr.get("raw", {}).get("value", 0)
+                    try:
+                        raw_value_int = int(raw_value)
+                    except (ValueError, TypeError):
+                        raw_value_int = 0
+
+                    _LOGGER.debug(
+                        "Pool %s has high %s raw value: %d, but normalized value %d is above threshold %d",
+                        self._disk_name,
+                        name,
+                        raw_value_int,
+                        normalized_value,
+                        threshold_value
+                    )
+
+            # Check critical attributes based on raw values
+            elif name in critical_attrs:
                 raw_value = attr.get("raw", {}).get("value", 0)
                 threshold = critical_attrs[name]
-                
+
                 _LOGGER.debug(
                     "Checking %s for pool %s: value=%s, threshold=%s",
                     name,
@@ -195,15 +237,26 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     raw_value,
                     threshold
                 )
-                
-                if int(raw_value) > threshold:
-                    self._problem_attributes[name.lower()] = raw_value
+
+                try:
+                    raw_value_int = int(raw_value)
+                except (ValueError, TypeError):
+                    _LOGGER.debug(
+                        "Invalid %s value for pool %s: %s",
+                        name,
+                        self._disk_name,
+                        raw_value
+                    )
+                    continue
+
+                if raw_value_int > threshold:
+                    self._problem_attributes[name.lower()] = raw_value_int
                     has_problem = True
                     _LOGGER.warning(
                         "Pool %s has high %s: %d (threshold: %d)",
                         self._disk_name,
                         name,
-                        raw_value,
+                        raw_value_int,
                         threshold
                     )
 
@@ -224,13 +277,13 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                             self._disk_name,
                             temp
                         )
-                        
+
         return has_problem
 
     def _analyze_smart_status(self, disk_data: Dict[str, Any]) -> bool:
         """Analyze SMART status and attributes for pool disk problems."""
         self._problem_attributes = {}
-        
+
         try:
             _LOGGER.debug(
                 "Starting SMART analysis for pool %s with data: %s",
@@ -241,7 +294,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             # Check disk state using proper standby detection
             disk_state = disk_data.get("state", "unknown").lower()
             _LOGGER.debug("Pool %s current state: %s", self._disk_name, disk_state)
-            
+
             if disk_state == "standby":
                 _LOGGER.debug(
                     "Pool %s is in standby, using cached state: %s",
@@ -261,7 +314,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             # Check overall SMART status
             smart_status = smart_data.get("smart_status", True)
             _LOGGER.debug("Pool %s SMART status: %s", self._disk_name, smart_status)
-            
+
             if not smart_status:
                 self._problem_attributes["smart_status"] = "FAILED"
                 has_problem = True
@@ -278,7 +331,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
 
             # Store final state
             self._last_problem_state = has_problem
-            
+
             if has_problem:
                 _LOGGER.warning(
                     "Pool %s has problems: %s",
@@ -290,7 +343,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     "No problems found for pool %s",
                     self._disk_name
                 )
-            
+
             return has_problem
 
         except Exception as err:
@@ -309,7 +362,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             # Check if disk exists in coordinator data
             disks = self.coordinator.data.get("system_stats", {}).get("individual_disks", [])
             disk_exists = any(disk["name"] == self._disk_name for disk in disks)
-            
+
             return self.coordinator.last_update_success and disk_exists
 
         except Exception as err:
@@ -373,7 +426,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                 if disk["name"] == self._disk_name:
                     # Get current disk state
                     is_standby = disk.get("state", "unknown").lower() == "standby"
-                    
+
                     # Get storage attributes
                     attrs = self._get_storage_attributes(
                         total=disk.get("total", 0),
@@ -398,7 +451,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                         smart_data = disk.get("smart_data", {})
                         nvme_temp = (
                             smart_data.get("temperature")
-                            or temp  
+                            or temp
                             or smart_data.get("nvme_temperature")
                         )
                         if not is_standby and nvme_temp is not None:
@@ -408,7 +461,7 @@ class UnraidPoolDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                         # SATA drives
                         if not is_standby and temp is not None:
                             self._last_temperature = temp
-                            
+
                     attrs["temperature"] = self._get_temperature_str(
                         self._last_temperature if is_standby else temp,
                         is_standby

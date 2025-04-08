@@ -12,7 +12,7 @@ from homeassistant.helpers.entity import DeviceInfo # type: ignore
 
 from ..const import DOMAIN
 from .const import UnraidBinarySensorEntityDescription
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 from ..coordinator import UnraidDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,12 +36,11 @@ class UnraidBinarySensorBase(CoordinatorEntity, BinarySensorEntity):
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
-            component=description.key.split('_')[0],
-            naming_version=coordinator.entity_format  # Use entity format from coordinator
+            component=description.key.split('_')[0]  # Component is first part of key
         )
 
         self._attr_unique_id = naming.get_entity_id(description.key)
-        self._attr_name = f"Unraid {description.name}"
+        self._attr_name = f"{description.name}"
 
         _LOGGER.debug(
             "Binary Sensor initialized | unique_id: %s | name: %s | description.key: %s",
@@ -55,7 +54,7 @@ class UnraidBinarySensorBase(CoordinatorEntity, BinarySensorEntity):
         """Return device information."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.coordinator.entry.entry_id)},
-            name=f"Unraid Server ({self.coordinator.hostname})",
+            name=f"{self.coordinator.hostname.title()}",
             manufacturer="Lime Technology",
             model="Unraid Server",
         )

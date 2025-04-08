@@ -19,7 +19,7 @@ class DiskState(Enum):
 
 class DiskStateManager:
     """Manager for disk state tracking with enhanced detection."""
-    
+
     def __init__(self, instance: Any):
         self._instance = instance
         self._states: Dict[str, DiskState] = {}
@@ -28,14 +28,14 @@ class DiskStateManager:
         self._lock = asyncio.Lock()
         self._device_types: Dict[str, str] = {}  # Track device types (nvme, sata, etc)
         self._device_paths_cache: Dict[str, str] = {}  # Cache for device paths
-    
+
     async def _get_device_path(self, device: str) -> str | None:
         """Get actual device path from mount point."""
         try:
             # Check cache first
             if device in self._device_paths_cache:
                 return self._device_paths_cache[device]
-            
+
             mount_cmd = f"findmnt -n -o SOURCE /mnt/{device}"
             result = await self._instance.execute_command(mount_cmd)
             if result.exit_status == 0 and (device_path := result.stdout.strip()):
@@ -45,7 +45,7 @@ class DiskStateManager:
         except Exception as err:
             _LOGGER.error("Error getting device path for %s: %s", device, err)
             return None
-    
+
     async def get_disk_state(self, device: str) -> DiskState:
         """Get disk state using multiple methods with SMART as primary."""
         try:
@@ -62,8 +62,16 @@ class DiskStateManager:
             if not device.startswith('/dev/'):
                 if device.startswith('sd'):
                     device_path = f"/dev/{device}"
-                elif device == "cache":
-                    # Get actual cache device path
+                elif device == "cache" or device == "garbage":
+                    # Check if this is a ZFS pool (either cache or garbage for testing)
+                    pool_name = device  # Use the actual pool name
+                    zfs_result = await self._instance.execute_command(f"zpool list -H -o name {pool_name} 2>/dev/null")
+                    if zfs_result.exit_status == 0 and zfs_result.stdout.strip():
+                        _LOGGER.debug(f"{pool_name} is a ZFS pool, setting as ACTIVE")
+                        self._device_types[device] = 'zfs'
+                        return DiskState.ACTIVE
+
+                    # If not ZFS, try traditional path
                     if actual_path := await self._get_device_path("cache"):
                         device_path = actual_path
                         self._device_types[device] = 'nvme' if 'nvme' in actual_path.lower() else 'sata'
@@ -103,7 +111,7 @@ class DiskStateManager:
                 # Try SMART first
                 smart_cmd = f"smartctl -n standby -j {device_path}"
                 _LOGGER.debug("Executing SMART command for %s: %s", device_path, smart_cmd)
-                
+
                 result = await self._instance.execute_command(smart_cmd)
                 _LOGGER.debug(
                     "SMART command result for %s: exit_code=%d, stdout='%s', stderr='%s'",
@@ -122,12 +130,12 @@ class DiskStateManager:
                     state = DiskState.ACTIVE
                 else:
                     # Fallback to hdparm if SMART check fails
-                    _LOGGER.debug("SMART check failed (exit code %d), trying hdparm for %s", 
+                    _LOGGER.debug("SMART check failed (exit code %d), trying hdparm for %s",
                                 result.exit_status, device_path)
                     try:
                         hdparm_cmd = f"hdparm -C {device_path}"
                         _LOGGER.debug("Executing hdparm command: %s", hdparm_cmd)
-                        
+
                         result = await self._instance.execute_command(hdparm_cmd)
                         _LOGGER.debug(
                             "hdparm result for %s: exit_code=%d, stdout='%s', stderr='%s'",
@@ -169,7 +177,7 @@ class DiskStateManager:
             # Cache the state
             self._states[device_path] = state
             self._last_check[device_path] = datetime.now(timezone.utc)
-            
+
             # Log final decision with full context, handle NVMe case
             if device_type == 'nvme':
                 _LOGGER.debug(
@@ -221,6 +229,6 @@ class DiskStateManager:
     def get_spindown_delay(self, disk_name: str) -> int:
         """Get spin-down delay for disk in seconds."""
         return self._spindown_delays.get(
-            disk_name, 
+            disk_name,
             self._spindown_delays.get("default", 1800)
         )

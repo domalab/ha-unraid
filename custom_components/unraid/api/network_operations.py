@@ -8,6 +8,8 @@ from typing import Deque, Dict, Any, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
+from .error_handling import with_error_handling, safe_parse, UnraidDataError
+
 _LOGGER = logging.getLogger(__name__)
 
 @dataclass
@@ -156,6 +158,7 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
         super().__init__()
         self._network_lock = asyncio.Lock()
         self._network_stats = {}
+        self._cached_network_stats = {}
         self._last_network_update = None
         self._max_retries = 2
         self._retry_delay = 1.0  # seconds
@@ -185,90 +188,204 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
                 )
                 await asyncio.sleep(self._retry_delay)
 
+    @with_error_handling(fallback_return={})
     async def get_network_stats(self) -> Dict[str, Any]:
-        """Fetch network statistics using a batched command."""
-        try:
-            async with self._network_lock:
-                # Use a single command to collect all network interface data
-                # Filter out virtual interfaces (veth*, vnet*) and only include physical interfaces
-                _LOGGER.debug("Collecting network interface data with batched command")
-                result = await self.execute_command(
-                    "for iface in $(ls -1 /sys/class/net/ | grep -v -E '^(lo|bond|tun|tap|docker|veth|vnet)'); do "
-                    "  rx=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null || echo 0); "
-                    "  tx=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null || echo 0); "
-                    "  speed=$(cat /sys/class/net/$iface/speed 2>/dev/null || echo unknown); "
-                    "  duplex=$(cat /sys/class/net/$iface/duplex 2>/dev/null || echo unknown); "
-                    "  carrier=$(cat /sys/class/net/$iface/carrier 2>/dev/null || echo 0); "
-                    "  echo \"$iface|$rx|$tx|$speed|$duplex|$carrier\"; "
-                    "done; "
-                    "# Include bridge interfaces if configured"
-                    "for iface in $(ls -1 /sys/class/net/ | grep -E '^br'); do "
-                    "  rx=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null || echo 0); "
-                    "  tx=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null || echo 0); "
-                    "  speed=$(cat /sys/class/net/$iface/speed 2>/dev/null || echo unknown); "
-                    "  duplex=$(cat /sys/class/net/$iface/duplex 2>/dev/null || echo unknown); "
-                    "  carrier=$(cat /sys/class/net/$iface/carrier 2>/dev/null || echo 0); "
-                    "  echo \"$iface|$rx|$tx|$speed|$duplex|$carrier\"; "
-                    "done"
-                )
+        """Fetch network statistics using an optimized batched command.
 
-                if result.exit_status != 0:
-                    _LOGGER.error("Network stats command failed with exit status %d", result.exit_status)
-                    return {}
+        This implementation collects all network interface data in a single SSH command,
+        including additional metadata like MAC addresses and interface types.
+        It also implements caching to avoid unnecessary SSH calls for static data.
+        """
+        # Check if we have cached data that's still valid
+        current_time = datetime.now(timezone.utc)
+        if self._last_network_update and (current_time - self._last_network_update).total_seconds() < 1.0:
+            # Return cached data for very frequent calls (less than 1 second apart)
+            _LOGGER.debug("Using cached network stats (age: %.2fs)",
+                         (current_time - self._last_network_update).total_seconds())
+            return self._cached_network_stats
 
-                # Parse the result
-                network_stats = {}
-                current_time = datetime.now(timezone.utc)
+        async with self._network_lock:
+            # Use a single command to collect all network interface data with additional metadata
+            # Filter out virtual interfaces (veth*, vnet*) and only include physical interfaces and bridges
+            _LOGGER.debug("Collecting network interface data with optimized batched command")
+            cmd = (
+                "echo '===INTERFACES==='; "
+                "for iface in $(ls -1 /sys/class/net/ | grep -v -E '^(lo|bond|tun|tap|docker|veth|vnet)'); do "
+                "  rx=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null || echo 0); "
+                "  tx=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null || echo 0); "
+                "  speed=$(cat /sys/class/net/$iface/speed 2>/dev/null || echo unknown); "
+                "  duplex=$(cat /sys/class/net/$iface/duplex 2>/dev/null || echo unknown); "
+                "  carrier=$(cat /sys/class/net/$iface/carrier 2>/dev/null || echo 0); "
+                "  mac=$(cat /sys/class/net/$iface/address 2>/dev/null || echo unknown); "
+                "  mtu=$(cat /sys/class/net/$iface/mtu 2>/dev/null || echo 0); "
+                "  operstate=$(cat /sys/class/net/$iface/operstate 2>/dev/null || echo unknown); "
+                "  echo \"$iface|$rx|$tx|$speed|$duplex|$carrier|$mac|$mtu|$operstate\"; "
+                "done; "
+                "echo '===BRIDGES==='; "
+                "for iface in $(ls -1 /sys/class/net/ | grep -E '^br'); do "
+                "  rx=$(cat /sys/class/net/$iface/statistics/rx_bytes 2>/dev/null || echo 0); "
+                "  tx=$(cat /sys/class/net/$iface/statistics/tx_bytes 2>/dev/null || echo 0); "
+                "  speed=$(cat /sys/class/net/$iface/speed 2>/dev/null || echo unknown); "
+                "  duplex=$(cat /sys/class/net/$iface/duplex 2>/dev/null || echo unknown); "
+                "  carrier=$(cat /sys/class/net/$iface/carrier 2>/dev/null || echo 0); "
+                "  mac=$(cat /sys/class/net/$iface/address 2>/dev/null || echo unknown); "
+                "  mtu=$(cat /sys/class/net/$iface/mtu 2>/dev/null || echo 0); "
+                "  operstate=$(cat /sys/class/net/$iface/operstate 2>/dev/null || echo unknown); "
+                "  echo \"$iface|$rx|$tx|$speed|$duplex|$carrier|$mac|$mtu|$operstate\"; "
+                "done"
+            )
+            result = await self.execute_command(cmd)
 
-                for line in result.stdout.splitlines():
-                    parts = line.split("|")
-                    if len(parts) == 6:
-                        try:
-                            interface, rx, tx, speed, duplex, carrier = parts
-                            rx_bytes = int(rx)
-                            tx_bytes = int(tx)
-                            link_detected = carrier == "1"
-
-                            stats = {
-                                "rx_bytes": rx_bytes,
-                                "tx_bytes": tx_bytes,
-                                "speed": speed,
-                                "duplex": duplex,
-                                "link_detected": link_detected,
-                                "connected": link_detected
-                            }
-
-                            # Calculate rates if we have previous data
-                            if interface in self._network_stats:
-                                rates = await self._calculate_rates(
-                                    interface,
-                                    stats,
-                                    current_time
-                                )
-                                stats.update(rates)
-
-                            # Store current stats
-                            self._network_stats[interface] = NetworkStats(
-                                rx_bytes=rx_bytes,
-                                tx_bytes=tx_bytes,
-                                last_update=current_time
-                            )
-
-                            network_stats[interface] = stats
-                        except ValueError as e:
-                            _LOGGER.warning("Error parsing network stats for %s: %s", interface, e)
-
-                self._last_network_update = current_time
-                return network_stats
-
-        except Exception as err:
-            _LOGGER.error("Error getting network stats: %s", err)
-            # Fallback to original implementation if batched command fails
-            try:
-                return await self._get_network_stats_original()
-            except Exception as fallback_err:
-                _LOGGER.error("Fallback network stats method also failed: %s", fallback_err)
+            if result.exit_status != 0:
+                _LOGGER.error("Network stats command failed with exit status %d", result.exit_status)
                 return {}
+
+            # Process the results
+            network_stats = {}
+            current_time = datetime.now(timezone.utc)
+            section = None
+
+            for line in result.stdout.splitlines():
+                # Check for section markers
+                if line == "===INTERFACES===":
+                    section = "interfaces"
+                    continue
+                elif line == "===BRIDGES===":
+                    section = "bridges"
+                    continue
+
+                # Skip empty lines
+                if not line.strip():
+                    continue
+
+                # Process interface data
+                parts = line.split("|")
+                if len(parts) == 9:  # We now have 9 fields with the additional metadata
+                    try:
+                        interface, rx, tx, speed, duplex, carrier, mac, mtu, operstate = parts
+                        rx_bytes = safe_parse(int, rx, default=0,
+                                            error_msg=f"Invalid rx_bytes for {interface}: {rx}")
+                        tx_bytes = safe_parse(int, tx, default=0,
+                                            error_msg=f"Invalid tx_bytes for {interface}: {tx}")
+                        link_detected = carrier == "1"
+                        mtu_value = safe_parse(int, mtu, default=0,
+                                             error_msg=f"Invalid MTU for {interface}: {mtu}")
+
+                        # Create enhanced stats dictionary with additional metadata
+                        stats = {
+                            "rx_bytes": rx_bytes,
+                            "tx_bytes": tx_bytes,
+                            "speed": speed,
+                            "duplex": duplex,
+                            "link_detected": link_detected,
+                            "connected": link_detected,
+                            "mac_address": mac if mac != "unknown" else None,
+                            "mtu": mtu_value,
+                            "operstate": operstate,
+                            "interface_type": "bridge" if section == "bridges" else "physical"
+                        }
+
+                        # Add link speed in a standardized format if available
+                        if speed != "unknown":
+                            try:
+                                speed_value = int(speed)
+                                stats["link_speed"] = f"{speed_value} Mbps"
+                            except ValueError:
+                                stats["link_speed"] = speed
+
+                        # Calculate rates if we have previous data
+                        if interface in self._network_stats:
+                            # Calculate time delta for rate calculation
+                            time_delta = (current_time - self._network_stats[interface].last_update).total_seconds()
+
+                            # Only calculate rates if enough time has passed (avoid division by zero)
+                            if time_delta >= 0.1:  # At least 100ms between updates
+                                rx_delta = rx_bytes - self._network_stats[interface].rx_bytes
+                                tx_delta = tx_bytes - self._network_stats[interface].tx_bytes
+
+                                # Calculate bits per second (multiply by 8 to convert bytes to bits)
+                                rx_rate = (rx_delta * 8) / time_delta
+                                tx_rate = (tx_delta * 8) / time_delta
+
+                                # Apply smoothing if previous rates exist
+                                if hasattr(self, f"_last_rx_rate_{interface}") and hasattr(self, f"_last_tx_rate_{interface}"):
+                                    last_rx_rate = getattr(self, f"_last_rx_rate_{interface}")
+                                    last_tx_rate = getattr(self, f"_last_tx_rate_{interface}")
+
+                                    # Apply exponential smoothing (alpha=0.3)
+                                    rx_rate = (0.3 * rx_rate) + (0.7 * last_rx_rate)
+                                    tx_rate = (0.3 * tx_rate) + (0.7 * last_tx_rate)
+
+                                # Store the smoothed rates
+                                setattr(self, f"_last_rx_rate_{interface}", rx_rate)
+                                setattr(self, f"_last_tx_rate_{interface}", tx_rate)
+
+                                # Add rates to stats
+                                stats["rx_speed"] = rx_rate
+                                stats["tx_speed"] = tx_rate
+                            else:
+                                # Update too frequent, keep previous rates if available
+                                _LOGGER.debug("Update too frequent (%.3fs < 1.000s) - keeping previous rate: %.2f bits/s",
+                                             time_delta, getattr(self, f"_last_rx_rate_{interface}", 0.0))
+                                if hasattr(self, f"_last_rx_rate_{interface}"):
+                                    stats["rx_speed"] = getattr(self, f"_last_rx_rate_{interface}")
+                                    stats["tx_speed"] = getattr(self, f"_last_tx_rate_{interface}")
+                                else:
+                                    stats["rx_speed"] = 0.0
+                                    stats["tx_speed"] = 0.0
+
+                        # Store current stats for next update
+                        self._network_stats[interface] = NetworkStats(
+                            rx_bytes=rx_bytes,
+                            tx_bytes=tx_bytes,
+                            last_update=current_time
+                        )
+
+                        network_stats[interface] = stats
+                    except ValueError as e:
+                        _LOGGER.warning("Error parsing network stats for %s: %s", interface, e)
+                elif len(parts) == 6:  # Handle old format for backward compatibility
+                    try:
+                        interface, rx, tx, speed, duplex, carrier = parts
+                        rx_bytes = safe_parse(int, rx, default=0,
+                                            error_msg=f"Invalid rx_bytes for {interface}: {rx}")
+                        tx_bytes = safe_parse(int, tx, default=0,
+                                            error_msg=f"Invalid tx_bytes for {interface}: {tx}")
+                        link_detected = carrier == "1"
+
+                        stats = {
+                            "rx_bytes": rx_bytes,
+                            "tx_bytes": tx_bytes,
+                            "speed": speed,
+                            "duplex": duplex,
+                            "link_detected": link_detected,
+                            "connected": link_detected
+                        }
+
+                        # Calculate rates if we have previous data
+                        if interface in self._network_stats:
+                            rates = await self._calculate_rates(
+                                interface,
+                                stats,
+                                current_time
+                            )
+                            stats.update(rates)
+
+                        # Store current stats
+                        self._network_stats[interface] = NetworkStats(
+                            rx_bytes=rx_bytes,
+                            tx_bytes=tx_bytes,
+                            last_update=current_time
+                        )
+
+                        network_stats[interface] = stats
+                    except ValueError as e:
+                        _LOGGER.warning("Error parsing network stats for %s: %s", interface, e)
+
+            # Cache the results
+            self._cached_network_stats = network_stats
+            self._last_network_update = current_time
+            return network_stats
 
     async def _get_network_stats_original(self) -> Dict[str, Any]:
         """Original implementation of network stats collection as fallback."""

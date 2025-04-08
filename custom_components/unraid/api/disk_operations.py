@@ -11,9 +11,10 @@ import json
 from datetime import datetime
 
 from .disk_utils import is_valid_disk_name
-from .disk_mapping import parse_disk_config, parse_disks_ini
+from .disk_mapper import DiskMapper
 from .smart_operations import SmartDataManager
 from .disk_state import DiskState, DiskStateManager
+from .error_handling import with_error_handling, safe_parse
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,52 +109,32 @@ class DiskOperationsMixin:
         except Exception as err:
             _LOGGER.error("Error during disk operations initialization: %s", err)
 
+    @with_error_handling(fallback_return={})
     async def get_disk_mappings(self) -> Dict[str, Dict[str, Any]]:
         """Get comprehensive disk mappings including serials."""
-        try:
-            async with self._disk_lock:
-                # Get all data sources in parallel
-                command_results = await asyncio.gather(
-                    self.execute_command("cat /var/local/emhttp/disks.ini"),
-                    self.execute_command("cat /boot/config/disk.cfg"),
-                    return_exceptions=True
-                )
+        async with self._disk_lock:
+            # Use the new DiskMapper class
+            disk_mapper = DiskMapper(self.execute_command)
+            disk_identifiers = await disk_mapper.refresh_mappings()
 
-                mappings = {}
+            # Convert DiskIdentifier objects to dictionaries for backward compatibility
+            mappings = {}
+            for disk_name, identifier in disk_identifiers.items():
+                mappings[disk_name] = {
+                    "name": disk_name,
+                    "device": identifier.device or "",
+                    "serial": identifier.serial or "",
+                    "status": identifier.status,
+                    "filesystem": identifier.filesystem or "",
+                    "spindown_delay": identifier.spindown_delay
+                }
 
-                # Parse disks.ini first (primary source)
-                if not isinstance(command_results[0], Exception) and command_results[0].exit_status == 0:
-                    disks_ini_mappings = await parse_disks_ini(self.execute_command)
-                    for disk_name, disk_info in disks_ini_mappings.items():
-                        mappings[disk_name] = {
-                            "name": disk_name,
-                            "device": disk_info.get("device", ""),
-                            "serial": disk_info.get("id", ""),  # Serial is in the 'id' field
-                            "status": disk_info.get("status", "unknown"),
-                            "filesystem": disk_info.get("fsType", ""),
-                            "spindown_delay": "-1"  # Default, will be updated from disk.cfg
-                        }
+            if not mappings:
+                _LOGGER.warning("No disk mappings found from any source")
+            else:
+                _LOGGER.debug("Found disk mappings: %s", mappings)
 
-                # Add spindown delays from disk.cfg if needed
-                if not isinstance(command_results[1], Exception) and command_results[1].exit_status == 0:
-                    disk_cfg = parse_disk_config(command_results[1].stdout)
-                    # Update spindown delays in mappings
-                    for disk_name, config in disk_cfg.items():
-                        if disk_name in mappings:
-                            mappings[disk_name].update({
-                                "spindown_delay": config.get("spindown_delay", "-1")
-                            })
-
-                if not mappings:
-                    _LOGGER.warning("No disk mappings found from any source")
-                else:
-                    _LOGGER.debug("Found disk mappings: %s", mappings)
-
-                return mappings
-
-        except Exception as err:
-            _LOGGER.error("Error getting disk mappings: %s", err)
-            return {}
+            return mappings
 
     async def _get_array_status(self) -> str:
         """Get Unraid array status using mdcmd."""
@@ -233,135 +214,132 @@ class DiskOperationsMixin:
             _LOGGER.error("Error updating disk status: %s", err)
             return disk_info
 
+    @with_error_handling(fallback_return="Unknown")
     async def get_disk_model(self, device: str) -> str:
         """Get disk model with enhanced error handling."""
-        try:
-            smart_data = await self._smart_manager.get_smart_data(device)
-            if smart_data:
-                return smart_data.get("model_name", "Unknown")
-            return "Unknown"
-        except Exception as err:
-            _LOGGER.debug("Error getting model for %s: %s", device, err)
-            return "Unknown"
+        smart_data = await self._smart_manager.get_smart_data(device)
+        if smart_data:
+            return smart_data.get("model_name", "Unknown")
+        return "Unknown"
 
+    @with_error_handling(fallback_return={"default": 0})
     async def get_disk_spin_down_settings(self) -> dict[str, int]:
         """Fetch disk spin down delay settings with validation."""
+        config_path = "/boot/config/disk.cfg"
+        default_delay = 0
+        disk_delays = {}
+
         try:
-            config_path = "/boot/config/disk.cfg"
-            default_delay = 0
-            disk_delays = {}
+            async with aiofiles.open(config_path, mode='r') as f:
+                settings = await f.read()
+        except FileNotFoundError:
+            _LOGGER.warning("Disk config file not found: %s", config_path)
+            return {"default": default_delay}
+
+        for line in settings.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
 
             try:
-                async with aiofiles.open(config_path, mode='r') as f:
-                    settings = await f.read()
-            except FileNotFoundError:
-                _LOGGER.warning("Disk config file not found: %s", config_path)
-                return {"default": default_delay}
+                if line.startswith("spindownDelay="):
+                    value = line.split("=")[1].strip().strip('"')
+                    default_delay = safe_parse(int, value, default=0,
+                                             error_msg=f"Invalid default spindown delay: {value}")
+                elif line.startswith("diskSpindownDelay."):
+                    disk_num = line.split(".")[1].split("=")[0]
+                    value = line.split("=")[1].strip().strip('"')
 
-            for line in settings.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
+                    if not disk_num.isdigit():
+                        continue
 
-                try:
-                    if line.startswith("spindownDelay="):
-                        value = line.split("=")[1].strip().strip('"')
-                        default_delay = int(value)
-                    elif line.startswith("diskSpindownDelay."):
-                        disk_num = line.split(".")[1].split("=")[0]
-                        value = line.split("=")[1].strip().strip('"')
-                        delay = int(value)
-
-                        if not disk_num.isdigit():
-                            continue
-
-                        disk_name = f"disk{disk_num}"
-                        disk_delays[disk_name] = (
-                            default_delay if delay < 0 else delay
-                        )
-
-                except (ValueError, IndexError) as err:
-                    _LOGGER.warning(
-                        "Invalid spin down setting '%s': %s",
-                        line,
-                        err
+                    disk_name = f"disk{disk_num}"
+                    delay = safe_parse(int, value, default=default_delay,
+                                     error_msg=f"Invalid spindown delay for {disk_name}: {value}")
+                    disk_delays[disk_name] = (
+                        default_delay if delay < 0 else delay
                     )
-                    continue
 
-            return {"default": default_delay, **disk_delays}
+            except (ValueError, IndexError) as err:
+                _LOGGER.warning(
+                    "Invalid spin down setting '%s': %s",
+                    line,
+                    err
+                )
+                continue
 
-        except (OSError, ValueError) as err:
-            _LOGGER.error("Error getting spin down settings: %s", err)
-            return {"default": 0}
+        return {"default": default_delay, **disk_delays}
 
+    @with_error_handling(fallback_return={
+        "status": "unknown",
+        "percentage": 0,
+        "total": 0,
+        "used": 0,
+        "free": 0,
+        "sync_status": None,
+        "errors": None
+    })
     async def get_array_usage(self) -> Dict[str, Any]:
         """Fetch Array usage with enhanced error handling and status reporting."""
+        _LOGGER.debug("Fetching array usage")
+        array_state = await self._get_array_status()
+
+        response = {
+            "status": array_state,
+            "percentage": 0,
+            "total": 0,
+            "used": 0,
+            "free": 0,
+            "sync_status": None,
+            "errors": None
+        }
+
+        if array_state != "started" and not array_state.startswith("syncing"):
+            _LOGGER.debug("Array is %s, skipping usage check", array_state)
+            return response
+
         try:
-            _LOGGER.debug("Fetching array usage")
-            array_state = await self._get_array_status()
+            result = await self.execute_command(
+                "df -k /mnt/user | awk 'NR==2 {print $2,$3,$4}'"
+            )
 
-            response = {
-                "status": array_state,
-                "percentage": 0,
-                "total": 0,
-                "used": 0,
-                "free": 0,
-                "sync_status": None,
-                "errors": None
-            }
-
-            if array_state != "started" and not array_state.startswith("syncing"):
-                _LOGGER.debug("Array is %s, skipping usage check", array_state)
-                return response
-
-            try:
-                result = await self.execute_command(
-                    "df -k /mnt/user | awk 'NR==2 {print $2,$3,$4}'"
-                )
-
-                if result.exit_status != 0:
-                    response["status"] = "error"
-                    response["errors"] = ["Failed to get array usage"]
-                    return response
-
-                output = result.stdout.strip()
-                if not output:
-                    response["status"] = "empty"
-                    return response
-
-                total, used, free = map(int, output.split())
-                percentage = (used / total) * 100 if total > 0 else 0
-
-                response.update({
-                    "percentage": round(percentage, 1),
-                    "total": total * 1024,
-                    "used": used * 1024,
-                    "free": free * 1024,
-                })
-
-                if array_state.startswith("syncing"):
-                    sync_info = await self._get_array_sync_status()
-                    if sync_info:
-                        response["sync_status"] = sync_info
-
-                return response
-
-            except (ValueError, TypeError) as err:
-                _LOGGER.error("Error parsing array usage: %s", err)
+            if result.exit_status != 0:
                 response["status"] = "error"
-                response["errors"] = [str(err)]
+                response["errors"] = ["Failed to get array usage"]
                 return response
 
-        except (OSError, ValueError) as err:
+            output = result.stdout.strip()
+            if not output:
+                response["status"] = "empty"
+                return response
+
+            total, used, free = safe_parse(
+                lambda x: list(map(int, x.split())),
+                output,
+                default=[0, 0, 0],
+                error_msg=f"Error parsing array usage output: {output}"
+            )
+            percentage = (used / total) * 100 if total > 0 else 0
+
+            response.update({
+                "percentage": round(percentage, 1),
+                "total": total * 1024,
+                "used": used * 1024,
+                "free": free * 1024,
+            })
+
+            if array_state.startswith("syncing"):
+                sync_info = await self._get_array_sync_status()
+                if sync_info:
+                    response["sync_status"] = sync_info
+
+            return response
+
+        except Exception as err:
             _LOGGER.error("Error getting array usage: %s", err)
-            return {
-                "status": "error",
-                "percentage": 0,
-                "total": 0,
-                "used": 0,
-                "free": 0,
-                "errors": [str(err)]
-            }
+            response["status"] = "error"
+            response["errors"] = [str(err)]
+            return response
 
     async def _get_array_sync_status(self) -> Optional[Dict[str, Any]]:
         """Get detailed array sync status asynchronously."""
@@ -436,7 +414,7 @@ class DiskOperationsMixin:
                 # Get mount points and devices
                 "echo '===MOUNT_INFO==='; "
                 "mount | grep -E '/mnt/' | awk '{print $1,$3,$5}'; "
-                # Get ZFS pool information
+                # Add ZFS support
                 "echo '===ZFS_POOLS==='; "
                 "if command -v zpool >/dev/null 2>&1; then zpool list -H -o name,size,alloc,free,capacity,health; else echo 'zfs_not_installed'; fi; "
                 # Get SMART data for all disks
@@ -476,6 +454,25 @@ class DiskOperationsMixin:
                         device, mount_point, fs_type = parts[0], parts[1], parts[2]
                         mount_to_device[mount_point] = device
                         mount_to_fs_type[mount_point] = fs_type
+
+                # Parse ZFS pool information
+                zfs_pools = {}
+                if zfs_pools_output != 'zfs_not_installed':
+                    for line in zfs_pools_output.splitlines():
+                        parts = line.split('\t')
+                        if len(parts) >= 6:
+                            name, size, alloc, free, capacity, health = parts
+                            # Remove '%' from capacity
+                            capacity = capacity.rstrip('%')
+                            zfs_pools[name] = {
+                                'name': name,
+                                'size': size,
+                                'alloc': alloc,
+                                'free': free,
+                                'capacity': capacity,
+                                'health': health
+                            }
+                            _LOGGER.debug(f"Found ZFS pool: {name}")
 
                 # Parse array info to map md devices to physical devices
                 md_to_physical = {}
@@ -525,7 +522,11 @@ class DiskOperationsMixin:
                             try:
                                 device_to_smart_data[current_device] = json.loads(current_data)
                             except json.JSONDecodeError:
-                                _LOGGER.warning("Failed to parse SMART data for %s", current_device)
+                                # Suppress warnings for boot devices (typically /dev/sda)
+                                if current_device == "/dev/sda":
+                                    _LOGGER.debug("No SMART data available for boot device %s", current_device)
+                                else:
+                                    _LOGGER.warning("Failed to parse SMART data for %s", current_device)
                         current_device = None
                         current_data = ""
                     elif current_device:
@@ -546,6 +547,13 @@ class DiskOperationsMixin:
                             _LOGGER.debug("Skipping invalid disk name: %s", disk_name)
                             continue
 
+                        # Check if this is a ZFS pool
+                        is_zfs_pool = False
+                        for pool_name, pool_info in zfs_pools.items():
+                            if pool_name == disk_name:
+                                is_zfs_pool = True
+                                _LOGGER.debug(f"Detected {disk_name} as ZFS pool")
+
                         # Get current disk state
                         state = await self._state_manager.get_disk_state(disk_name)
 
@@ -564,7 +572,9 @@ class DiskOperationsMixin:
                         }
 
                         # Add filesystem type if available
-                        if mount_point in mount_to_fs_type:
+                        if is_zfs_pool:
+                            disk_info["filesystem"] = "zfs"
+                        elif mount_point in mount_to_fs_type:
                             disk_info["filesystem"] = mount_to_fs_type[mount_point]
 
                         # Get device path
@@ -582,7 +592,13 @@ class DiskOperationsMixin:
 
                             # Extract SMART status
                             if "smart_status" in smart_data:
-                                disk_info["smart_status"] = "Passed" if smart_data["smart_status"].get("passed", True) else "Failed"
+                                # Check if smart_status is already a string (from our updated SMART processing)
+                                if isinstance(smart_data["smart_status"], str):
+                                    # Convert to title case for consistency
+                                    disk_info["smart_status"] = smart_data["smart_status"].title()
+                                else:
+                                    # Legacy format: smart_status is an object with a passed property
+                                    disk_info["smart_status"] = "Passed" if smart_data["smart_status"].get("passed", True) else "Failed"
 
                             # Extract temperature
                             temperature = None
@@ -624,81 +640,106 @@ class DiskOperationsMixin:
                     except (ValueError, IndexError) as err:
                         _LOGGER.debug("Error parsing disk line '%s': %s", line, err)
 
-                return disks
+                # Add ZFS pools information to the result
+                if zfs_pools and zfs_pools != 'zfs_not_installed':
+                    _LOGGER.debug(f"Adding ZFS pools information: {list(zfs_pools.keys())}")
+
+                    # Add ZFS pools to individual_disks list if they're not already there
+                    existing_disk_names = {disk.get('name') for disk in disks}
+                    for pool_name, pool_info in zfs_pools.items():
+                        if pool_name not in existing_disk_names:
+                            # Check if the pool is mounted
+                            mount_point = f"/mnt/{pool_name}"
+
+                            # Convert size strings to bytes
+                            try:
+                                # Parse size (e.g., 222G)
+                                size_str = pool_info.get('size', '0')
+                                size_value = float(size_str[:-1])
+                                size_unit = size_str[-1].upper()
+                                total_bytes = 0
+
+                                if size_unit == 'T':
+                                    total_bytes = int(size_value * 1024 * 1024 * 1024 * 1024)
+                                elif size_unit == 'G':
+                                    total_bytes = int(size_value * 1024 * 1024 * 1024)
+                                elif size_unit == 'M':
+                                    total_bytes = int(size_value * 1024 * 1024)
+                                elif size_unit == 'K':
+                                    total_bytes = int(size_value * 1024)
+                                else:
+                                    total_bytes = int(size_value)
+
+                                # Parse allocated space (e.g., 5.00G)
+                                alloc_str = pool_info.get('alloc', '0')
+                                alloc_value = float(alloc_str[:-1])
+                                alloc_unit = alloc_str[-1].upper()
+                                used_bytes = 0
+
+                                if alloc_unit == 'T':
+                                    used_bytes = int(alloc_value * 1024 * 1024 * 1024 * 1024)
+                                elif alloc_unit == 'G':
+                                    used_bytes = int(alloc_value * 1024 * 1024 * 1024)
+                                elif alloc_unit == 'M':
+                                    used_bytes = int(alloc_value * 1024 * 1024)
+                                elif alloc_unit == 'K':
+                                    used_bytes = int(alloc_value * 1024)
+                                else:
+                                    used_bytes = int(alloc_value)
+
+                                # Calculate free space
+                                free_bytes = total_bytes - used_bytes
+
+                                # Get current disk state
+                                state = await self._state_manager.get_disk_state(pool_name)
+
+                                # Create disk info for the ZFS pool
+                                disk_info = {
+                                    "name": pool_name,
+                                    "mount_point": mount_point,
+                                    "total": total_bytes,
+                                    "used": used_bytes,
+                                    "free": free_bytes,
+                                    "percentage": int(pool_info.get('capacity', '0').rstrip('%')),
+                                    "state": state.value,
+                                    "smart_data": {},
+                                    "smart_status": "Unknown",
+                                    "temperature": None,
+                                    "device": None,
+                                    "filesystem": "zfs",
+                                    "health": pool_info.get('health', 'UNKNOWN')
+                                }
+
+                                disks.append(disk_info)
+                                _LOGGER.info(f"Added ZFS pool {pool_name} to individual_disks")
+                            except (ValueError, TypeError, IndexError) as err:
+                                _LOGGER.warning(f"Error adding ZFS pool {pool_name} to individual_disks: {err}")
+
+                    # Add ZFS pools to system stats
+                    system_stats = {"zfs_pools": zfs_pools}
+                    return disks, system_stats
+
+                return disks, {}
             else:
                 _LOGGER.warning("Batched disk info command failed with exit status %d", result.exit_status)
-                return []
+                return [], {}
 
         except Exception as err:
             _LOGGER.error("Error collecting disk information with batched command: %s", err)
-            return []
+            return [], {}
 
-    async def get_individual_disk_usage(self) -> List[Dict[str, Any]]:
+    async def get_individual_disk_usage(self) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Get usage information for individual disks."""
         try:
             # Try the optimized batched command approach first
             _LOGGER.debug("Fetching individual disk usage with optimized approach")
-            disks = await self.collect_disk_info()
-            if disks:
-                return disks
-
-            # Fallback to original implementation if optimized approach fails
-            _LOGGER.warning("Optimized disk info collection failed, falling back to individual commands")
-
-            disks = []
-            # Get usage for mounted disks with more specific path patterns
-            # Note: Using specific patterns to avoid capturing system paths
-            # Running with -P flag to ensure POSIX output format for consistent parsing
-            usage_result = await self.execute_command(
-                "df -P -B1 /mnt/disk[0-9]* /mnt/cache* /mnt/user* 2>/dev/null | "
-                "grep -v '^Filesystem' | awk '{print $6,$2,$3,$4}'"
-            )
-
-            if usage_result.exit_status == 0:
-                for line in usage_result.stdout.splitlines():
-                    try:
-                        mount_point, total, used, free = line.split()
-                        disk_name = mount_point.replace('/mnt/', '')
-
-                        # Skip invalid or system disks while allowing custom pools
-                        if not is_valid_disk_name(disk_name):
-                            _LOGGER.debug("Skipping invalid disk name: %s", disk_name)
-                            continue
-
-                        # Get current disk state
-                        state = await self._state_manager.get_disk_state(disk_name)
-
-                        disk_info = {
-                            "name": disk_name,
-                            "mount_point": mount_point,
-                            "total": int(total),
-                            "used": int(used),
-                            "free": int(free),
-                            "percentage": round((int(used) / int(total) * 100), 1) if int(total) > 0 else 0,
-                            "state": state.value,
-                            "smart_data": {},  # Will be populated by update_disk_status
-                            "smart_status": "Unknown",
-                            "temperature": None,
-                            "device": None,
-                        }
-
-                        # Update disk status with SMART data if disk is active
-                        if state == DiskState.ACTIVE:
-                            disk_info = await self.update_disk_status(disk_info)
-
-                        disks.append(disk_info)
-
-                    except (ValueError, IndexError) as err:
-                        _LOGGER.debug("Error parsing disk usage line '%s': %s", line, err)
-                        continue
-
-                return disks
-
-            return []
+            disks, extra_stats = await self.collect_disk_info()
+            # Return the disks or an empty list if none were found
+            return disks if disks else [], extra_stats
 
         except Exception as err:
             _LOGGER.error("Error getting disk usage: %s", err)
-            return []
+            return [], {}
 
     async def get_cache_usage(self) -> Dict[str, Any]:
         """Get cache pool usage with enhanced error handling."""
@@ -764,11 +805,80 @@ class DiskOperationsMixin:
                 "error": str(err)
             }
 
+    async def _get_pool_info(self, pool_name: str) -> Optional[Dict[str, Any]]:
+        """Get detailed pool information for any ZFS pool."""
+        try:
+            # Check if this is a ZFS pool
+            zfs_result = await self.execute_command(f"zpool list -H -o name,size,alloc,free,capacity,health {pool_name} 2>/dev/null")
+            if zfs_result.exit_status == 0 and zfs_result.stdout.strip():
+                # This is a ZFS pool
+                parts = zfs_result.stdout.strip().split('\t')
+                if len(parts) >= 6:
+                    name, size, alloc, free, capacity, health = parts
+                    # Remove '%' from capacity
+                    capacity = capacity.rstrip('%')
+
+                    # Get ZFS pool devices
+                    devices_result = await self.execute_command(f"zpool list -v {pool_name} | grep -E '^\\s+\\w+' | awk '{{print $1}}'")
+                    devices = []
+                    if devices_result.exit_status == 0:
+                        devices = [f"/dev/{dev}" for dev in devices_result.stdout.strip().splitlines()]
+
+                    return {
+                        "filesystem": "zfs",
+                        "devices": devices,
+                        "total_devices": len(devices),
+                        "raid_type": "zfs",
+                        "health": health
+                    }
+            return None
+        except (OSError, ValueError) as err:
+            _LOGGER.debug(f"Error getting ZFS pool info for {pool_name}: {err}")
+            return None
+
     async def _get_cache_pool_info(self) -> Optional[Dict[str, Any]]:
         """Get detailed cache pool information."""
         try:
+            # First check if cache is a ZFS pool
+            zfs_info = await self._get_pool_info("cache")
+            if zfs_info:
+                return zfs_info
+
+            # For testing, also check if garbage is available as a ZFS pool
+            garbage_info = await self._get_pool_info("garbage")
+            if garbage_info:
+                _LOGGER.info("Using 'garbage' ZFS pool for testing")
+                return garbage_info
+
+            # If not ZFS, try btrfs
             result = await self.execute_command("btrfs filesystem show /mnt/cache")
             if result.exit_status != 0:
+                # Try XFS as a fallback
+                xfs_result = await self.execute_command("mount | grep '/mnt/cache' | grep 'xfs'")
+                if xfs_result.exit_status == 0:
+                    # It's an XFS filesystem
+                    device = xfs_result.stdout.strip().split()[0]
+                    return {
+                        "filesystem": "xfs",
+                        "devices": [device] if device.startswith("/dev/") else [],
+                        "total_devices": 1,
+                        "raid_type": "single"
+                    }
+
+                # If we get here, also try checking if /mnt/garbage exists and is mounted
+                garbage_mount = await self.execute_command("mountpoint -q /mnt/garbage && echo 'mounted'")
+                if garbage_mount.exit_status == 0 and garbage_mount.stdout.strip() == 'mounted':
+                    _LOGGER.info("Found mounted /mnt/garbage, checking filesystem type")
+                    garbage_fs = await self.execute_command("mount | grep '/mnt/garbage' | awk '{print $5}'")
+                    if garbage_fs.exit_status == 0 and garbage_fs.stdout.strip() == 'zfs':
+                        _LOGGER.info("Using mounted ZFS filesystem at /mnt/garbage for testing")
+                        return {
+                            "filesystem": "zfs",
+                            "devices": [],
+                            "total_devices": 1,
+                            "raid_type": "zfs",
+                            "health": "ONLINE"
+                        }
                 return None
 
             pool_info = {

@@ -18,7 +18,7 @@ from homeassistant.util import dt as dt_util # type: ignore
 
 from .const import DOMAIN
 from .coordinator import UnraidDataUpdateCoordinator
-from .naming import EntityNaming
+from .helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def get_script_buttons(coordinator: UnraidDataUpdateCoordinator) -> list[ButtonE
                     coordinator,
                     UnraidScriptButtonDescription(
                         key=f"{script['name']}_run",
-                        name=f"Run {script['name']}",
+                        name=f"{script['name']}",
                         script_name=script["name"],
                         background=False,
                         icon="mdi:script-text-play",
@@ -89,7 +89,7 @@ def get_script_buttons(coordinator: UnraidDataUpdateCoordinator) -> list[ButtonE
                     coordinator,
                     UnraidScriptButtonDescription(
                         key=f"{script['name']}_background",
-                        name=f"Run {script['name']} (Background)",
+                        name=f"{script['name']} (Background)",
                         script_name=script["name"],
                         background=True,
                         icon="mdi:script-text-play-outline",
@@ -158,7 +158,7 @@ class UnraidButton(ButtonEntity):
 
         # Set unique_id and name using naming utility
         self._attr_unique_id = naming.get_entity_id(description.key)
-        self._attr_name = f"Unraid {description.name}"
+        self._attr_name = f"{description.name}"
 
         # Set name and icon
         if description.icon:
@@ -220,7 +220,7 @@ class UnraidScriptButton(ButtonEntity):
 
         # Set unique_id and name using naming utility
         self._attr_unique_id = naming.get_entity_id(description.key)
-        self._attr_name = f"Unraid {description.name}"
+        self._attr_name = f"{description.name}"
 
         # Set icon if provided
         if description.icon:

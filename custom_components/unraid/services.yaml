@@ -214,9 +214,163 @@ force_sensor_update:
     sensor_id:
       name: Sensor ID
       description: >-
-        The ID of the sensor to update. Examples: "cpu_usage", "array_status", 
+        The ID of the sensor to update. Examples: "cpu_usage", "array_status",
         "network_eth0", "vm_windows10", etc.
       required: true
       example: "cpu_usage"
+      selector:
+        text:
+
+# Docker container services
+docker_pause:
+  name: Pause Docker Container
+  description: Pause a running Docker container.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    container:
+      name: Container Name
+      description: The name of the Docker container to pause.
+      example: "my-container"
+      required: true
+      selector:
+        text:
+
+docker_resume:
+  name: Resume Docker Container
+  description: Resume a paused Docker container.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    container:
+      name: Container Name
+      description: The name of the Docker container to resume.
+      example: "my-container"
+      required: true
+      selector:
+        text:
+
+docker_restart:
+  name: Restart Docker Container
+  description: Restart a Docker container.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    container:
+      name: Container Name
+      description: The name of the Docker container to restart.
+      example: "my-container"
+      required: true
+      selector:
+        text:
+
+# VM services
+vm_pause:
+  name: Pause VM
+  description: Pause a running virtual machine.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    vm:
+      name: VM Name
+      description: The name of the virtual machine to pause.
+      example: "Windows10"
+      required: true
+      selector:
+        text:
+
+vm_resume:
+  name: Resume VM
+  description: Resume a paused virtual machine.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    vm:
+      name: VM Name
+      description: The name of the virtual machine to resume.
+      example: "Windows10"
+      required: true
+      selector:
+        text:
+
+vm_restart:
+  name: Restart VM
+  description: Restart a running virtual machine.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    vm:
+      name: VM Name
+      description: The name of the virtual machine to restart.
+      example: "Windows10"
+      required: true
+      selector:
+        text:
+
+vm_hibernate:
+  name: Hibernate VM
+  description: Hibernate a running virtual machine (suspend to disk).
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    vm:
+      name: VM Name
+      description: The name of the virtual machine to hibernate.
+      example: "Windows10"
+      required: true
+      selector:
+        text:
+
+vm_force_stop:
+  name: Force Stop VM
+  description: Force stop a virtual machine. This is equivalent to pulling the power plug and should only be used when normal shutdown fails.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: The ID of the config entry for the Unraid instance.
+      example: "1234abcd5678efgh"
+      required: true
+      selector:
+        text:
+    vm:
+      name: VM Name
+      description: The name of the virtual machine to force stop.
+      example: "Windows10"
+      required: true
       selector:
         text:

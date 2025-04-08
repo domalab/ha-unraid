@@ -9,6 +9,9 @@ import re
 from typing import Dict, Any, Optional
 from enum import IntEnum
 
+from .disk_mapper import DiskMapper
+from .error_handling import with_error_handling, safe_parse, UnraidDataError
+
 _LOGGER = logging.getLogger(__name__)
 
 class SmartctlExitCode(IntEnum):
@@ -30,6 +33,7 @@ class SmartDataManager:
         self._cache_timeout = timedelta(minutes=5)
         self._last_update: Dict[str, datetime] = {}
         self._lock = asyncio.Lock()
+        self._disk_mapper = DiskMapper(instance.execute_command)
 
     def _convert_nvme_temperature(self, temp_value: Any) -> Optional[int]:
         """Convert NVMe temperature to Celsius with enhanced format detection."""
@@ -77,55 +81,16 @@ class SmartDataManager:
             return None
 
     async def _map_logical_to_physical_device(self, device_path: str) -> str:
-        """Map logical md devices to physical devices."""
-        if "md" not in device_path:
-            return device_path
+        """Map logical md devices to physical devices using DiskMapper."""
+        # Use the DiskMapper to handle the mapping
+        return await self._disk_mapper.map_logical_to_physical_device(device_path)
 
-        # Extract md number
-        md_num = None
-        if match := re.search(r'md(\d+)', device_path):
-            md_num = match.group(1)
-
-        if not md_num:
-            return device_path
-
-        # Get the physical device for this md device from array information
-        array_info = await self._instance.execute_command("mdcmd status")
-        if array_info.exit_status != 0:
-            return device_path
-
-        # Parse the array info to find the disk mapping
-        disk_num = None
-        for line in array_info.stdout.splitlines():
-            if '=' in line:
-                key, value = line.split('=', 1)
-                key = key.strip()
-                value = value.strip()
-
-                # Look for diskName.X entries
-                if key.startswith("diskName.") and value == f"md{md_num}p1":
-                    disk_num = key.split(".")[1]
-                    break
-
-        # If we found the disk number, look for the corresponding rdevName
-        if disk_num is not None:
-            for line in array_info.stdout.splitlines():
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    key = key.strip()
-                    value = value.strip()
-
-                    if key == f"rdevName.{disk_num}" and value.startswith("sd"):
-                        physical_device = f"/dev/{value}"
-                        _LOGGER.debug(
-                            "Mapped %s to physical device %s",
-                            device_path,
-                            physical_device
-                        )
-                        return physical_device
-
-        return device_path
-
+    @with_error_handling(fallback_return={
+        "state": "error",
+        "error": "Failed to get SMART data",
+        "temperature": None,
+        "device_type": "unknown"
+    })
     async def get_smart_data(
         self,
         device: str,
@@ -155,12 +120,19 @@ class SmartDataManager:
                     _LOGGER.error("Unrecognized device format: %s", device)
                     return {"state": "error", "error": "Invalid device name", "temperature": None}
 
+            # Strip partition numbers from device path for SMART data collection
+            # For example, convert /dev/nvme0n1p1 to /dev/nvme0n1
+            if 'nvme' in device_path and 'p' in device_path:
+                device_path = re.sub(r'(nvme\d+n\d+)p\d+', r'\1', device_path)
+                _LOGGER.debug("Stripped partition number from NVME device path: %s", device_path)
+
             # Skip SMART data collection for USB boot drives
             if device_path == "/dev/sda":
                 _LOGGER.debug("Skipping SMART data collection for USB boot drive %s", device_path)
                 usb_boot_data = {
                     "state": "unsupported",
                     "error": "USB boot drive doesn't support SMART",
+                    "smart_status": "passed",  # Assume passed for USB boot drives
                     "temperature": None,
                     "device_type": "usb"
                 }
@@ -208,7 +180,7 @@ class SmartDataManager:
                         _LOGGER.debug("Device %s confirmed in standby", device_path)
                         standby_data = {
                             "state": "standby",
-                            "smart_status": "Unknown",
+                            "smart_status": "passed",  # Assume passed for standby disks
                             "temperature": None,
                             "device_type": "sata"
                         }
@@ -239,11 +211,20 @@ class SmartDataManager:
 
                 if result.exit_status == 0:
                     try:
-                        smart_data = json.loads(result.stdout)
+                        smart_data = safe_parse(
+                            json.loads,
+                            result.stdout,
+                            default={},
+                            error_msg=f"Failed to parse SMART JSON for {device_path}"
+                        )
                         _LOGGER.debug("Successfully parsed SMART data for %s", device)
 
+                        # Get SMART status and convert boolean to string
+                        smart_passed = smart_data.get("smart_status", {}).get("passed", True)
+                        smart_status = "passed" if smart_passed else "failed"
+
                         processed_data = {
-                            "smart_status": smart_data.get("smart_status", {}).get("passed", True),
+                            "smart_status": smart_status,
                             "temperature": None,
                             "power_on_hours": None,
                             "attributes": {},

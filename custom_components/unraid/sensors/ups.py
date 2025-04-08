@@ -21,12 +21,12 @@ from homeassistant.util import dt as dt_util # type: ignore
 
 from .base import UnraidSensorBase, ValueValidationMixin
 from .const import (
-    DOMAIN, 
+    DOMAIN,
     UnraidSensorEntityDescription,
     UPS_METRICS,
     UPS_MODEL_PATTERNS,
 )
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ class UnraidUPSCurrentPowerSensor(UnraidSensorBase, UPSMetricsMixin):
 
         description = UnraidSensorEntityDescription(
             key="ups_current_consumption",
-            name=f"{naming.get_entity_name('ups', 'ups')} Current Consumption",
+            name="UPS Current Consumption",
             native_unit_of_measurement=UnitOfPower.WATT,
             device_class=SensorDeviceClass.POWER,
             state_class=SensorStateClass.MEASUREMENT,
@@ -150,7 +150,7 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
 
         description = UnraidSensorEntityDescription(
             key="ups_total_consumption",
-            name=f"{naming.get_entity_name('ups', 'ups')} Total Consumption",
+            name="UPS Total Consumption",
             native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
             device_class=SensorDeviceClass.ENERGY,
             state_class=SensorStateClass.TOTAL_INCREASING,
@@ -172,7 +172,7 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
-        
+
         # Restore previous state if available
         last_state = await self.async_get_last_state()
         if last_state is not None:
@@ -199,16 +199,16 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
                             self._last_reset = datetime.fromisoformat(last_reset)
                     except ValueError:
                         _LOGGER.debug("Could not parse last_reset timestamp")
-                        
+
                 if last_calculation := last_state.attributes.get("last_calculation"):
                     try:
                         self._last_calculation_time = datetime.fromisoformat(last_calculation)
                     except ValueError:
                         _LOGGER.debug("Could not parse last_calculation timestamp")
-                        
+
                 if power_source := last_state.attributes.get("power_source"):
                     self._power_source = power_source
-                    
+
                 if last_power := last_state.attributes.get("last_power"):
                     try:
                         self._last_power = float(last_power)
@@ -246,7 +246,7 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
             if energy_increment < 0:
                 _LOGGER.warning("Negative energy increment calculated: %f kWh", energy_increment)
                 return False
-                
+
             # Check for unreasonably large values
             # Max theoretical value: full power (10kW) for the entire period
             max_theoretical = (10 * hours)  # kWh
@@ -257,7 +257,7 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
                     max_theoretical
                 )
                 return False
-                
+
             # Check for unreasonable power implications
             implied_power = (energy_increment / hours) * 1000  # Convert back to watts
             if abs(implied_power - avg_power) > (avg_power * 0.1):  # 10% tolerance
@@ -267,9 +267,9 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
                     avg_power
                 )
                 return False
-                
+
             return True
-            
+
         except (ValueError, ZeroDivisionError) as err:
             _LOGGER.error("Error validating energy increment: %s", err)
             return False
@@ -418,13 +418,13 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
                 self.coordinator.data.get("system_stats", {})
                 .get("ups_info", {})
             )
-            
+
             # Format timestamps safely
-            last_reset_str = (self._last_reset.isoformat() 
-                            if self._last_reset is not None 
+            last_reset_str = (self._last_reset.isoformat()
+                            if self._last_reset is not None
                             else "Never")
-            last_calculation_str = (self._last_calculation_time.isoformat() 
-                                if self._last_calculation_time is not None 
+            last_calculation_str = (self._last_calculation_time.isoformat()
+                                if self._last_calculation_time is not None
                                 else None)
 
             attrs = {
@@ -438,7 +438,7 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
                 "time_on_battery": f"{ups_info.get('TONBATT', '0')}seconds",
                 "power_source": self._power_source,
             }
-            
+
             if self._last_calculation_time:
                 time_since = self._get_time_since_last_calculation()
                 if time_since is not None:
@@ -455,7 +455,7 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
 
             if self._error_count > 0:
                 attrs["error_count"] = self._error_count
-                
+
             if self._last_power is not None:
                 attrs["last_power"] = self._last_power
 
@@ -486,7 +486,7 @@ class UnraidUPSLoadPercentage(UnraidSensorBase, UPSMetricsMixin):
 
         description = UnraidSensorEntityDescription(
             key="ups_load_percentage",
-            name=f"{naming.get_entity_name('ups', 'ups')} Current Load",
+            name="UPS Current Load",
             native_unit_of_measurement=PERCENTAGE,
             device_class=SensorDeviceClass.POWER_FACTOR,
             state_class=SensorStateClass.MEASUREMENT,

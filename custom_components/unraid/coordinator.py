@@ -7,7 +7,7 @@ import hashlib
 import json
 import time
 import gc
-from typing import Any, Dict, Optional, List, Set
+from typing import Any, Dict, Optional, List, Set, cast, TypeVar, Callable, Tuple, Union
 
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
@@ -32,16 +32,14 @@ from .const import (
     DEFAULT_GENERAL_INTERVAL,
     DEFAULT_DISK_INTERVAL,
     CONF_HAS_UPS,
-    CONF_ENTITY_FORMAT,
-    DEFAULT_ENTITY_FORMAT,
-    ENTITY_NAMING_VERSION,
 )
 from .unraid import UnraidAPI
-from .helpers import get_unraid_disk_mapping, parse_speed_string
-from .api.disk_mapping import get_disk_info
+from .helpers import parse_speed_string
+from .api.disk_mapper import DiskMapper
 from .api.cache_manager import CacheManager, CacheItemPriority
 from .api.sensor_priority import SensorPriorityManager, SensorPriority, SensorCategory
-from .api.log_filter import LogManager
+from .api.logging_helper import LogManager
+from .types import UnraidDataDict, SystemStatsDict, DockerContainerDict, VMDict, UserScriptDict
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +50,7 @@ class DiskUpdateMetrics:
     duration: float
     success: bool
 
-class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
+class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
     """Class to manage fetching Unraid data."""
 
     def __init__(
@@ -110,18 +108,38 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self._disk_update_interval = timedelta(hours=self._disk_interval)
 
         # Always use entity format version 2
-        self._entity_format = 2  # Use the new format by default
+        self._entity_format = 2
 
         # Initialize network tracking
         self._previous_network_stats = {}
         self._last_network_update = dt_util.utcnow()
 
         # Performance optimization components
-        self._cache_manager = CacheManager(max_size_bytes=25 * 1024 * 1024)  # 25MB limit
+        self._cache_manager = CacheManager(max_size_bytes=50 * 1024 * 1024)  # Increased to 50MB limit
         self._sensor_manager = SensorPriorityManager()
         self._log_manager = LogManager()
         self._log_manager.configure()
         self._update_requested_sensors: Set[str] = set()
+
+        # Cache TTL settings for different data types
+        self._cache_ttls = {
+            # Static or rarely changing data
+            "disk_mapping": 3600,  # 1 hour
+            "disk_info": 1800,     # 30 minutes
+            "smart_data": 1800,    # 30 minutes
+            "docker_info": 600,    # 10 minutes
+            "vm_info": 600,        # 10 minutes
+
+            # Semi-dynamic data
+            "system_stats": 120,    # 2 minutes
+            "array_state": 60,      # 1 minute
+            "ups_info": 120,        # 2 minutes
+
+            # Highly dynamic data
+            "cpu_info": 30,         # 30 seconds
+            "memory_info": 30,      # 30 seconds
+            "network_stats": 15,    # 15 seconds
+        }
 
         # Resource monitoring
         self._last_memory_check = dt_util.utcnow()
@@ -188,7 +206,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             self._busy = False
             self._closed = True
 
-    def _get_disk_config_hash(self, system_stats: dict) -> str:
+    def _get_disk_config_hash(self, system_stats: SystemStatsDict) -> str:
         """Generate a hash of current disk configuration to detect changes."""
         disk_config = []
         for disk in system_stats.get("individual_disks", []):
@@ -230,19 +248,31 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         return True
 
     async def _async_update_disk_mapping(self, system_stats: dict) -> dict:
-        """Update disk mapping data."""
+        """Update disk mapping data using the DiskMapper class."""
         try:
             if "individual_disks" not in system_stats:
                 return system_stats
 
-            # Update disk mapping
-            disk_mapping = get_unraid_disk_mapping({"system_stats": system_stats})
+            # Create a DiskMapper instance
+            disk_mapper = DiskMapper(self.api.execute_command)
+
+            # Convert system_stats disk data to the format expected by DiskMapper
+            disk_mapping = {}
+            for disk in system_stats.get("individual_disks", []):
+                name = disk.get("name", "")
+                if name:
+                    disk_mapping[name] = {
+                        "device": disk.get("device", ""),
+                        "serial": disk.get("serial", ""),
+                        "name": name
+                    }
+
             system_stats["disk_mapping"] = disk_mapping
 
             # Add formatted disk info for each mapped disk
             system_stats["disk_info"] = {}
             for disk_name in disk_mapping:
-                disk_info = get_disk_info({"system_stats": system_stats}, disk_name)
+                disk_info = disk_mapper.get_disk_info_from_system_stats(system_stats, disk_name)
                 if disk_info:
                     system_stats["disk_info"][disk_name] = disk_info
 
@@ -253,22 +283,36 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             return system_stats
 
     async def _update_disk_mappings(self, data: dict) -> None:
-        """Update disk mappings with comprehensive information."""
+        """Update disk mappings with comprehensive information using DiskMapper."""
         try:
-            if not hasattr(self.api, "get_disk_mappings"):
-                return
+            # Create a DiskMapper instance
+            disk_mapper = DiskMapper(self.api.execute_command)
 
             # Only update if we don't already have valid mappings
             if not data.get("disk_mappings"):
-                mappings = await self.api.get_disk_mappings()
+                # Get disk identifiers from DiskMapper
+                disk_identifiers = await disk_mapper.refresh_mappings()
+
+                # Convert DiskIdentifier objects to dictionaries for backward compatibility
+                mappings = {}
+                for disk_name, identifier in disk_identifiers.items():
+                    mappings[disk_name] = {
+                        "name": disk_name,
+                        "device": identifier.device or "",
+                        "serial": identifier.serial or "",
+                        "status": identifier.status,
+                        "filesystem": identifier.filesystem or "",
+                        "spindown_delay": identifier.spindown_delay
+                    }
+
                 if mappings:
                     data["disk_mappings"] = mappings
                     _LOGGER.debug(
-                        "Updated disk mappings for %d disks",
+                        "Updated disk mappings for %d disks using DiskMapper",
                         len(mappings)
                     )
                 else:
-                    _LOGGER.debug("No disk mappings available")
+                    _LOGGER.debug("No disk mappings available from DiskMapper")
         except Exception as err:
             _LOGGER.warning("Error updating disk mappings: %s", err)
             # Don't let mapping errors affect other data
@@ -295,11 +339,16 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 try:
                     _LOGGER.debug("Starting disk information update")
 
-                    disk_data = await self.api.get_individual_disk_usage()
+                    disk_data, extra_stats = await self.api.get_individual_disk_usage()
                     array_data = await self.api.get_array_usage()
 
                     system_stats["individual_disks"] = disk_data
                     system_stats["array_usage"] = array_data
+
+                    # Add any extra stats from disk operations
+                    if extra_stats:
+                        for key, value in extra_stats.items():
+                            system_stats[key] = value
 
                     self._last_disk_update = dt_util.utcnow()
                     self._failed_update_count = 0
@@ -359,7 +408,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             _LOGGER.debug("Starting data update cycle")
             async with self.api:
                 # Initialize data structure
-                data: Dict[str, Any] = {}
+                data: UnraidDataDict = {}
                 cache_hits = 0
                 cache_misses = 0
                 start_time = time.time()
@@ -376,6 +425,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
                     # Try to get system stats from cache first
                     system_stats_key = self._get_cache_key("system_stats")
+                    system_stats: Optional[SystemStatsDict] = None
 
                     if critical_update:
                         # Force update if specifically requested
@@ -387,7 +437,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                             self._cache_manager.set(
                                 system_stats_key,
                                 system_stats,
-                                ttl=120,  # 2 minute cache for system stats
+                                ttl=self._cache_ttls["system_stats"],
                                 priority=CacheItemPriority.HIGH
                             )
                     else:
@@ -406,7 +456,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                 self._cache_manager.set(
                                     system_stats_key,
                                     system_stats,
-                                    ttl=120,  # 2 minute cache for system stats
+                                    ttl=self._cache_ttls["system_stats"],
                                     priority=CacheItemPriority.HIGH
                                 )
 
@@ -433,7 +483,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                 self._cache_manager.set(
                                     cpu_info_key,
                                     cpu_info,
-                                    ttl=60,  # 1 minute cache for CPU info (more volatile)
+                                    ttl=self._cache_ttls["cpu_info"],
                                     priority=CacheItemPriority.HIGH
                                 )
 
@@ -606,9 +656,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                 )
 
                     # Process results
-                    data["vms"] = vms
-                    data["docker_containers"] = containers
-                    data["user_scripts"] = scripts
+                    data["vms"] = cast(List[VMDict], vms)
+                    data["docker_containers"] = cast(List[DockerContainerDict], containers)
+                    data["user_scripts"] = cast(List[UserScriptDict], scripts)
 
                     # Record sensor updates - ensure lists are iterable
                     if isinstance(vms, list):
@@ -1018,6 +1068,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             if not await self.api.ping():
                 raise ConfigEntryNotReady("Unable to connect to Unraid server")
 
+            # Warm up the cache with initial data
+            await self._warm_up_cache()
+
             # Initialize base system monitoring first
             await self._async_update_data()
 
@@ -1026,6 +1079,47 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         except Exception as err:
             _LOGGER.error("Failed to connect to Unraid server: %s", err)
             raise ConfigEntryNotReady from err
+
+    async def _warm_up_cache(self) -> None:
+        """Warm up the cache with initial data."""
+        _LOGGER.debug("Warming up cache with initial data")
+        async with self.api:
+            try:
+                # Fetch system stats first (most critical)
+                system_stats = await self.api.get_system_stats()
+                if system_stats:
+                    self._cache_manager.set(
+                        self._get_cache_key("system_stats"),
+                        system_stats,
+                        ttl=self._cache_ttls["system_stats"],
+                        priority=CacheItemPriority.HIGH
+                    )
+                    _LOGGER.debug("Cache warmed up with system stats")
+
+                # Fetch disk mapping (rarely changes)
+                disk_mapping = await self.api.get_disk_mappings()
+                if disk_mapping:
+                    self._cache_manager.set(
+                        self._get_cache_key("disk_mapping"),
+                        disk_mapping,
+                        ttl=self._cache_ttls["disk_mapping"],
+                        priority=CacheItemPriority.LOW
+                    )
+                    _LOGGER.debug("Cache warmed up with disk mapping")
+
+                # Fetch Docker info if available
+                if await self.api.check_docker_running():
+                    docker_info = await self.api.get_docker_containers()
+                    if docker_info:
+                        self._cache_manager.set(
+                            self._get_cache_key("docker_info"),
+                            docker_info,
+                            ttl=self._cache_ttls["docker_info"],
+                            priority=CacheItemPriority.MEDIUM
+                        )
+                        _LOGGER.debug("Cache warmed up with Docker info")
+            except Exception as err:
+                _LOGGER.warning("Error warming up cache: %s", err)
 
     async def async_update_ups_status(self, has_ups: bool) -> None:
         """Update the UPS status and trigger a refresh."""

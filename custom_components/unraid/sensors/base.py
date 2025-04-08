@@ -18,7 +18,7 @@ from homeassistant.helpers.entity import DeviceInfo # type: ignore
 
 from ..const import DOMAIN
 from .const import UnraidSensorEntityDescription
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,15 +126,14 @@ class UnraidSensorBase(CoordinatorEntity, SensorEntity, SensorUpdateMixin, Value
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
-            component=description.key.split('_')[0],  # Get first part of key as component
-            naming_version=coordinator.entity_format  # Use entity format from coordinator
+            component=description.key.split('_')[0]  # Get first part of key as component
         )
 
         # Set consistent entity ID
         self._attr_unique_id = naming.get_entity_id(description.key)
 
-        # Set name without hostname for cleaner UI
-        self._attr_name = f"Unraid {description.name}"
+        # Set name with cleaner UI format
+        self._attr_name = f"{description.name}"
 
         _LOGGER.debug("Base Entity initialized | unique_id: %s | name: %s | description.key: %s",
                 self._attr_unique_id, self._attr_name, description.key)

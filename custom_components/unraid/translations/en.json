@@ -1,4 +1,80 @@
 {
+  "issues": {
+    "connection_failed": {
+      "title": "Unraid connection failed",
+      "description": "The connection to your Unraid server {hostname} has failed. Error: {error}. You can fix this by updating the connection settings."
+    },
+    "authentication_failed": {
+      "title": "Unraid authentication failed",
+      "description": "Authentication to your Unraid server {hostname} has failed. Error: {error}. You can fix this by updating your credentials."
+    },
+    "disk_health": {
+      "title": "Unraid disk health issue",
+      "description": "A disk health issue has been detected on your Unraid server {hostname}. Disk: {disk_name}. {issue_type} issue: {smart_status}{temperature}. Please check the disk in the Unraid web interface."
+    },
+    "array_problem": {
+      "title": "Unraid array problem",
+      "description": "An array problem has been detected on your Unraid server {hostname}. {issue_type} issue: {array_status}{array_percentage}. Please check the array in the Unraid web interface."
+    },
+    "missing_dependency": {
+      "title": "Unraid missing dependency",
+      "description": "A required dependency is missing on your Unraid server {hostname}. Missing: {dependency}. Please install the required dependency on your Unraid server."
+    },
+    "parity_check_failed": {
+      "title": "Unraid parity check failed",
+      "description": "A parity check issue has been detected on your Unraid server {hostname}. {issue_type} issue: {parity_status}{error_count}. Please check the parity status in the Unraid web interface."
+    }
+  },
+  "repairs": {
+    "connection_failed": {
+      "title": "Fix Unraid connection",
+      "description": "The connection to your Unraid server {hostname} has failed. Error: {error}. You can fix this by updating the connection settings.",
+      "confirm": {
+        "title": "Fix Unraid connection",
+        "description": "The connection to your Unraid server {hostname} has failed. Error: {error}. Would you like to update the connection settings?"
+      },
+      "reconfigure": {
+        "title": "Update connection settings",
+        "description": "Update the connection settings for your Unraid server {hostname}."
+      }
+    },
+    "authentication_failed": {
+      "title": "Fix Unraid authentication",
+      "description": "Authentication to your Unraid server {hostname} has failed. Error: {error}. You can fix this by updating your credentials.",
+      "confirm": {
+        "title": "Fix Unraid authentication",
+        "description": "Authentication to your Unraid server {hostname} has failed. Error: {error}. Would you like to update your credentials?"
+      },
+      "reconfigure": {
+        "title": "Update credentials",
+        "description": "Update the credentials for your Unraid server {hostname}."
+      }
+    },
+    "disk_health": {
+      "title": "Unraid disk health issue",
+      "description": "A disk health issue has been detected on your Unraid server {hostname}. Disk: {disk_name}. {issue_type} issue: {smart_status}{temperature}. Please check the disk in the Unraid web interface.",
+      "confirm": {
+        "title": "Acknowledge disk health issue",
+        "description": "A disk health issue has been detected on your Unraid server {hostname}. Disk: {disk_name}. {issue_type} issue: {smart_status}{temperature}. Please check the disk in the Unraid web interface. Click 'Confirm' to acknowledge this issue."
+      }
+    },
+    "array_problem": {
+      "title": "Unraid array problem",
+      "description": "An array problem has been detected on your Unraid server {hostname}. {issue_type} issue: {array_status}{array_percentage}. Please check the array in the Unraid web interface.",
+      "confirm": {
+        "title": "Acknowledge array problem",
+        "description": "An array problem has been detected on your Unraid server {hostname}. {issue_type} issue: {array_status}{array_percentage}. Please check the array in the Unraid web interface. Click 'Confirm' to acknowledge this issue."
+      }
+    },
+    "parity_check_failed": {
+      "title": "Unraid parity check failed",
+      "description": "A parity check issue has been detected on your Unraid server {hostname}. {issue_type} issue: {parity_status}{error_count}. Please check the parity status in the Unraid web interface.",
+      "confirm": {
+        "title": "Acknowledge parity check issue",
+        "description": "A parity check issue has been detected on your Unraid server {hostname}. {issue_type} issue: {parity_status}{error_count}. Please check the parity status in the Unraid web interface. Click 'Confirm' to acknowledge this issue."
+      }
+    }
+  },
     "config": {
         "step": {
             "user": {
@@ -27,7 +103,12 @@
         "error": {
             "cannot_connect": "Failed to connect to Unraid server",
             "invalid_auth": "Invalid authentication",
-            "unknown": "Unexpected error occurred"
+            "unknown": "Unexpected error occurred",
+            "empty_host": "Hostname cannot be empty",
+            "invalid_host": "Invalid hostname or IP address",
+            "invalid_port": "Invalid port number (must be between 1 and 65535)",
+            "empty_username": "Username cannot be empty",
+            "empty_password": "Password cannot be empty"
         },
         "abort": {
             "already_configured": "This Unraid server is already configured"

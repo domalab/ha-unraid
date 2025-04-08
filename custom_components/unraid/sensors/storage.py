@@ -21,7 +21,7 @@ from ..helpers import (
     is_solid_state_drive,
 )
 
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,9 +78,8 @@ class UnraidDiskSensor(UnraidSensorBase, DiskDataHelperMixin):
             component="disk"
         )
 
-        # Get pretty name using naming utility
-        component_type = "cache" if disk_name == "cache" else "disk"
-        pretty_name = naming.get_entity_name(disk_name, component_type)
+        # Get pretty name with capitalized first letter
+        pretty_name = disk_name.capitalize()
 
         # Initialize base sensor class
         super().__init__(
@@ -252,7 +251,7 @@ class UnraidArraySensor(UnraidSensorBase, DiskDataHelperMixin):
 
         description = UnraidSensorEntityDescription(
             key="array_usage",
-            name=f"{naming.get_entity_name('array', 'array')} Usage",
+            name="Array Usage",
             native_unit_of_measurement=PERCENTAGE,
             device_class=None,
             state_class=SensorStateClass.MEASUREMENT,
@@ -314,8 +313,8 @@ class UnraidPoolSensor(UnraidSensorBase, DiskDataHelperMixin):
             component="pool"
         )
 
-        # Get pretty name using naming utility
-        pretty_name = naming.get_entity_name(pool_name, "pool")
+        # Get pretty name with capitalized first letter
+        pretty_name = pool_name.capitalize()
 
         # Initialize base sensor class
         super().__init__(
@@ -339,31 +338,7 @@ class UnraidPoolSensor(UnraidSensorBase, DiskDataHelperMixin):
         """Get appropriate icon based on device type."""
         pool_name = self._pool_name.lower()
         try:
-            # Check for ZFS pools
-            if hasattr(self, 'coordinator') and self.coordinator and self.coordinator.data:
-                # First check in pool_info
-                pool_info = get_pool_info(self.coordinator.data.get("system_stats", {}))
-                if self._pool_name in pool_info:
-                    filesystem = pool_info[self._pool_name].get("filesystem", "").lower()
-                    if filesystem == "zfs":
-                        _LOGGER.debug("Using ZFS icon for pool %s", self._pool_name)
-                        return "mdi:database"
-
-                # Then check in disk mappings
-                disk_mappings = self.coordinator.data.get("disk_mappings", {})
-                if self._pool_name in disk_mappings:
-                    filesystem = disk_mappings[self._pool_name].get("filesystem", "").lower()
-                    if filesystem == "zfs":
-                        _LOGGER.debug("Using ZFS icon for pool %s from mappings", self._pool_name)
-                        return "mdi:database"
-
-                # Check individual_disks as well
-                for disk in self.coordinator.data.get("system_stats", {}).get("individual_disks", []):
-                    if disk.get("name") == self._pool_name:
-                        filesystem = disk.get("filesystem", "").lower()
-                        if filesystem == "zfs":
-                            _LOGGER.debug("Using ZFS icon for pool %s from individual_disks", self._pool_name)
-                            return "mdi:database"
+            # ZFS support removed
 
             # Check for NVMe devices
             if (self._device and "nvme" in self._device.lower()) or "nvme" in pool_name:

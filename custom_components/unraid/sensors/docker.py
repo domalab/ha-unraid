@@ -12,7 +12,7 @@ from homeassistant.const import EntityCategory # type: ignore
 
 from .base import UnraidSensorBase, UnraidDiagnosticMixin
 from .const import DOMAIN
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,13 +84,13 @@ class UnraidDockerContainerSensor(UnraidSensorBase, UnraidDiagnosticMixin):
     def __init__(self, coordinator, container_name: str) -> None:
         """Initialize the sensor."""
         self.container_name = container_name
-        
+
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
             component="docker"
         )
-        
+
         description = UnraidSensorEntityDescription(
             key=f"docker_{container_name.lower()}",
             name=naming.get_entity_name(container_name, "docker"),
@@ -102,7 +102,7 @@ class UnraidDockerContainerSensor(UnraidSensorBase, UnraidDiagnosticMixin):
         super().__init__(coordinator, description)
         UnraidDiagnosticMixin.__init__(self)
         self._attr_has_entity_name = True
-        
+
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{coordinator.entry.entry_id}_docker")},
             "name": f"Unraid Docker ({naming.clean_hostname()})",

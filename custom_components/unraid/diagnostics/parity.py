@@ -26,7 +26,7 @@ from ..const import (
 )
 from ..coordinator import UnraidDataUpdateCoordinator
 from ..helpers import DiskDataHelperMixin, format_bytes
-from ..naming import EntityNaming
+from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,35 +42,35 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         self._parity_info = parity_info
         self._disk_serial = parity_info.get("diskId.0", "")  # Get serial number
         self._device = parity_info.get("rdevName.0", "").strip()
-        
+
         _LOGGER.debug(
             "Initializing parity disk sensor | device: %s | info: %s",
             self._device,
             {k: v for k, v in parity_info.items() if k != "smart_data"}
         )
-        
+
         # Initialize entity naming
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
             component="parity"
         )
-                
+
         description = UnraidBinarySensorEntityDescription(
             key="parity_health",
-            name=f"{naming.get_entity_name('parity', 'parity')} Health",
+            name="Parity Health",
             device_class=BinarySensorDeviceClass.PROBLEM,
             entity_category=EntityCategory.DIAGNOSTIC,
             icon="mdi:harddisk",
             has_warning_threshold=True,
         )
-        
+
         # Initialize parent class
         super().__init__(coordinator, description)
-        
-        # Override device info for parity disk
-        self._attr_name = f"{naming.clean_hostname()} Parity Health"
-        
+
+        # No need to override name anymore
+        # self._attr_name is already set by the parent class
+
         # Initialize state variables
         self._last_state: bool | None = None
         self._problem_attributes: Dict[str, Any] = {}
@@ -79,7 +79,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         self._last_temperature: int | None = None
         self._disk_state = "unknown"
         self._cached_size: int | None = None
-        
+
         # Get spin down delay from config
         self._spin_down_delay = self._get_spin_down_delay()
 
@@ -88,10 +88,10 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         try:
             # Check disk config for parity-specific setting
             disk_cfg = self.coordinator.data.get("disk_config", {})
-            
+
             # Get parity delay (diskSpindownDelay.0)
             delay = disk_cfg.get("diskSpindownDelay.0")
-            
+
             # Handle disk-specific setting if present and not -1
             if delay and delay != "-1":
                 _LOGGER.debug("Using parity-specific spin down delay: %s", delay)
@@ -106,13 +106,13 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             # Use global setting
             global_delay = disk_cfg.get("spindownDelay", "0")
             _LOGGER.debug("Using global spin down delay: %s", global_delay)
-            
+
             # Handle special cases for global delay
             if global_delay in (None, "", "-1"):
                 return SpinDownDelay.NEVER
-                
+
             return SpinDownDelay(int(global_delay))
-            
+
         except (ValueError, TypeError) as err:
             _LOGGER.warning(
                 "Error getting spin down delay for parity disk: %s. Using default Never.",
@@ -134,14 +134,14 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     self._last_temperature = temp
                     return temp
 
-            # Try SMART data if available    
+            # Try SMART data if available
             if self._device:
                 smart_data = self.coordinator.data.get("smart_data", {}).get(self._device, {})
                 if temp := smart_data.get("temperature"):
                     _LOGGER.debug("Got parity temperature %d°C from SMART data", temp)
                     self._last_temperature = temp
                     return temp
-                    
+
             # Return cached temperature if available
             if self._disk_state == "standby" and self._last_temperature is not None:
                 _LOGGER.debug(
@@ -152,7 +152,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
 
             _LOGGER.debug("No temperature data available for parity disk")
             return None
-            
+
         except Exception as err:
             _LOGGER.error("Error getting parity temperature: %s", err)
             return None
@@ -161,7 +161,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         """Analyze SMART status and attributes for actual problems."""
         self._problem_attributes = {}
         previous_state = self._last_state
-        
+
         try:
             _LOGGER.debug(
                 "Starting SMART analysis for parity disk with data: %s",
@@ -186,7 +186,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             smart_data = disk_data.get("smart_data", {})
             if smart_data:
                 _LOGGER.debug("Processing SMART data for parity disk")
-                
+
                 # Check overall SMART status
                 smart_status = smart_data.get("smart_status", True)
                 if not smart_status:
@@ -196,7 +196,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
 
                 # Process SMART attributes
                 attributes = smart_data.get("ata_smart_attributes", {}).get("table", [])
-                
+
                 # Map of critical attributes and their thresholds
                 critical_attrs = {
                     "Reallocated_Sector_Ct": 0,
@@ -207,7 +207,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     "Reported_Uncorrect": 0,
                     "Command_Timeout": 100
                 }
-                
+
                 # Process each attribute
                 for attr in attributes:
                     name = attr.get("name")
@@ -218,14 +218,14 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     if name in critical_attrs:
                         raw_value = attr.get("raw", {}).get("value", 0)
                         threshold = critical_attrs[name]
-                        
+
                         _LOGGER.debug(
                             "Checking parity disk attribute %s: value=%s, threshold=%s",
                             name,
                             raw_value,
                             threshold
                         )
-                        
+
                         if int(raw_value) > threshold:
                             self._problem_attributes[name.lower()] = raw_value
                             has_problem = True
@@ -259,7 +259,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
 
             # Store final state
             self._last_state = has_problem
-            
+
             if has_problem:
                 _LOGGER.warning(
                     "Parity disk has problems: %s",
@@ -267,7 +267,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                 )
             else:
                 _LOGGER.debug("No problems found for parity disk")
-            
+
             return has_problem
 
         except Exception as err:
@@ -367,7 +367,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                         size_bytes = self._cached_size
                     else:
                         size_bytes = int(size) * 512  # Fallback to sector calculation
-                    
+
                     attrs["total_size"] = format_bytes(size_bytes)
                     _LOGGER.debug(
                         "Added disk size for %s: %s (raw sectors: %s)",
@@ -416,8 +416,8 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     if result.exit_status == 0 and result.stdout.strip():
                         self._cached_size = int(result.stdout.strip())
                         _LOGGER.debug(
-                            "Updated cached disk size for %s: %d bytes", 
-                            device_path, 
+                            "Updated cached disk size for %s: %d bytes",
+                            device_path,
                             self._cached_size
                         )
                     else:
@@ -446,7 +446,7 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         """Format temperature string with standby indication."""
         if temp is None:
             return "Unknown"
-            
+
         base_str = f"{temp}°C"
         return f"{base_str} (Standby)" if is_standby else base_str
 
@@ -471,18 +471,16 @@ class UnraidParityCheckSensor(UnraidBinarySensorBase):
             hostname=coordinator.hostname,
             component="parity"
         )
-        
+
         description = UnraidBinarySensorEntityDescription(
             key="parity_check",
-            name=f"{naming.clean_hostname()} Parity Check",
+            name="Parity Check Status",
             device_class=BinarySensorDeviceClass.RUNNING,
             entity_category=EntityCategory.DIAGNOSTIC,
             icon="mdi:harddisk-plus",
         )
-        
+
         super().__init__(coordinator, description)
-        
-        self._attr_name = f"{naming.clean_hostname()} Parity Check Status"
         self._last_state: bool | None = None
 
     @property
@@ -496,7 +494,7 @@ class UnraidParityCheckSensor(UnraidBinarySensorBase):
             # Check if sync action is running
             sync_action = array_state.get("mdResyncAction", "")
             resync_active = int(array_state.get("mdResync", "0")) > 0
-            
+
             return bool(sync_action and sync_action != "IDLE" and resync_active)
 
         except Exception as err:
@@ -508,22 +506,22 @@ class UnraidParityCheckSensor(UnraidBinarySensorBase):
         """Return the state of the sensor."""
         try:
             array_state = self.coordinator.data.get("array_state", {})
-            
+
             # Check if array is started
             if array_state.get("state") != "STARTED":
                 return "Success"  # Default to Success when array not started
-                
+
             # Get sync action and history
             sync_action = array_state.get("mdResyncAction", "")
             history = array_state.get("parity_history", {})
-            
+
             # If sync is running
             if sync_action and sync_action != "IDLE":
                 return "Running"
-                
+
             # Return status from history or default to Success
             return history.get("status", "Success")
-            
+
         except Exception as err:
             _LOGGER.debug("Error determining state: %s", err)
             return "Success"  # Default to Success on error
@@ -539,7 +537,7 @@ class UnraidParityCheckSensor(UnraidBinarySensorBase):
         try:
             array_state = self.coordinator.data.get("array_state", {})
             _LOGGER.debug("Current array state: %s", array_state)
-            
+
             # Start with default attributes
             attrs = DEFAULT_PARITY_ATTRIBUTES.copy()
             attrs["next_check"] = self.coordinator.data.get("next_parity_check", "Unknown")
@@ -547,16 +545,16 @@ class UnraidParityCheckSensor(UnraidBinarySensorBase):
             # Check if sync action is running
             sync_action = array_state.get("mdResyncAction", "")
             resync_active = int(array_state.get("mdResync", "0")) > 0
-            
+
             if sync_action and sync_action != "IDLE" and resync_active:
                 _LOGGER.debug("Found active sync action: %s", sync_action)
-                
+
                 attrs["status"] = "Running" if sync_action == "check P" else sync_action.capitalize()
-                
+
                 self._update_progress(attrs, array_state)
                 self._update_speed(attrs, array_state)
                 attrs["errors"] = int(array_state.get("mdSyncErrs", 0))
-                
+
                 _LOGGER.debug("Current errors: %s", attrs["errors"])
             else:
                 attrs["status"] = "Success"
@@ -610,27 +608,27 @@ class UnraidParityCheckSensor(UnraidBinarySensorBase):
         try:
             if check_date := history.get("date"):
                 parsed_date = datetime.strptime(
-                    check_date, 
+                    check_date,
                     PARITY_HISTORY_DATE_FORMAT
                 ).replace(tzinfo=timezone.utc)
-                
+
                 now = dt_util.now()
                 time_diff = now - parsed_date
-                
+
                 if time_diff.days == 0:
                     attrs["last_check"] = f"Today at {parsed_date.strftime(PARITY_TIME_FORMAT)}"
                 elif time_diff.days == 1:
                     attrs["last_check"] = f"Yesterday at {parsed_date.strftime(PARITY_TIME_FORMAT)}"
                 else:
                     attrs["last_check"] = parsed_date.strftime(PARITY_FULL_DATE_FORMAT)
-                
+
                 _LOGGER.debug("Formatted last check date: %s", attrs["last_check"])
 
             # Add other history details
             attrs["duration"] = history.get("duration", "N/A")
             attrs["last_status"] = history.get("status", "N/A")
             attrs["last_speed"] = history.get("speed", "N/A")
-            
+
             _LOGGER.debug(
                 "Added history details: duration=%s, status=%s, speed=%s",
                 attrs["duration"],
