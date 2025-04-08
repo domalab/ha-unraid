@@ -18,7 +18,7 @@ from homeassistant.util import dt as dt_util # type: ignore
 
 from .const import DOMAIN
 from .coordinator import UnraidDataUpdateCoordinator
-from .helpers import EntityNaming
+from .entity_naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 

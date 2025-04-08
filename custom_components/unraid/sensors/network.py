@@ -21,7 +21,7 @@ from .const import (
 )
 
 from  ..api.network_operations import NetworkRateSmoothingMixin
-from ..helpers import EntityNaming
+from ..entity_naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 

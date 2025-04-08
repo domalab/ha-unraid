@@ -21,7 +21,7 @@ from homeassistant.const import (
 
 from .const import UnraidSensorEntityDescription
 from ..const import DOMAIN
-from ..helpers import EntityNaming
+from ..entity_naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ _LOGGER = logging.getLogger(__name__)
 @dataclass
 class SensorMetadata:
     """Metadata for a sensor."""
-    
+
     key: str
     name: str
     device_class: Optional[SensorDeviceClass] = None
@@ -40,9 +40,9 @@ class SensorMetadata:
     suggested_unit_of_measurement: Optional[str] = None
     suggested_display_precision: Optional[int] = None
     translation_key: Optional[str] = None
-    
+
     def create_description(
-        self, 
+        self,
         value_fn: Callable[[dict[str, Any]], Any],
         available_fn: Optional[Callable[[dict[str, Any]], bool]] = None
     ) -> UnraidSensorEntityDescription:
@@ -248,25 +248,25 @@ def get_sensor_description(
     """Get a sensor description for a sensor type."""
     if sensor_type not in ALL_SENSORS:
         raise ValueError(f"Unknown sensor type: {sensor_type}")
-        
+
     metadata = ALL_SENSORS[sensor_type]
-    
+
     # Determine component from sensor type if not provided
     if component is None:
         component = sensor_type.split('_')[0]
-        
+
     # Create entity naming
     naming = EntityNaming(
         domain=DOMAIN,
         hostname=coordinator_hostname,
         component=component
     )
-    
+
     # Create description with custom name if provided
     description = metadata.create_description(value_fn, available_fn)
-    
+
     # Override name if custom name is provided
     if custom_name:
         description.name = custom_name
-        
+
     return description

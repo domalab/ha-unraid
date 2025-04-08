@@ -12,7 +12,7 @@ from .factory import SensorFactory
 from .const import UnraidSensorEntityDescription
 from .base import UnraidSensorBase
 from ..const import DOMAIN
-from ..helpers import EntityNaming
+from ..entity_naming import EntityNaming
 from .metadata import get_sensor_description
 
 _LOGGER = logging.getLogger(__name__)

@@ -18,7 +18,7 @@ from ..helpers import (
     get_disk_identifiers,
     get_unraid_disk_mapping,
 )
-from ..helpers import EntityNaming
+from ..entity_naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 

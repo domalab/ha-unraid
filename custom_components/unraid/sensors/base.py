@@ -18,7 +18,7 @@ from homeassistant.helpers.entity import DeviceInfo # type: ignore
 
 from ..const import DOMAIN
 from .const import UnraidSensorEntityDescription
-from ..helpers import EntityNaming
+from ..entity_naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
