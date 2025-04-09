@@ -5,6 +5,7 @@
 [![Community Forum](https://img.shields.io/badge/Community-Forum-blue?style=for-the-badge)](https://community.home-assistant.io/t/unraid-integration)
 [![License](https://img.shields.io/github/license/domalab/ha-unraid?style=for-the-badge)](./LICENSE)
 [![Quality Scale](https://img.shields.io/badge/Quality%20Scale-Platinum-blue?style=for-the-badge)](https://developers.home-assistant.io/docs/integration_quality_scale_index)
+[![Documentation](https://img.shields.io/badge/Documentation-GitHub%20Pages-blue?style=for-the-badge)](https://domalab.github.io/ha-unraid/)
 
 This custom integration allows you to monitor and control your Unraid server from Home Assistant. Unraid is a popular NAS (Network Attached Storage) operating system that provides flexible storage, virtualization, and application support.
 
@@ -140,9 +141,20 @@ The integration includes advanced validation during setup:
 - Disable sensors you don't need
 - Ensure your Unraid server has adequate resources
 
+## Documentation
+
+Comprehensive documentation is available on our [GitHub Pages site](https://domalab.github.io/ha-unraid/):
+
+- [Installation Guide](https://domalab.github.io/ha-unraid/installation)
+- [Features Overview](https://domalab.github.io/ha-unraid/features)
+- [Examples and Use Cases](https://domalab.github.io/ha-unraid/examples)
+- [Planned Improvements](https://domalab.github.io/ha-unraid/improvements)
+- [Development Roadmap](https://domalab.github.io/ha-unraid/roadmap)
+- [Troubleshooting Guide](https://domalab.github.io/ha-unraid/troubleshooting)
+
 ## Contributing
 
-Contributions to this integration are welcome. Please fork the repository and submit a pull request with your changes. Make sure to follow the contribution guidelines.
+Contributions to this integration are welcome. Please fork the repository and submit a pull request with your changes. Make sure to follow the contribution guidelines. See our [Contributing Guide](https://domalab.github.io/ha-unraid/contributing) for more details.
 
 ## License
 

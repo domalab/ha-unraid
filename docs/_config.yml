@@ -1,0 +1,28 @@
+title: Home Assistant Unraid Integration
+description: Documentation for the Home Assistant Unraid Integration
+theme: jekyll-theme-cayman
+
+# GitHub Pages settings
+url: "https://domalab.github.io"
+baseurl: "/ha-unraid"
+
+# Navigation
+nav:
+  - title: Home
+    url: /
+  - title: Installation
+    url: /installation
+  - title: Features
+    url: /features
+  - title: Examples
+    url: /examples
+  - title: Improvements
+    url: /improvements
+  - title: Roadmap
+    url: /roadmap
+  - title: Troubleshooting
+    url: /troubleshooting
+  - title: Contributing
+    url: /contributing
+  - title: GitHub
+    url: https://github.com/domalab/ha-unraid
