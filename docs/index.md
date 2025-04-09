@@ -29,7 +29,7 @@ The Home Assistant Unraid Integration allows you to monitor and control your Unr
 
 ## Getting Started
 
-To get started with the Unraid integration, follow our [Installation Guide](user-guide/installation.md) for step-by-step instructions.
+To get started with the Unraid integration, follow the [Installation Guide](user-guide/installation.md) for step-by-step instructions.
 
 ## Support
 
