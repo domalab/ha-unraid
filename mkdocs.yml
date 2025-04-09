@@ -60,7 +60,6 @@ nav:
     - Docker Management: advanced/docker-management.md
     - VM Control: advanced/vm-control.md
   - Development:
-    - Planned Improvements: development/improvements.md
     - Contributing: development/contributing.md
   - Project:
     - Changelog: https://github.com/domalab/ha-unraid/blob/main/CHANGELOG.md
