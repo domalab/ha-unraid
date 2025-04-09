@@ -24,7 +24,6 @@ The Home Assistant Unraid Integration allows you to monitor and control your Unr
 - [User Scripts](advanced/user-scripts.md)
 - [Docker Management](advanced/docker-management.md)
 - [VM Control](advanced/vm-control.md)
-- [Planned Improvements](development/improvements.md)
 - [GitHub Repository](https://github.com/domalab/ha-unraid)
 - [Wiki Documentation](https://github.com/domalab/ha-unraid/wiki)
 
