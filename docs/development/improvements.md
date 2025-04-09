@@ -24,7 +24,7 @@ Based on user feedback and ongoing development, the following improvements are p
   - Significantly reduced SSH log spam
   - Faster data collection
   - Lower resource usage on both Home Assistant and Unraid
-- **Status**: In development
+- **Status**: Completed
 
 ### SSH Key Authentication
 
@@ -43,7 +43,7 @@ Based on user feedback and ongoing development, the following improvements are p
   - More accurate disk health reporting
   - Better early warning for potential disk failures
   - Support for a wider range of disk types
-- **Status**: In development
+- **Status**: Completed
 
 ### NVMe Temperature Parsing
 
@@ -59,15 +59,15 @@ Based on user feedback and ongoing development, the following improvements are p
 - **Benefits**:
   - Prevent errors when querying USB boot drives
   - Proper identification of boot media
-- **Status**: In development
+- **Status**: Completed
 
 ### ZFS Support
 
-- **Description**: Add support for ZFS-based cache pools and arrays
+- **Description**: Add support for ZFS-based cache pools
 - **Benefits**:
   - Accurate usage reporting for ZFS filesystems
   - Support for advanced ZFS features
-- **Status**: In development
+- **Status**: Completed
 
 ## Bug Fixes
 
