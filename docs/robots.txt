@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://ha-unraid.pages.dev/sitemap.xml
