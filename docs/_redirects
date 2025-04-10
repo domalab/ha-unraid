@@ -1,0 +1,14 @@
+# Redirects and rewrites for Cloudflare Pages
+# Ensure trailing slashes
+/content    /content/    301
+/content/*  /content/:splat/    301!
+
+# Redirect old URLs to new structure (add more as needed)
+/installation    /content/getting-started/installation/    301
+/features        /content/features/    301
+/examples        /content/examples/    301
+/troubleshooting /content/troubleshooting/    301
+/contributing    /content/contributing/    301
+
+# Fallbacks
+/*    /index.html   404 

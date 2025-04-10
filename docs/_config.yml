@@ -1,24 +1,45 @@
-title: Home Assistant Unraid Integration
-description: Documentation for the Home Assistant Unraid Integration
-theme: jekyll-theme-cayman
+# Site settings
+title: "Unraid Integration Documentation"
+description: "Documentation for the Unraid integration for Home Assistant"
+baseurl: ""
+url: "https://domalab.github.io/ha-unraid" # Replace with actual CloudFlare Pages domain when available
 
-# GitHub Pages settings
-url: "https://domalab.github.io"
-baseurl: "/ha-unraid"
+# Build settings
+markdown: kramdown
+remote_theme: just-the-docs/just-the-docs
+search_enabled: true
 
-# Navigation
-nav:
-  - title: Home
-    url: /
-  - title: Installation
-    url: /installation
-  - title: Features
-    url: /features
-  - title: Examples
-    url: /examples
-  - title: Troubleshooting
-    url: /troubleshooting
-  - title: Contributing
-    url: /contributing
-  - title: GitHub
-    url: https://github.com/domalab/ha-unraid
+# Theme settings
+color_scheme: light
+heading_anchors: true
+nav_sort: case_sensitive
+
+# Collections
+collections:
+  content:
+    permalink: "/:collection/:path/"
+    output: true
+
+# Just the Docs settings
+aux_links:
+  "GitHub Repository":
+    - "https://github.com/domalab/ha-unraid"
+
+# CloudFlare Pages specific settings
+permalink: pretty
+
+# Plugins
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
+  - jekyll-remote-theme
+
+# Exclude files from processing
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - .sass-cache/
+  - .jekyll-cache/
+  - node_modules/
+  - vendor/

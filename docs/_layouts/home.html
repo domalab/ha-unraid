@@ -1,0 +1,40 @@
+---
+layout: default
+---
+
+<div class="home-content">
+  <header class="home-header">
+    <h1 class="home-title">{{ page.title }}</h1>
+    <p class="home-description">{{ page.description }}</p>
+  </header>
+
+  {{ content }}
+
+  {% if page.show_grid %}
+  <div class="grid-container">
+    {% for item in page.grid_items %}
+    <div class="grid-item">
+      <a href="{{ item.url | relative_url }}">
+        <h3>{{ item.title }}</h3>
+        <p>{{ item.description }}</p>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  
+  {% if page.show_ads %}
+  <div class="ad-container ad-home-middle">
+    <!-- Middle ad placement on home page -->
+    <ins class="adsbygoogle"
+         style="display:block"
+         data-ad-client="ca-pub-7358189775686770"
+         data-ad-slot="5555555555"
+         data-ad-format="auto"
+         data-full-width-responsive="true"></ins>
+    <script>
+         (adsbygoogle = window.adsbygoogle || []).push({});
+    </script>
+  </div>
+  {% endif %}
+</div> 

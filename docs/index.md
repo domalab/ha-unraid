@@ -1,19 +1,63 @@
 ---
-layout: default
-title: Home Assistant Unraid Integration
+layout: home
+title: Unraid Integration for Home Assistant
+description: Monitor and control your Unraid server directly from Home Assistant
+nav_order: 1
+show_grid: true
+show_ads: true
+show_header_ad: true
+show_footer_ad: true
+grid_items:
+  - title: Installation
+    description: Get started with installing the integration
+    url: /content/getting-started/installation
+  - title: Features
+    description: Explore the capabilities and features
+    url: /content/features
+  - title: Docker Management
+    description: Control Docker containers
+    url: /content/advanced/docker-management
+  - title: VM Control
+    description: Manage virtual machines
+    url: /content/advanced/vm-control
+  - title: User Scripts
+    description: Execute and manage user scripts
+    url: /content/advanced/user-scripts
+  - title: Troubleshooting
+    description: Solve common issues
+    url: /content/troubleshooting
 ---
 
-The Home Assistant Unraid Integration allows you to monitor and control your Unraid server directly from Home Assistant. This integration provides comprehensive monitoring and control capabilities for your Unraid server.
+# Unraid Integration for Home Assistant
+
+This custom integration allows you to monitor and control your Unraid server from Home Assistant. Unraid is a popular NAS (Network Attached Storage) operating system that provides flexible storage, virtualization, and application support.
 
 ## Features
 
-- **System Monitoring**: CPU, memory, and disk usage statistics
-- **Temperature Sensors**: Monitor CPU, motherboard, and disk temperatures
-- **Docker Container Management**: Control Docker containers
-- **VM Control**: Manage virtual machines
-- **Command Execution**: Run commands on your Unraid server
-- **User Script Management**: Execute and monitor user scripts
-- **UPS Monitoring**: Track UPS status when available
+- Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
+- Monitor CPU and Motherboard temperature
+- Monitor System Fans
+- Monitor UPS Connected
+- Control Docker containers
+- Control VMs
+- Execute shell commands
+- Buttons for user scripts
+- Manage user scripts
+- Automatic repair flows for common issues
+- Advanced config flow validation
+- Comprehensive diagnostics
+
+## Getting Started
+
+The Unraid Integration is easy to set up and provides immediate value. To get started, visit the [Installation Guide](/content/getting-started/installation) for step-by-step instructions.
+
+## About
+
+This integration was developed to bridge the gap between Home Assistant and Unraid, allowing for seamless monitoring and control of your Unraid server within your home automation environment. It uses SSH to securely communicate with your Unraid server, providing reliable access to system information and controls.
+
+## Project Status
+
+The integration is actively maintained and regularly updated with new features and improvements. It is designed to be robust and reliable, with comprehensive error handling and diagnostics capabilities.
 
 ## Quick Links
 
@@ -26,10 +70,6 @@ The Home Assistant Unraid Integration allows you to monitor and control your Unr
 - [VM Control](advanced/vm-control.md)
 - [GitHub Repository](https://github.com/domalab/ha-unraid)
 - [Wiki Documentation](https://github.com/domalab/ha-unraid/wiki)
-
-## Getting Started
-
-To get started with the Unraid integration, follow the [Installation Guide](user-guide/installation.md) for step-by-step instructions.
 
 ## Support
 

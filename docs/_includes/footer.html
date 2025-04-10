@@ -1,0 +1,42 @@
+<div class="footer-container">
+  {% if page.show_footer_ad %}
+  <div class="ad-container ad-footer">
+    <!-- Footer ad placement -->
+    <ins class="adsbygoogle"
+         style="display:block"
+         data-ad-client="ca-pub-7358189775686770"
+         data-ad-slot="3434343434"
+         data-ad-format="auto"
+         data-full-width-responsive="true"></ins>
+    <script>
+         (adsbygoogle = window.adsbygoogle || []).push({});
+    </script>
+  </div>
+  {% endif %}
+  
+  <div class="footer-content">
+    <div class="footer-links">
+      <div class="footer-link-column">
+        <h4>Documentation</h4>
+        <ul>
+          <li><a href="{{ '/content/getting-started/installation' | relative_url }}">Installation</a></li>
+          <li><a href="{{ '/content/features' | relative_url }}">Features</a></li>
+          <li><a href="{{ '/content/examples' | relative_url }}">Examples</a></li>
+          <li><a href="{{ '/content/troubleshooting' | relative_url }}">Troubleshooting</a></li>
+        </ul>
+      </div>
+      <div class="footer-link-column">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/domalab/ha-unraid" target="_blank">GitHub</a></li>
+          <li><a href="https://community.home-assistant.io/t/unraid-integration" target="_blank">Forum</a></li>
+          <li><a href="{{ '/content/contributing' | relative_url }}">Contributing</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="copyright">© {{ site.time | date: '%Y' }} Unraid Integration for Home Assistant. Released under the Apache License.</p>
+      <p class="disclaimer">This project is not officially associated with or endorsed by UNRAID. UNRAID trademarks belong to UNRAID, and this integration is independently developed.</p>
+    </div>
+  </div>
+</div> 

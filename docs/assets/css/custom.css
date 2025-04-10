@@ -1,0 +1,292 @@
+/* Custom styles for the Unraid Integration docs */
+
+/* Ad containers */
+.ad-container {
+  margin: 2rem 0;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  text-align: center;
+  overflow: hidden;
+  position: relative;
+  min-height: 100px;
+}
+
+.ad-container::before {
+  content: "Advertisement";
+  display: block;
+  text-align: center;
+  font-size: 0.75rem;
+  color: #6c757d;
+  margin-bottom: 0.5rem;
+}
+
+.ad-top {
+  margin-top: 0;
+}
+
+.ad-bottom {
+  margin-bottom: 2rem;
+}
+
+.ad-home-middle {
+  margin: 3rem 0;
+}
+
+.ad-sidebar {
+  margin: 1rem 0;
+}
+
+/* Responsive adjustments for ads */
+@media screen and (max-width: 50rem) {
+  .ad-container {
+    margin: 1rem 0;
+    padding: 0.5rem;
+  }
+  
+  .ad-sidebar {
+    display: none;
+  }
+}
+
+/* Grid layout for home page */
+.grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+
+.grid-item {
+  background-color: white;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  transition: all 0.2s ease;
+}
+
+.grid-item:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 6px 12px rgba(0,0,0,0.1);
+}
+
+.grid-item a {
+  text-decoration: none;
+  color: inherit;
+}
+
+.grid-item h3 {
+  color: #5c5ce0;
+  margin-top: 0;
+  font-size: 1.25rem;
+}
+
+/* Home page styles */
+.home-header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.home-title {
+  font-size: 2.5rem;
+  margin-bottom: 1rem;
+}
+
+.home-description {
+  font-size: 1.25rem;
+  color: #6c757d;
+}
+
+/* Footer styles */
+.footer-container {
+  margin-top: 4rem;
+  border-top: 1px solid #e9ecef;
+  padding-top: 2rem;
+}
+
+.footer-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+
+.footer-link-column {
+  flex: 1;
+  min-width: 150px;
+}
+
+.footer-link-column h4 {
+  font-size: 1rem;
+  margin-bottom: 1rem;
+  color: #5c5ce0;
+}
+
+.footer-link-column ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.footer-link-column ul li {
+  margin-bottom: 0.5rem;
+}
+
+.footer-link-column ul li a {
+  color: #495057;
+  text-decoration: none;
+}
+
+.footer-link-column ul li a:hover {
+  color: #5c5ce0;
+  text-decoration: underline;
+}
+
+.footer-bottom {
+  text-align: center;
+  font-size: 0.875rem;
+  color: #6c757d;
+}
+
+.copyright {
+  margin-bottom: 0.5rem;
+}
+
+.disclaimer {
+  font-size: 0.75rem;
+}
+
+/* API method styling */
+.api-method {
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  border-left: 4px solid #5c5ce0;
+}
+
+.api-method-header {
+  margin-bottom: 1.5rem;
+}
+
+.api-method-name {
+  font-family: monospace;
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: #212529;
+}
+
+.api-method-description {
+  color: #495057;
+}
+
+.api-method-parameters {
+  margin-bottom: 1.5rem;
+}
+
+.api-method-parameters h4 {
+  margin-bottom: 1rem;
+  font-size: 1rem;
+}
+
+.api-method-parameter {
+  padding: 0.75rem;
+  background-color: #fff;
+  border-radius: 4px;
+  margin-bottom: 0.75rem;
+  border: 1px solid #e9ecef;
+}
+
+.api-method-parameter-name {
+  font-family: monospace;
+  font-weight: 600;
+  color: #5c5ce0;
+}
+
+.api-method-parameter-type {
+  font-family: monospace;
+  color: #6c757d;
+  font-size: 0.875rem;
+}
+
+.api-method-parameter-description {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.api-method-returns {
+  margin-bottom: 1.5rem;
+}
+
+.api-method-returns h4 {
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+.api-method-example {
+  background-color: #272822;
+  color: #f8f8f2;
+  padding: 1rem;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.api-method-example pre {
+  margin: 0;
+}
+
+/* Code blocks */
+pre {
+  background-color: #272822;
+  color: #f8f8f2;
+  padding: 1rem;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+/* Table of contents */
+.table-of-contents {
+  background-color: #f8f9fa;
+  padding: 1rem 1.5rem;
+  border-radius: 4px;
+  margin-bottom: 2rem;
+}
+
+.table-of-contents h2 {
+  font-size: 1.25rem;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.table-of-contents ul {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+.table-of-contents ul ul {
+  padding-left: 1.5rem;
+}
+
+.table-of-contents li {
+  margin-bottom: 0.5rem;
+}
+
+.table-of-contents a {
+  color: #495057;
+  text-decoration: none;
+}
+
+.table-of-contents a:hover {
+  color: #5c5ce0;
+  text-decoration: underline;
+} 
