@@ -6,3 +6,4 @@
 [build.environment]
   RUBY_VERSION = "3.3.0"
   JEKYLL_ENV = "production"
+  SKIP_PYTHON_DEPENDENCIES = "true"
