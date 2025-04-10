@@ -1,8 +1,8 @@
 # Cloudflare Pages configuration
 [build]
-  command = "cd docs && ./cloudflare-build.sh"
+  command = "cd docs && bundle install && bundle exec jekyll build"
   publish = "docs/_site"
 
 [build.environment]
   RUBY_VERSION = "3.3.0"
-  SKIP_PYTHON_DEPENDENCIES = "true"
+  JEKYLL_ENV = "production"
