@@ -7,7 +7,6 @@ url: "https://ha-unraid.pages.dev" # CloudFlare Pages domain
 # Build settings
 markdown: kramdown
 remote_theme: just-the-docs/just-the-docs
-search_enabled: true
 
 # Theme settings
 color_scheme: light
@@ -24,6 +23,11 @@ collections:
 aux_links:
   "GitHub Repository":
     - "https://github.com/domalab/ha-unraid"
+aux_links_new_tab: true
+
+# Search settings
+search_enabled: true
+search_tokenizer_separator: /[\s/]+/
 
 # CloudFlare Pages specific settings
 permalink: pretty
