@@ -1,0 +1,13 @@
+# Python files
+*.py
+*.pyc
+__pycache__/
+.venv/
+requirements.txt
+
+# Git files
+.git/
+.github/
+
+# Other files
+.DS_Store

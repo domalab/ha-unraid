@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "name": "jekyll-docs-site",
+  "version": "1.0.0",
+  "description": "Jekyll documentation site for ha-unraid",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"No tests specified\""
+  },
+  "author": "Ruaan Deysel",
+  "license": "MIT"
+}
