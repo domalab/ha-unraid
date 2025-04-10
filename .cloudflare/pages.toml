@@ -1,6 +1,6 @@
 # Cloudflare Pages configuration
 [build]
-  command = "chmod +x ./cloudflare-build.sh && ./cloudflare-build.sh"
+  command = "cd docs && bundle install && bundle exec jekyll build"
   publish = "docs/_site"
 
 [build.environment]
