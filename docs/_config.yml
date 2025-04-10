@@ -24,6 +24,7 @@ collections:
 aux_links:
   "GitHub Repository":
     - "https://github.com/domalab/ha-unraid"
+aux_links_new_tab: true
 
 # Google AdSense
 google_adsense_id: "ca-pub-7358189775686770"

@@ -33,22 +33,6 @@
   margin: 3rem 0;
 }
 
-.ad-sidebar {
-  margin: 1rem 0;
-}
-
-/* Responsive adjustments for ads */
-@media screen and (max-width: 50rem) {
-  .ad-container {
-    margin: 1rem 0;
-    padding: 0.5rem;
-  }
-  
-  .ad-sidebar {
-    display: none;
-  }
-}
-
 /* Grid layout for home page */
 .grid-container {
   display: grid;
@@ -108,43 +92,21 @@
 .footer-content {
   display: flex;
   flex-direction: column;
+  align-items: center;
 }
 
 .footer-links {
   display: flex;
-  flex-wrap: wrap;
   gap: 2rem;
   margin-bottom: 2rem;
 }
 
-.footer-link-column {
-  flex: 1;
-  min-width: 150px;
-}
-
-.footer-link-column h4 {
-  font-size: 1rem;
-  margin-bottom: 1rem;
+.footer-links a {
   color: #5c5ce0;
-}
-
-.footer-link-column ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.footer-link-column ul li {
-  margin-bottom: 0.5rem;
-}
-
-.footer-link-column ul li a {
-  color: #495057;
   text-decoration: none;
 }
 
-.footer-link-column ul li a:hover {
-  color: #5c5ce0;
+.footer-links a:hover {
   text-decoration: underline;
 }
 
@@ -160,85 +122,6 @@
 
 .disclaimer {
   font-size: 0.75rem;
-}
-
-/* API method styling */
-.api-method {
-  background-color: #f8f9fa;
-  border-radius: 6px;
-  padding: 1.5rem;
-  margin-bottom: 2rem;
-  border-left: 4px solid #5c5ce0;
-}
-
-.api-method-header {
-  margin-bottom: 1.5rem;
-}
-
-.api-method-name {
-  font-family: monospace;
-  font-size: 1.25rem;
-  margin-bottom: 0.5rem;
-  color: #212529;
-}
-
-.api-method-description {
-  color: #495057;
-}
-
-.api-method-parameters {
-  margin-bottom: 1.5rem;
-}
-
-.api-method-parameters h4 {
-  margin-bottom: 1rem;
-  font-size: 1rem;
-}
-
-.api-method-parameter {
-  padding: 0.75rem;
-  background-color: #fff;
-  border-radius: 4px;
-  margin-bottom: 0.75rem;
-  border: 1px solid #e9ecef;
-}
-
-.api-method-parameter-name {
-  font-family: monospace;
-  font-weight: 600;
-  color: #5c5ce0;
-}
-
-.api-method-parameter-type {
-  font-family: monospace;
-  color: #6c757d;
-  font-size: 0.875rem;
-}
-
-.api-method-parameter-description {
-  margin-top: 0.5rem;
-  font-size: 0.875rem;
-}
-
-.api-method-returns {
-  margin-bottom: 1.5rem;
-}
-
-.api-method-returns h4 {
-  margin-bottom: 0.5rem;
-  font-size: 1rem;
-}
-
-.api-method-example {
-  background-color: #272822;
-  color: #f8f8f2;
-  padding: 1rem;
-  border-radius: 4px;
-  overflow-x: auto;
-}
-
-.api-method-example pre {
-  margin: 0;
 }
 
 /* Code blocks */
@@ -289,4 +172,4 @@ code {
 .table-of-contents a:hover {
   color: #5c5ce0;
   text-decoration: underline;
-} 
+}

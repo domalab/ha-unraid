@@ -21,11 +21,12 @@
             </div>
           </div>
           <div class="main-content">
+            {% if site.google_adsense_id and page.show_ads != false %}
             <div class="ad-container ad-top">
               <!-- Top ad placement -->
               <ins class="adsbygoogle"
                    style="display:block"
-                   data-ad-client="ca-pub-7358189775686770"
+                   data-ad-client="{{ site.google_adsense_id }}"
                    data-ad-slot="1234567890"
                    data-ad-format="auto"
                    data-full-width-responsive="true"></ins>
@@ -33,14 +34,16 @@
                    (adsbygoogle = window.adsbygoogle || []).push({});
               </script>
             </div>
-            
+            {% endif %}
+
             {{ content }}
-            
+
+            {% if site.google_adsense_id and page.show_ads != false %}
             <div class="ad-container ad-bottom">
               <!-- Bottom ad placement -->
               <ins class="adsbygoogle"
                    style="display:block"
-                   data-ad-client="ca-pub-7358189775686770"
+                   data-ad-client="{{ site.google_adsense_id }}"
                    data-ad-slot="9876543210"
                    data-ad-format="auto"
                    data-full-width-responsive="true"></ins>
@@ -48,6 +51,7 @@
                    (adsbygoogle = window.adsbygoogle || []).push({});
               </script>
             </div>
+            {% endif %}
           </div>
 
           {% include footer.html %}
