@@ -2,7 +2,7 @@
 title: "Unraid Integration Documentation"
 description: "Documentation for the Unraid integration for Home Assistant"
 baseurl: ""
-url: "https://domalab.github.io/ha-unraid" # Replace with actual CloudFlare Pages domain when available
+url: "https://ha-unraid.pages.dev" # CloudFlare Pages domain
 
 # Build settings
 markdown: kramdown

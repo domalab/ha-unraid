@@ -3,12 +3,14 @@
 /content    /content/    301
 /content/*  /content/:splat/    301!
 
-# Redirect old URLs to new structure (add more as needed)
-/installation    /content/getting-started/installation/    301
-/features        /content/features/    301
-/examples        /content/examples/    301
-/troubleshooting /content/troubleshooting/    301
-/contributing    /content/contributing/    301
+# Redirect old GitHub Pages URLs to new structure
+/installation    /user-guide/installation/    301
+/features        /user-guide/features/    301
+/examples        /advanced/examples/    301
+/troubleshooting /user-guide/troubleshooting/    301
+/contributing    /development/contributing/    301
+/roadmap         /                             301
+/improvements    /                             301
 
 # Fallbacks
-/*    /index.html   404 
+/*    /index.html   404
