@@ -1,6 +1,6 @@
 # Cloudflare Pages configuration
 [build]
-  command = "./cloudflare-build.sh"
+  command = "chmod +x ./cloudflare-build.sh && ./cloudflare-build.sh"
   publish = "docs/_site"
 
 [build.environment]

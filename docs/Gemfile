@@ -3,7 +3,7 @@ source "https://rubygems.org"
 # Specify Ruby version compatibility
 ruby ">= 3.0.0"
 
-gem "jekyll", "~> 4.3.2"
+gem "jekyll", "~> 4.3.4"
 gem "webrick", "~> 1.8" # Required for Ruby 3+
 
 # Theme
@@ -24,4 +24,4 @@ platforms :mingw, :x64_mingw, :mswin, :jruby do
 end
 
 # Performance-booster for watching directories on Windows
-gem "wdm", "~> 0.1.1", :platforms => [:mingw, :x64_mingw, :mswin] 
+gem "wdm", "~> 0.1.1", :platforms => [:mingw, :x64_mingw, :mswin]

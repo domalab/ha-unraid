@@ -1,7 +1,4 @@
-aiofiles>=23.2.1
-asyncssh
 flake8>=6.0.0
 pylint>=2.15.0
 mypy>=1.0.0
 voluptuous>=0.13.1
-types-aiofiles>=23.2.0
