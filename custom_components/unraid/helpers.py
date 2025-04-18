@@ -1,45 +1,24 @@
 """Helper utilities for Unraid integration."""
 from __future__ import annotations
 
-from collections import defaultdict
-import datetime
 import logging
 import re
-import math
 from dataclasses import dataclass, field
-from typing import Set, Tuple, Dict, Optional, Pattern, List, Any
+from typing import Tuple, Dict, Optional, Pattern, List, Any
 from homeassistant.util import dt as dt_util # type: ignore
 from enum import Enum
 
-# Import EntityNaming from the new module
-from .entity_naming import EntityNaming
+from .utils import format_bytes
+
+# Import EntityNaming from the new module was removed
+# from .entity_naming import EntityNaming
 
 # Removed unused import: from .api.disk_mapper import DiskMapper, DiskIdentifier
 
-from .sensors.const import (
-    CHIPSET_FAN_PATTERNS,
-    CPU_CORE_PATTERN,
-    CPU_PECI_PATTERN,
-    CPU_TCCD_PATTERN,
-    DEFAULT_FAN_PATTERNS,
-    DEFAULT_RPM_KEYS,
-    FAN_NUMBER_PATTERNS,
-    MB_ACPI_PATTERN,
-    MB_AUXTIN_PATTERN,
-    MB_EC_PATTERN,
-    MB_SYSTEM_PATTERN,
-    MIN_VALID_RPM,
-    MAX_VALID_RPM,
-    CPU_KEYWORDS,
-    MB_KEYWORDS,
-    VALID_CPU_TEMP_RANGE,
-    VALID_MB_TEMP_RANGE,
-    KNOWN_SENSOR_CHIPS,
-)
+# Temperature-related imports moved to utils.py to avoid circular imports
 
 _LOGGER = logging.getLogger(__name__)
 
-# Keep existing NetworkSpeedUnit class and related functions
 @dataclass
 class NetworkSpeedUnit:
     """Network unit representation."""
@@ -101,38 +80,14 @@ def get_memory_info(system_stats: Dict[str, Any]) -> Dict[str, Any]:
 
     return result
 
-def get_network_speed_unit(bytes_per_sec: float) -> Tuple[float, str]:
-    """Get the most appropriate unit for a given network speed."""
-    if bytes_per_sec <= 0:
-        return (0.0, NETWORK_UNITS[0].symbol)
+# These functions have been moved to utils.py to avoid circular imports
+# def get_network_speed_unit(bytes_per_sec: float) -> Tuple[float, str]:
+#     """Get the most appropriate unit for a given network speed."""
+#     ...
 
-    # Convert bytes to bits
-    bits_per_sec = bytes_per_sec * 8
-
-    # Find the appropriate unit
-    unit_index = min(
-        len(NETWORK_UNITS) - 1,
-        max(0, math.floor(math.log10(bits_per_sec) / 3))
-    )
-
-    selected_unit = NETWORK_UNITS[unit_index]
-    converted_value = bits_per_sec / selected_unit.multiplier
-
-    return (round(converted_value, 2), selected_unit.symbol)
-
-def format_bytes(bytes_value: float) -> str:
-    """Format bytes into appropriate units."""
-    if bytes_value <= 0:
-        return "0 B"
-
-    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-    unit_index = min(
-        len(units) - 1,
-        max(0, math.floor(math.log10(bytes_value) / 3))
-    )
-
-    value = bytes_value / (1024 ** unit_index)
-    return f"{value:.2f} {units[unit_index]}"
+# def format_bytes(bytes_value: float) -> str:
+#     """Format bytes into appropriate units."""
+#     ...
 
 # Updated disk and pool mapping code
 DISK_NUMBER_PATTERN: Pattern = re.compile(r'disk(\d+)$')
@@ -415,99 +370,7 @@ def get_disk_identifiers(coordinator_data: dict, disk_name: str) -> Tuple[Option
 # - process_cache_disk
 # - process_array_disk
 
-def get_unraid_disk_mapping(system_stats: dict) -> Dict[str, Dict[str, Any]]:
-    """Get mapping between Unraid disk names, devices, and serial numbers.
-
-    Note: This function should eventually be migrated to use the DiskMapper class
-    in api/disk_mapper.py, which provides more comprehensive disk mapping functionality.
-    """
-    mapping: Dict[str, Dict[str, Any]] = {}
-
-    # Check for disk data
-    individual_disks = system_stats.get("individual_disks", [])
-    if not individual_disks:
-        _LOGGER.debug("No disk information found in system stats")
-        return mapping
-
-    try:
-        # Ignore special directories and tmpfs
-        ignored_mounts = {
-            "disks", "remotes", "addons", "rootshare",
-            "user/0", "dev/shm"
-        }
-
-        # Filter out disks we want to ignore
-        valid_disks = [
-            disk for disk in individual_disks
-            if (
-                disk.get("name")
-                and not any(mount in disk.get("mount_point", "") for mount in ignored_mounts)
-                and disk.get("filesystem") != "tmpfs"  # Explicitly ignore tmpfs
-            )
-        ]
-
-        # First, handle array disks (disk1, disk2, etc.)
-        base_device = 'b'  # Start at sdb
-        array_disks = sorted(
-            [disk for disk in valid_disks if disk.get("name", "").startswith("disk")],
-            key=lambda x: int(x["name"].replace("disk", ""))
-        )
-
-        # Map array disks
-        for disk in array_disks:
-            disk_name = disk.get("name")
-            if disk_name:
-                device = f"sd{base_device}"
-                mapping[disk_name] = {
-                    "device": device,
-                    "serial": disk.get("serial", ""),
-                    "name": disk_name
-                }
-                _LOGGER.debug(
-                    "Mapped array disk %s to device %s (serial: %s)",
-                    disk_name,
-                    device,
-                    disk.get("serial", "unknown")
-                )
-                base_device = chr(ord(base_device) + 1)
-
-        # Handle parity disk
-        for disk in valid_disks:
-            if disk.get("name") == "parity":
-                device = disk.get("device")
-                if device:
-                    mapping["parity"] = {
-                        "device": device,
-                        "serial": disk.get("serial", ""),
-                        "name": "parity"
-                    }
-                    _LOGGER.debug(
-                        "Mapped parity disk to device %s (serial: %s)",
-                        device,
-                        disk.get("serial", "unknown")
-                    )
-
-        # Then handle cache disk if present
-        for disk in valid_disks:
-            if disk.get("name") == "cache":
-                device = disk.get("device")
-                if device:
-                    mapping["cache"] = {
-                        "device": device,
-                        "serial": disk.get("serial", ""),
-                        "name": "cache"
-                    }
-                    _LOGGER.debug(
-                        "Mapped cache disk to device %s (serial: %s)",
-                        device,
-                        disk.get("serial", "unknown")
-                    )
-
-        return mapping
-
-    except (KeyError, ValueError, AttributeError) as err:
-        _LOGGER.debug("Error creating disk mapping: %s", err)
-        return mapping
+# get_unraid_disk_mapping function has been moved to api/disk_mapping.py to avoid circular imports
 
 def get_pool_info(system_stats: dict) -> Dict[str, Dict[str, Any]]:
     """Get detailed information about all storage pools."""
@@ -528,180 +391,7 @@ def get_pool_info(system_stats: dict) -> Dict[str, Dict[str, Any]]:
 
     return pool_info
 
-def extract_fans_data(sensors_data: Dict[str, Dict[str, str]]) -> Dict[str, Any]:
-    """Extract fan RPM data from sensors output."""
-    fan_data = {}
-
-    try:
-        # Log available sensor data for debugging
-        _LOGGER.debug(
-            "Processing sensor data for fan extraction: %d devices",
-            len(sensors_data)
-        )
-
-        for device, readings in sensors_data.items():
-            if not isinstance(readings, dict):
-                continue
-
-            # Identify chipset with more detailed logging
-            chipset = None
-            chipset_pattern = None
-            device_lower = device.lower()
-
-            for chip_key in CHIPSET_FAN_PATTERNS:
-                if chip_key in device_lower:
-                    chipset = chip_key
-                    chipset_pattern = CHIPSET_FAN_PATTERNS[chip_key]
-                    _LOGGER.debug(
-                        "Matched chipset %s for device %s",
-                        chipset,
-                        device
-                    )
-                    break
-
-            # Use chipset-specific or default patterns
-            patterns = (chipset_pattern.patterns if chipset_pattern
-                    else DEFAULT_FAN_PATTERNS)
-            rpm_keys = (chipset_pattern.rpm_keys if chipset_pattern
-                    else DEFAULT_RPM_KEYS)
-
-            # Look for fan readings with better pattern matching
-            for key, value in readings.items():
-                key_lower = key.lower()
-
-                # Improve pattern matching to be more inclusive
-                pattern_matched = False
-                matched_pattern = None
-
-                for pattern in patterns:
-                    if pattern in key_lower:
-                        pattern_matched = True
-                        matched_pattern = pattern
-                        break
-
-                # Special case for system_fan which might be missed
-                if not pattern_matched and ("fan" in key_lower or "cooling" in key_lower):
-                    pattern_matched = True
-                    matched_pattern = "fan"
-
-                if pattern_matched:
-                    try:
-                        # Extract fan number with more flexible matching
-                        fan_num = "1"  # Default
-                        for pattern in FAN_NUMBER_PATTERNS:
-                            if match := re.search(pattern, key_lower):
-                                fan_num = match.group(1)
-                                break
-
-                        # If no number found in key, try to extract from device name
-                        if fan_num == "1" and "fan" in device_lower:
-                            for pattern in FAN_NUMBER_PATTERNS:
-                                if match := re.search(pattern, device_lower):
-                                    fan_num = match.group(1)
-                                    break
-
-                        # Get RPM value with improved parsing
-                        rpm_val = None
-                        if isinstance(value, dict):
-                            # Try all possible rpm keys
-                            for rpm_key in rpm_keys:
-                                formatted_key = rpm_key.format(fan_num)
-                                if formatted_key in value:
-                                    try:
-                                        rpm_val = float(value[formatted_key])
-                                        break
-                                    except (ValueError, TypeError):
-                                        continue
-                                elif rpm_key in value:
-                                    try:
-                                        rpm_val = float(value[rpm_key])
-                                        break
-                                    except (ValueError, TypeError):
-                                        continue
-                        else:
-                            # Handle string representations with better cleanup
-                            rpm_str = str(value).upper()
-                            rpm_str = rpm_str.replace("RPM", "").strip()
-                            # Remove any non-numeric characters except decimal point
-                            rpm_str = re.sub(r'[^0-9.]', '', rpm_str)
-                            if rpm_str:
-                                try:
-                                    rpm_val = float(rpm_str)
-                                except (ValueError, TypeError):
-                                    rpm_val = None
-
-                        if (rpm_val is not None and
-                            MIN_VALID_RPM <= rpm_val <= MAX_VALID_RPM):
-
-                            # Create a unique, sanitized base name
-                            # Include the matched pattern for better identification
-                            base_name = f"{device}_{matched_pattern}_{fan_num}".replace(" ", "_")
-                            base_name = re.sub(r'[^a-z0-9_]', '_', base_name.lower())
-                            base_name = re.sub(r'_+', '_', base_name).strip('_')
-
-                            # Create a more user-friendly display name
-                            if "cpu" in key_lower or "processor" in key_lower:
-                                display_name = f"CPU Fan {fan_num}"
-                            elif "system" in key_lower or "sys" in key_lower:
-                                display_name = f"System Fan {fan_num}"
-                            elif "chassis" in key_lower:
-                                display_name = f"Chassis Fan {fan_num}"
-                            elif "power" in key_lower or "psu" in key_lower:
-                                display_name = f"Power Supply Fan {fan_num}"
-                            elif chipset:
-                                display_name = f"{chipset.upper()} Fan {fan_num}"
-                            else:
-                                display_name = f"Fan {fan_num}"
-
-                            fan_data[base_name] = {
-                                "rpm": int(rpm_val),
-                                "label": display_name,
-                                "device": device,
-                                "chipset": chipset or "unknown",
-                                "channel": int(fan_num),
-                                "sensor_key": key  # Store original key for debugging
-                            }
-
-                            _LOGGER.debug(
-                                "Added %s fan: %s with %d RPM (from %s.%s)",
-                                chipset or "generic",
-                                display_name,
-                                int(rpm_val),
-                                device,
-                                key
-                            )
-
-                    except (ValueError, TypeError, KeyError) as err:
-                        _LOGGER.debug(
-                            "Error parsing fan for device %s, key %s: %s - %s",
-                            device,
-                            key,
-                            value,
-                            err
-                        )
-                        continue
-
-        # Logging detailed summary
-        if fan_data:
-            chipsets = set(f["chipset"] for f in fan_data.values())
-            _LOGGER.debug(
-                "Found %d fans across %d chipsets: %s",
-                len(fan_data),
-                len(chipsets),
-                ", ".join(sorted(chipsets))
-            )
-
-            # Log fan names for easier troubleshooting
-            fan_names = sorted(f["label"] for f in fan_data.values())
-            _LOGGER.debug("Detected fans: %s", ", ".join(fan_names))
-        else:
-            _LOGGER.warning("No fans detected in sensors data")
-
-        return fan_data
-
-    except Exception as err:
-        _LOGGER.error("Error extracting fan data: %s", err, exc_info=True)
-        return {}
+# extract_fans_data function has been moved to utils.py to avoid circular imports
 
 def is_solid_state_drive(disk_data: dict) -> bool:
     """Determine if a disk is a solid state drive (NVME or SSD)."""
@@ -737,230 +427,7 @@ def is_solid_state_drive(disk_data: dict) -> bool:
         )
         return False
 
-@dataclass(frozen=True)
-class TempReading:
-    """Temperature reading with metadata."""
-    value: float
-    source: str
-    chip: str
-    label: str
-    last_update: datetime = field(default_factory=datetime.datetime.now)  # set default before its frozen
-    is_valid: bool = True
-
-def is_valid_temp_range(temp: float, is_cpu: bool = True) -> bool:
-    """Check if temperature is within valid range."""
-    if not isinstance(temp, (int, float)):
-        return False
-
-    valid_range = VALID_CPU_TEMP_RANGE if is_cpu else VALID_MB_TEMP_RANGE
-    return valid_range[0] <= temp <= valid_range[1]
-
-def parse_temperature(value: str) -> Optional[float]:
-    """Parse temperature value from string with comprehensive validation."""
-    try:
-        # Remove common temperature markers
-        cleaned = value.replace('°C', '').replace(' C', '').replace('+', '').strip()
-
-        # Convert to float and validate
-        if cleaned and not cleaned.isspace():
-            temp = float(cleaned)
-            return temp if -50 <= temp <= 150 else None
-
-    except (ValueError, TypeError) as err:
-        _LOGGER.debug("Error parsing temperature value '%s': %s", value, err)
-
-    return None
-
-def categorize_sensor(label: str, chip: str, overrides: Optional[Dict[str, str]] = None) -> Optional[str]:
-    """Categorize a sensor as 'cpu' or 'mb' based on label and chip name."""
-    if not label or not isinstance(label, str):
-        return None
-
-    # Check overrides first
-    if overrides and label in overrides:
-        override = overrides[label].lower()
-        if override in ('cpu', 'mb'):
-            return override
-        if override == 'ignore':
-            return None
-
-    # Convert to lowercase for matching
-    label_lower = label.lower()
-    chip_lower = chip.lower() if chip else ""
-
-    # Check if it's a known sensor chip
-    for chip_prefix, valid_labels in KNOWN_SENSOR_CHIPS.items():  # Changed from KNOWN_GOOD_CHIPS
-        if chip_lower.startswith(chip_prefix.lower()):
-            if any(valid.lower() in label_lower for valid in valid_labels):
-                return 'cpu' if any(cpu_key in label_lower for cpu_key in CPU_KEYWORDS) else 'mb'
-
-    # Check dynamic patterns
-    if (CPU_CORE_PATTERN.match(label) or
-        CPU_TCCD_PATTERN.match(label) or
-        CPU_PECI_PATTERN.match(label)):
-        return 'cpu'
-
-    if (MB_SYSTEM_PATTERN.match(label) or
-        MB_EC_PATTERN.match(label) or
-        MB_ACPI_PATTERN.match(label)):
-        return 'mb'
-
-    # Skip known problematic sensors
-    if MB_AUXTIN_PATTERN.match(label):
-        _LOGGER.debug("Skipping known problematic AUXTIN sensor: %s", label)
-        return None
-
-    # Check keywords
-    if any(keyword in label_lower or keyword in chip_lower
-        for keyword in CPU_KEYWORDS):
-        return 'cpu'
-    if any(keyword in label_lower or keyword in chip_lower
-        for keyword in MB_KEYWORDS):
-        return 'mb'
-
-    # Log unmatched sensor for debugging
-    _LOGGER.debug(
-        "Unmatched sensor - Label: '%s', Chip: '%s'",
-        label,
-        chip
-    )
-    return None
-
-def find_temperature_inputs(
-    sensors_data: Dict[str, Any],
-    overrides: Optional[Dict[str, str]] = None
-) -> Dict[str, Set[TempReading]]:
-    """Find all valid temperature inputs in sensors data."""
-    temps: Dict[str, Set[TempReading]] = defaultdict(set)
-
-    try:
-        for chip, readings in sensors_data.items():
-            if not isinstance(readings, dict):
-                continue
-
-            for label, values in readings.items():
-                # Handle both nested dict and direct value cases
-                if isinstance(values, dict):
-                    for key, value in values.items():
-                        if 'temp' in key.lower() and 'input' in key.lower():
-                            temp = parse_temperature(str(value))
-                            if temp is not None:
-                                category = categorize_sensor(label, chip, overrides)
-                                if category:
-                                    is_valid = is_valid_temp_range(
-                                        temp,
-                                        is_cpu=(category == 'cpu')
-                                    )
-                                    temps[category].add(TempReading(
-                                        value=temp,
-                                        source=key,
-                                        chip=chip,
-                                        label=label,
-                                        is_valid=is_valid
-                                    ))
-                elif 'temp' in label.lower():
-                    temp = parse_temperature(str(values))
-                    if temp is not None:
-                        category = categorize_sensor(label, chip, overrides)
-                        if category:
-                            is_valid = is_valid_temp_range(
-                                temp,
-                                is_cpu=(category == 'cpu')
-                            )
-                            temps[category].add(TempReading(
-                                value=temp,
-                                source='direct',
-                                chip=chip,
-                                label=label,
-                                is_valid=is_valid
-                            ))
-
-        return dict(temps)
-
-    except Exception as err:
-        _LOGGER.error(
-            "Error finding temperature inputs: %s",
-            err,
-            exc_info=True
-        )
-        return {}
-
-def get_temp_input(sensor_label: str) -> Optional[str]:
-    """Map sensor labels to temperature input files.
-
-    This consolidated function replaces multiple individual mapping functions
-    by handling all sensor types in a single function with pattern matching.
-
-    Args:
-        sensor_label: The sensor label to map
-
-    Returns:
-        The corresponding temperature input file name or None if no match
-    """
-    # CPU Core temperature mapping
-    if match := CPU_CORE_PATTERN.match(sensor_label):
-        core_index = int(match.group(1))
-        return f"temp{core_index + 2}_input"  # Core 0 -> temp2_input, etc.
-
-    # AMD CCD temperature mapping
-    elif match := CPU_TCCD_PATTERN.match(sensor_label):
-        ccd_index = int(match.group(1))
-        return f"temp{ccd_index + 3}_input"  # Tccd1 -> temp4_input, etc.
-
-    # PECI agent temperature mapping
-    elif match := CPU_PECI_PATTERN.match(sensor_label):
-        peci_index = int(match.group(1))
-        return f"temp{peci_index + 7}_input"  # PECI Agent 0 -> temp7_input
-
-    # System temperature mapping
-    elif match := MB_SYSTEM_PATTERN.match(sensor_label):
-        sys_index = int(match.group(1))
-        return f"temp{sys_index + 1}_input"  # System 1 -> temp2_input, etc.
-
-    # EC temperature mapping
-    elif match := MB_EC_PATTERN.match(sensor_label):
-        ec_index = int(match.group(1))
-        return f"temp{ec_index}_input"  # EC_TEMP1 -> temp1_input, etc.
-
-    # AUXTIN temperature mapping
-    elif match := MB_AUXTIN_PATTERN.match(sensor_label):
-        aux_index = int(match.group(1))
-        return f"temp{aux_index + 3}_input"  # AUXTIN0 -> temp3_input, etc.
-
-    # ACPI temperature mapping
-    elif MB_ACPI_PATTERN.match(sensor_label):
-        return "temp1_input"  # acpitz-acpi-0 -> temp1_input
-
-    return None
-
-# Legacy functions for backward compatibility
-def get_core_temp_input(sensor_label: str) -> Optional[str]:
-    """Map CPU core labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_tccd_temp_input(sensor_label: str) -> Optional[str]:
-    """Map AMD CCD temperature labels to input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_peci_temp_input(sensor_label: str) -> Optional[str]:
-    """Map PECI agent labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_system_temp_input(sensor_label: str) -> Optional[str]:
-    """Map System N labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_ec_temp_input(sensor_label: str) -> Optional[str]:
-    """Map EC_TEMP[N] labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_auxtin_temp_input(sensor_label: str) -> Optional[str]:
-    """Map AUXTIN[N] labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_acpi_temp_input(sensor_label: str) -> Optional[str]:
-    """Map ACPI temperature labels to input files (legacy function)."""
-    return get_temp_input(sensor_label)
+# Temperature-related functions have been moved to utils.py to avoid circular imports
 
 class DiskDataHelperMixin:
     """Mixin providing common disk data handling methods."""

@@ -13,7 +13,7 @@ import asyncssh # type: ignore
 
 from .network_operations import NetworkOperationsMixin
 from .error_handling import with_error_handling, safe_parse
-from ..helpers import format_bytes, extract_fans_data
+from ..utils import format_bytes, extract_fans_data
 from ..const import (
     TEMP_WARN_THRESHOLD,
     TEMP_CRIT_THRESHOLD,

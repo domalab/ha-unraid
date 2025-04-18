@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import asyncio
 from typing import Optional
 
 import asyncssh # type: ignore
@@ -31,7 +30,7 @@ class UnraidAPI(
 
     def __init__(self, host: str, username: str, password: str, port: int = 22) -> None:
         """Initialize the Unraid API client."""
-        
+
         # Initialize Network Operations
         NetworkOperationsMixin.__init__(self)
 
@@ -51,7 +50,7 @@ class UnraidAPI(
         self.username = username
         self.password = password
         self.port = port
-        
+
         # Use ConnectionManager instead of direct connection
         self.connection_manager = ConnectionManager()
         self.connect_timeout = 30
@@ -77,7 +76,7 @@ class UnraidAPI(
     ) -> asyncssh.SSHCompletedProcess:
         """Execute a command on the Unraid server using the connection pool."""
         await self.ensure_connection()
-        
+
         if timeout is None:
             timeout = self.command_timeout
 
@@ -113,7 +112,7 @@ class UnraidAPI(
         await self.ensure_connection()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(self, *_) -> None:
         """Exit async context."""
         self._in_context = False
         # We don't disconnect here to maintain the connection pool

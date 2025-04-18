@@ -8,7 +8,7 @@ from typing import Deque, Dict, Any, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
-from .error_handling import with_error_handling, safe_parse, UnraidDataError
+from .error_handling import with_error_handling, safe_parse
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
             try:
                 result = await self.execute_command(command)
                 return result
-            except Exception as err:
+            except Exception:
                 retries += 1
                 if retries > self._max_retries:
                     _LOGGER.error(

@@ -40,10 +40,13 @@ class EntityNaming:
         clean_entity_id = entity_id
 
         # Remove hostname from entity_id if it exists
-        hostname_variations = [self.hostname, self.hostname.capitalize(), self.hostname.upper()]
-        for variation in hostname_variations:
-            if clean_entity_id.startswith(f"{variation}_"):
-                clean_entity_id = clean_entity_id[len(variation) + 1:]
+        hostname = self.hostname.lower()
+        entity_id_lower = clean_entity_id.lower()
+
+        # Check if entity_id starts with hostname (case insensitive)
+        if entity_id_lower.startswith(f"{hostname}_"):
+            # Get the part after the hostname_
+            clean_entity_id = clean_entity_id[len(hostname) + 1:]
 
         # Format the entity ID
         return f"{self.domain}_{self.hostname}_{clean_entity_id}"

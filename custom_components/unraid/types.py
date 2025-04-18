@@ -1,7 +1,7 @@
 """Type definitions for Unraid integration."""
 from __future__ import annotations
 
-from typing import Dict, List, Any, Optional, TypedDict, Union, Literal
+from typing import Dict, List, Any, Optional, TypedDict, Literal
 
 
 class SystemStatsDict(TypedDict, total=False):

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import functools
 import asyncio
-from typing import Any, Callable, TypeVar, cast, Optional, Dict, List, Tuple
+from typing import Any, Callable, TypeVar, cast, Optional
 
 from .connection_manager import CommandTimeoutError, CommandError, UnraidConnectionError
 
@@ -43,12 +43,12 @@ def with_error_handling(
     retry_delay: float = 1.0
 ) -> Callable[[F], F]:
     """Decorator to add error handling to API operations.
-    
+
     Args:
         fallback_return: Value to return if the operation fails
         max_retries: Maximum number of retries for the operation
         retry_delay: Delay between retries in seconds
-        
+
     Returns:
         Decorated function with error handling
     """
@@ -56,14 +56,13 @@ def with_error_handling(
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             retries = 0
-            last_error = None
-            
+
             while retries <= max_retries:
                 try:
                     return await func(*args, **kwargs)
-                    
+
                 except CommandTimeoutError as err:
-                    last_error = err
+                    # Error handling
                     retries += 1
                     if retries > max_retries:
                         _LOGGER.error(
@@ -74,7 +73,7 @@ def with_error_handling(
                         if fallback_return is not None:
                             return fallback_return
                         raise UnraidTimeoutError(f"Operation timed out: {err}") from err
-                    
+
                     _LOGGER.warning(
                         "Operation timed out, retrying (%d/%d): %s",
                         retries,
@@ -82,9 +81,9 @@ def with_error_handling(
                         func.__name__
                     )
                     await asyncio.sleep(retry_delay * retries)
-                    
+
                 except CommandError as err:
-                    last_error = err
+                    # Error handling
                     # Don't retry if the command itself failed with a non-zero exit code
                     if err.exit_code is not None and err.exit_code != 0:
                         _LOGGER.error(
@@ -98,7 +97,7 @@ def with_error_handling(
                             f"Command failed: {err}",
                             exit_code=err.exit_code
                         ) from err
-                    
+
                     # For other command errors, retry
                     retries += 1
                     if retries > max_retries:
@@ -110,7 +109,7 @@ def with_error_handling(
                         if fallback_return is not None:
                             return fallback_return
                         raise UnraidOperationError(f"Operation failed: {err}") from err
-                    
+
                     _LOGGER.warning(
                         "Operation failed, retrying (%d/%d): %s",
                         retries,
@@ -118,9 +117,9 @@ def with_error_handling(
                         func.__name__
                     )
                     await asyncio.sleep(retry_delay * retries)
-                    
+
                 except (ConnectionError, UnraidConnectionError) as err:
-                    last_error = err
+                    # Error handling
                     retries += 1
                     if retries > max_retries:
                         _LOGGER.error(
@@ -131,7 +130,7 @@ def with_error_handling(
                         if fallback_return is not None:
                             return fallback_return
                         raise UnraidConnectionError(f"Connection error: {err}") from err
-                    
+
                     _LOGGER.warning(
                         "Connection error, retrying (%d/%d): %s",
                         retries,
@@ -139,9 +138,9 @@ def with_error_handling(
                         func.__name__
                     )
                     await asyncio.sleep(retry_delay * retries)
-                    
+
                 except Exception as err:
-                    last_error = err
+                    # last_error = err
                     _LOGGER.error(
                         "Unexpected error in %s: %s",
                         func.__name__,
@@ -151,12 +150,12 @@ def with_error_handling(
                     if fallback_return is not None:
                         return fallback_return
                     raise UnraidAPIError(f"Unexpected error: {err}") from err
-            
+
             # This should never happen, but just in case
             if fallback_return is not None:
                 return fallback_return
             raise UnraidAPIError(f"Operation failed after {max_retries} retries")
-            
+
         return cast(F, wrapper)
     return decorator
 
@@ -168,13 +167,13 @@ def safe_parse(
     error_msg: str = "Error parsing data"
 ) -> T:
     """Safely parse data with error handling.
-    
+
     Args:
         parser_func: Function to parse the data
         data: Data to parse
         default: Default value to return if parsing fails
         error_msg: Error message to log if parsing fails
-        
+
     Returns:
         Parsed data or default value if parsing fails
     """

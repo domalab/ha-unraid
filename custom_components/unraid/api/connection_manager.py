@@ -5,8 +5,8 @@ import logging
 import asyncio
 import time
 from enum import Enum, auto
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
 import asyncssh  # type: ignore
@@ -179,7 +179,7 @@ class SSHConnection:
                         "SSH connection timeout for %s",
                         self.host
                     )
-                    raise ConnectionError(f"SSH connection timeout") from None
+                    raise ConnectionError("SSH connection timeout") from None
 
             except Exception as err:
                 self.state = ConnectionState.ERROR
@@ -388,7 +388,6 @@ class ConnectionManager:
     async def _clean_pool(self) -> None:
         """Clean up expired or unhealthy connections."""
         async with self._lock:
-            now = datetime.now()
             to_remove = []
 
             for conn in self._pool:
@@ -496,7 +495,7 @@ class ConnectionManager:
                     conn = await self._add_connection()
                     _LOGGER.debug("Created new connection (conn_id=%s)", id(conn))
                     return conn
-                except Exception as err:
+                except Exception:
                     self._recent_errors.append(datetime.now())
                     raise
 

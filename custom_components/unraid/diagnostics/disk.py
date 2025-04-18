@@ -11,15 +11,15 @@ from homeassistant.helpers.typing import StateType # type: ignore
 
 from .base import UnraidBinarySensorBase
 from .const import UnraidBinarySensorEntityDescription
-from ..const import DOMAIN, SpinDownDelay
+from ..const import SpinDownDelay
 from ..coordinator import UnraidDataUpdateCoordinator
 from ..helpers import (
     DiskDataHelperMixin,
     get_disk_identifiers,
     get_disk_number,
-    get_unraid_disk_mapping,
 )
-from ..helpers import EntityNaming
+from ..api.disk_mapping import get_unraid_disk_mapping
+# from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,12 +41,12 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
         if self._disk_num is None:
             raise ValueError(f"Invalid array disk number: {disk_name}")
 
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="disk"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="disk"
+        # )
 
         description = UnraidBinarySensorEntityDescription(
             key=f"disk_health_{disk_name}",

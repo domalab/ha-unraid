@@ -9,9 +9,9 @@ from homeassistant.const import EntityCategory # type: ignore
 
 from .base import UnraidBinarySensorBase
 from .const import UnraidBinarySensorEntityDescription
-from ..const import DOMAIN
 from ..coordinator import UnraidDataUpdateCoordinator
-from ..helpers import EntityNaming
+# from ..const import DOMAIN
+# from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,12 +20,12 @@ class UnraidUPSBinarySensor(UnraidBinarySensorBase):
 
     def __init__(self, coordinator: UnraidDataUpdateCoordinator) -> None:
         """Initialize UPS binary sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="ups"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="ups"
+        # )
 
         description = UnraidBinarySensorEntityDescription(
             key="ups_status",

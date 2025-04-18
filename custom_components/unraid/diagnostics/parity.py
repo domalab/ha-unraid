@@ -20,13 +20,10 @@ from .const import (
     PARITY_FULL_DATE_FORMAT,
     DEFAULT_PARITY_ATTRIBUTES,
 )
-from ..const import (
-    DOMAIN,
-    SpinDownDelay,
-)
+from ..const import SpinDownDelay
 from ..coordinator import UnraidDataUpdateCoordinator
 from ..helpers import DiskDataHelperMixin, format_bytes
-from ..helpers import EntityNaming
+# from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,12 +46,12 @@ class UnraidParityDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
             {k: v for k, v in parity_info.items() if k != "smart_data"}
         )
 
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="parity"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="parity"
+        # )
 
         description = UnraidBinarySensorEntityDescription(
             key="parity_health",
@@ -465,12 +462,12 @@ class UnraidParityCheckSensor(UnraidBinarySensorBase):
         coordinator: UnraidDataUpdateCoordinator,
     ) -> None:
         """Initialize the parity check sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="parity"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="parity"
+        # )
 
         description = UnraidBinarySensorEntityDescription(
             key="parity_check",

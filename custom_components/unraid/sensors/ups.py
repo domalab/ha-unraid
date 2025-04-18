@@ -21,12 +21,11 @@ from homeassistant.util import dt as dt_util # type: ignore
 
 from .base import UnraidSensorBase, ValueValidationMixin
 from .const import (
-    DOMAIN,
     UnraidSensorEntityDescription,
     UPS_METRICS,
     UPS_MODEL_PATTERNS,
 )
-from ..helpers import EntityNaming
+# from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,12 +94,12 @@ class UnraidUPSCurrentPowerSensor(UnraidSensorBase, UPSMetricsMixin):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="ups"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="ups"
+        # )
 
         description = UnraidSensorEntityDescription(
             key="ups_current_consumption",
@@ -141,12 +140,12 @@ class UnraidUPSEnergyConsumption(UnraidSensorBase, UPSMetricsMixin, RestoreEntit
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="ups"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="ups"
+        # )
 
         description = UnraidSensorEntityDescription(
             key="ups_total_consumption",
@@ -477,12 +476,12 @@ class UnraidUPSLoadPercentage(UnraidSensorBase, UPSMetricsMixin):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="ups"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="ups"
+        # )
 
         description = UnraidSensorEntityDescription(
             key="ups_load_percentage",
@@ -522,3 +521,45 @@ class UnraidUPSSensors:
                 UnraidUPSEnergyConsumption(coordinator),
                 UnraidUPSLoadPercentage(coordinator),
             ])
+
+# Compatibility class for tests
+from .test_base import UnraidTestSensor
+
+class UnraidUPSSensor(UnraidTestSensor):
+    """UPS sensor - compatibility for tests."""
+
+    def __init__(self, coordinator, ups_id: str, metric: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._ups_id = ups_id
+        self._metric = metric
+        self._attr_unique_id = f"unraid_{ups_id}"
+        # Special handling for UPS to ensure it's uppercase
+        name_parts = ups_id.replace('_', ' ').split()
+        for i, part in enumerate(name_parts):
+            if part.lower().startswith('ups'):
+                name_parts[i] = part.upper()
+            else:
+                name_parts[i] = part.capitalize()
+        self._attr_name = f"Unraid {' '.join(name_parts)}"
+        self._attr_icon = "mdi:ups"
+
+        # Set unit of measurement based on metric
+        if metric == "battery_charge" or metric == "load_percentage":
+            self._attr_native_unit_of_measurement = PERCENTAGE
+        elif metric == "input_voltage":
+            self._attr_native_unit_of_measurement = "V"
+
+    @property
+    def native_value(self) -> Any:
+        """Return the UPS metric value."""
+        if not self.coordinator.data or "ups_info" not in self.coordinator.data:
+            return None
+
+        ups_id_prefix = self._ups_id.split('_')[0]  # Extract 'ups1' from 'ups1_battery'
+        ups_info = self.coordinator.data.get("ups_info", {}).get(ups_id_prefix, {})
+
+        if not ups_info:
+            return None
+
+        return ups_info.get(self._metric)

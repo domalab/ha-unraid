@@ -7,7 +7,7 @@ import hashlib
 import json
 import time
 import gc
-from typing import Any, Dict, Optional, List, Set, cast, TypeVar, Callable, Tuple, Union
+from typing import Any, Dict, Optional, List, Set, cast
 
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
@@ -889,7 +889,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
                 # Force Python garbage collection
                 gc.collect()
 
-        except (ImportError, Exception) as err:
+        except (ImportError, Exception):
             # If psutil not available, silently continue
             pass
 
@@ -908,7 +908,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
                         # Split the cron entry
                         parts = line.strip().split()
                         if len(parts) >= 5:
-                            minute, hour, dom, month, dow = parts[:5]
+                            minute, hour, dom, month, _ = parts[:5]  # dow not used
 
                             now = dt_util.now()
                             next_run = None

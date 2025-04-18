@@ -1,9 +1,8 @@
 """Sensor metadata for Unraid integration."""
 from __future__ import annotations
 
-import logging
-from typing import Dict, Any, Callable, Optional, List, Set, Final
-from dataclasses import dataclass, field
+from typing import Dict, Any, Callable, Optional
+from dataclasses import dataclass
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -12,18 +11,16 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     UnitOfTemperature,
     UnitOfPower,
-    UnitOfFrequency,
-    UnitOfElectricPotential,
     UnitOfTime,
     UnitOfEnergy,
     PERCENTAGE,
 )
 
 from .const import UnraidSensorEntityDescription
-from ..const import DOMAIN
-from ..entity_naming import EntityNaming
+# from ..const import DOMAIN
+# from ..entity_naming import EntityNaming
 
-_LOGGER = logging.getLogger(__name__)
+# _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -239,7 +236,7 @@ ALL_SENSORS: Dict[str, SensorMetadata] = {
 
 def get_sensor_description(
     sensor_type: str,
-    coordinator_hostname: str,
+    _: str,  # coordinator_hostname not used
     value_fn: Callable[[dict[str, Any]], Any],
     available_fn: Optional[Callable[[dict[str, Any]], bool]] = None,
     component: Optional[str] = None,
@@ -255,12 +252,12 @@ def get_sensor_description(
     if component is None:
         component = sensor_type.split('_')[0]
 
-    # Create entity naming
-    naming = EntityNaming(
-        domain=DOMAIN,
-        hostname=coordinator_hostname,
-        component=component
-    )
+    # Entity naming not used in this function
+    # EntityNaming(
+    #     domain=DOMAIN,
+    #     hostname=coordinator_hostname,
+    #     component=component
+    # )
 
     # Create description with custom name if provided
     description = metadata.create_description(value_fn, available_fn)

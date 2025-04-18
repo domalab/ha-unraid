@@ -5,13 +5,11 @@ import logging
 import re
 from typing import Dict, Optional, Any
 
-# Import get_unraid_disk_mapping for backward compatibility
-from ..helpers import get_unraid_disk_mapping
+# get_unraid_disk_mapping function moved from helpers.py to avoid circular imports
 
 _LOGGER = logging.getLogger(__name__)
 
-# Note: The get_unraid_disk_mapping function is imported from helpers.py to avoid duplication.
-# In the future, all disk mapping should be migrated to use the DiskMapper class
+# Note: In the future, all disk mapping should be migrated to use the DiskMapper class
 # in disk_mapper.py, which provides more comprehensive disk mapping functionality.
 
 def get_disk_info(data: Dict[str, Any], disk_name: str) -> Optional[Dict[str, Any]]:
@@ -101,6 +99,101 @@ def _extract_temperature(disk_data: Dict[str, Any]) -> Optional[int]:
                 pass
 
     return None
+
+def get_unraid_disk_mapping(system_stats: dict) -> Dict[str, Dict[str, Any]]:
+    """Get mapping between Unraid disk names, devices, and serial numbers.
+
+    Note: This function should eventually be migrated to use the DiskMapper class
+    in api/disk_mapper.py, which provides more comprehensive disk mapping functionality.
+    """
+    mapping: Dict[str, Dict[str, Any]] = {}
+
+    # Check for disk data
+    individual_disks = system_stats.get("individual_disks", [])
+    if not individual_disks:
+        _LOGGER.debug("No disk information found in system stats")
+        return mapping
+
+    try:
+        # Ignore special directories and tmpfs
+        ignored_mounts = {
+            "disks", "remotes", "addons", "rootshare",
+            "user/0", "dev/shm"
+        }
+
+        # Filter out disks we want to ignore
+        valid_disks = [
+            disk for disk in individual_disks
+            if (
+                disk.get("name")
+                and not any(mount in disk.get("mount_point", "") for mount in ignored_mounts)
+                and disk.get("filesystem") != "tmpfs"  # Explicitly ignore tmpfs
+            )
+        ]
+
+        # First, handle array disks (disk1, disk2, etc.)
+        base_device = 'b'  # Start at sdb
+        array_disks = sorted(
+            [disk for disk in valid_disks if disk.get("name", "").startswith("disk")],
+            key=lambda x: int(x["name"].replace("disk", ""))
+        )
+
+        # Map array disks
+        for disk in array_disks:
+            disk_name = disk.get("name")
+            if disk_name:
+                device = f"sd{base_device}"
+                mapping[disk_name] = {
+                    "device": device,
+                    "serial": disk.get("serial", ""),
+                    "name": disk_name
+                }
+                _LOGGER.debug(
+                    "Mapped array disk %s to device %s (serial: %s)",
+                    disk_name,
+                    device,
+                    disk.get("serial", "unknown")
+                )
+                base_device = chr(ord(base_device) + 1)
+
+        # Handle parity disk
+        for disk in valid_disks:
+            if disk.get("name") == "parity":
+                device = disk.get("device")
+                if device:
+                    mapping["parity"] = {
+                        "device": device,
+                        "serial": disk.get("serial", ""),
+                        "name": "parity"
+                    }
+                    _LOGGER.debug(
+                        "Mapped parity disk to device %s (serial: %s)",
+                        device,
+                        disk.get("serial", "unknown")
+                    )
+
+        # Then handle cache disk if present
+        for disk in valid_disks:
+            if disk.get("name") == "cache":
+                device = disk.get("device")
+                if device:
+                    mapping["cache"] = {
+                        "device": device,
+                        "serial": disk.get("serial", ""),
+                        "name": "cache"
+                    }
+                    _LOGGER.debug(
+                        "Mapped cache disk to device %s (serial: %s)",
+                        device,
+                        disk.get("serial", "unknown")
+                    )
+
+        return mapping
+
+    except (KeyError, ValueError, AttributeError) as err:
+        _LOGGER.debug("Error creating disk mapping: %s", err)
+        return mapping
+
 
 def _extract_smart_status(disk_data: Dict[str, Any]) -> Dict[str, Any]:
     """Extract SMART status information."""

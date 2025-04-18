@@ -1,15 +1,13 @@
 """System health diagnostics for Unraid."""
 from __future__ import annotations
 
-import logging
-import re
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any
 from datetime import datetime, timedelta, timezone
 
 from ..coordinator import UnraidDataUpdateCoordinator
 from ..helpers import format_bytes, get_cpu_info, get_memory_info
 
-_LOGGER = logging.getLogger(__name__)
+# _LOGGER = logging.getLogger(__name__)
 
 class SystemHealthDiagnostics:
     """System health diagnostics for Unraid."""
@@ -31,11 +29,11 @@ class SystemHealthDiagnostics:
     async def check_system_health(self) -> Dict[str, Any]:
         """Check system health and return diagnostics data."""
         now = datetime.now(timezone.utc)
-        
+
         # Only run a full check every 15 minutes
         if (now - self._last_check).total_seconds() < 900:
             return self._health_data
-            
+
         self._last_check = now
         health_data = {
             "timestamp": now.isoformat(),
@@ -49,7 +47,7 @@ class SystemHealthDiagnostics:
             "issues": [],
             "recommendations": [],
         }
-        
+
         # Aggregate issues and recommendations
         for category in ["cpu", "memory", "storage", "network", "temperature", "services", "uptime"]:
             if category_data := health_data.get(category):
@@ -57,7 +55,7 @@ class SystemHealthDiagnostics:
                     health_data["issues"].extend(issues)
                 if recommendations := category_data.get("recommendations"):
                     health_data["recommendations"].extend(recommendations)
-        
+
         # Store health data
         self._health_data = health_data
         return health_data
@@ -66,7 +64,7 @@ class SystemHealthDiagnostics:
         """Check CPU health."""
         system_stats = self.coordinator.data.get("system_stats", {})
         cpu_info = get_cpu_info(system_stats)
-        
+
         result = {
             "usage": cpu_info.get("usage", 0),
             "load_average": system_stats.get("load_average", [0, 0, 0]),
@@ -75,24 +73,24 @@ class SystemHealthDiagnostics:
             "issues": [],
             "recommendations": [],
         }
-        
+
         # Check CPU usage
         if result["usage"] > self._thresholds["cpu_usage"]:
             result["issues"].append(f"CPU usage is high: {result['usage']}%")
             result["recommendations"].append("Check for resource-intensive processes")
-        
+
         # Check load average
         if result["load_average"] and result["load_average"][0] > self._thresholds["load_average"]:
             result["issues"].append(f"Load average is high: {result['load_average'][0]}")
             result["recommendations"].append("Check for system bottlenecks")
-        
+
         return result
 
     def _check_memory_health(self) -> Dict[str, Any]:
         """Check memory health."""
         system_stats = self.coordinator.data.get("system_stats", {})
         memory_info = get_memory_info(system_stats)
-        
+
         result = {
             "total": memory_info.get("total", 0),
             "used": memory_info.get("used", 0),
@@ -101,17 +99,17 @@ class SystemHealthDiagnostics:
             "issues": [],
             "recommendations": [],
         }
-        
+
         # Check memory usage
         if result["percentage"] > self._thresholds["memory_usage"]:
             result["issues"].append(f"Memory usage is high: {result['percentage']}%")
             result["recommendations"].append("Check for memory leaks or increase memory")
-        
+
         # Check for low memory
         if result["free"] < 1024 * 1024 * 1024:  # Less than 1GB free
             result["issues"].append(f"Low free memory: {format_bytes(result['free'])}")
             result["recommendations"].append("Consider adding more RAM or reducing VM/Docker memory allocations")
-        
+
         return result
 
     def _check_storage_health(self) -> Dict[str, Any]:
@@ -119,7 +117,7 @@ class SystemHealthDiagnostics:
         system_stats = self.coordinator.data.get("system_stats", {})
         array_usage = system_stats.get("array_usage", {})
         individual_disks = system_stats.get("individual_disks", [])
-        
+
         result = {
             "array": {
                 "total": array_usage.get("total", 0),
@@ -131,12 +129,12 @@ class SystemHealthDiagnostics:
             "issues": [],
             "recommendations": [],
         }
-        
+
         # Check array usage
         if result["array"]["percentage"] > self._thresholds["disk_usage"]:
             result["issues"].append(f"Array usage is high: {result['array']['percentage']}%")
             result["recommendations"].append("Consider adding more storage or cleaning up unused files")
-        
+
         # Check individual disks
         for disk in individual_disks:
             disk_data = {
@@ -148,27 +146,27 @@ class SystemHealthDiagnostics:
                 "filesystem": disk.get("filesystem", "unknown"),
                 "mount_point": disk.get("mount_point", "unknown"),
             }
-            
+
             # Check disk usage
             if disk_data["percentage"] > self._thresholds["disk_usage"]:
                 result["issues"].append(f"Disk {disk_data['name']} usage is high: {disk_data['percentage']}%")
                 result["recommendations"].append(f"Consider cleaning up {disk_data['name']} or moving data to another disk")
-            
+
             result["disks"].append(disk_data)
-        
+
         return result
 
     def _check_network_health(self) -> Dict[str, Any]:
         """Check network health."""
         system_stats = self.coordinator.data.get("system_stats", {})
         network_stats = system_stats.get("network_stats", {})
-        
+
         result = {
             "interfaces": [],
             "issues": [],
             "recommendations": [],
         }
-        
+
         # Check network interfaces
         for interface, stats in network_stats.items():
             interface_data = {
@@ -181,19 +179,19 @@ class SystemHealthDiagnostics:
                 "speed": stats.get("speed", "unknown"),
                 "duplex": stats.get("duplex", "unknown"),
             }
-            
+
             # Check connection status
             if not interface_data["connected"]:
                 result["issues"].append(f"Network interface {interface} is disconnected")
                 result["recommendations"].append(f"Check network cable for {interface}")
-            
+
             # Check for half-duplex
             if interface_data["duplex"] == "half":
                 result["issues"].append(f"Network interface {interface} is running in half-duplex mode")
                 result["recommendations"].append(f"Check network switch settings for {interface}")
-            
+
             result["interfaces"].append(interface_data)
-        
+
         return result
 
     def _check_temperature_health(self) -> Dict[str, Any]:
@@ -201,7 +199,7 @@ class SystemHealthDiagnostics:
         system_stats = self.coordinator.data.get("system_stats", {})
         temperature_data = system_stats.get("temperature_data", {})
         sensors = temperature_data.get("sensors", {})
-        
+
         result = {
             "cpu": None,
             "motherboard": None,
@@ -209,7 +207,7 @@ class SystemHealthDiagnostics:
             "issues": [],
             "recommendations": [],
         }
-        
+
         # Check CPU temperature
         for sensor, data in sensors.items():
             if "coretemp" in sensor.lower() or "cpu" in sensor.lower():
@@ -217,13 +215,13 @@ class SystemHealthDiagnostics:
                     if "core" in key.lower() and isinstance(value, (int, float)):
                         if result["cpu"] is None or value > result["cpu"]:
                             result["cpu"] = value
-            
+
             if "motherboard" in sensor.lower() or "system" in sensor.lower():
                 for key, value in data.items():
                     if "temp" in key.lower() and isinstance(value, (int, float)):
                         if result["motherboard"] is None or value > result["motherboard"]:
                             result["motherboard"] = value
-        
+
         # Check disk temperatures
         for disk in system_stats.get("individual_disks", []):
             if temp := disk.get("temperature"):
@@ -232,29 +230,29 @@ class SystemHealthDiagnostics:
                     "temperature": temp,
                 }
                 result["disks"].append(disk_data)
-                
+
                 # Check for high temperature
                 if temp > self._thresholds["temperature"]:
                     result["issues"].append(f"Disk {disk_data['name']} temperature is high: {temp}°C")
                     result["recommendations"].append(f"Check cooling for disk {disk_data['name']}")
-        
+
         # Check CPU temperature
         if result["cpu"] and result["cpu"] > self._thresholds["temperature"]:
             result["issues"].append(f"CPU temperature is high: {result['cpu']}°C")
             result["recommendations"].append("Check CPU cooling and airflow")
-        
+
         # Check motherboard temperature
         if result["motherboard"] and result["motherboard"] > self._thresholds["temperature"]:
             result["issues"].append(f"Motherboard temperature is high: {result['motherboard']}°C")
             result["recommendations"].append("Check case airflow and fan operation")
-        
+
         return result
 
     def _check_services_health(self) -> Dict[str, Any]:
         """Check services health."""
         docker_containers = self.coordinator.data.get("docker_containers", [])
         vms = self.coordinator.data.get("vms", [])
-        
+
         result = {
             "docker": {
                 "running": sum(1 for c in docker_containers if c.get("status") == "running"),
@@ -282,29 +280,29 @@ class SystemHealthDiagnostics:
             "issues": [],
             "recommendations": [],
         }
-        
+
         # Check for stopped containers that should be running
         for container in docker_containers:
             if container.get("status") != "running" and container.get("autostart", False):
                 result["issues"].append(f"Docker container {container.get('name')} is not running but set to autostart")
                 result["recommendations"].append(f"Check logs for {container.get('name')}")
-        
+
         # Check for stopped VMs that should be running
         for vm in vms:
             if vm.get("status") != "running" and vm.get("autostart", False):
                 result["issues"].append(f"VM {vm.get('name')} is not running but set to autostart")
                 result["recommendations"].append(f"Check VM logs for {vm.get('name')}")
-        
+
         return result
 
     def _check_uptime(self) -> Dict[str, Any]:
         """Check system uptime."""
         system_stats = self.coordinator.data.get("system_stats", {})
         uptime_seconds = system_stats.get("uptime", 0)
-        
+
         # Convert to days
         uptime_days = uptime_seconds / 86400
-        
+
         result = {
             "seconds": uptime_seconds,
             "days": uptime_days,
@@ -312,12 +310,12 @@ class SystemHealthDiagnostics:
             "issues": [],
             "recommendations": [],
         }
-        
+
         # Check for excessive uptime
         if uptime_days > self._thresholds["uptime"]:
             result["issues"].append(f"System uptime is high: {result['formatted']}")
             result["recommendations"].append("Consider scheduling a reboot to apply updates")
-        
+
         return result
 
     def _format_uptime(self, seconds: int) -> str:
@@ -325,7 +323,7 @@ class SystemHealthDiagnostics:
         days, remainder = divmod(seconds, 86400)
         hours, remainder = divmod(remainder, 3600)
         minutes, seconds = divmod(remainder, 60)
-        
+
         if days > 0:
             return f"{int(days)} days, {int(hours)} hours, {int(minutes)} minutes"
         elif hours > 0:

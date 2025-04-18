@@ -14,19 +14,19 @@ from homeassistant.util import dt as dt_util # type: ignore
 
 from .base import UnraidSensorBase
 from .const import (
-    DOMAIN,
     UnraidSensorEntityDescription,
     CPU_TEMP_PATTERNS,
     MOTHERBOARD_TEMP_PATTERNS,
 )
-from ..helpers import (
+from ..utils import (
     format_bytes,
     get_temp_input,
     parse_temperature,
     find_temperature_inputs,
     is_valid_temp_range,
+    TempReading
 )
-from ..helpers import EntityNaming
+# from ..helpers import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,12 +35,12 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="cpu"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="cpu"
+        # )
 
         description = UnraidSensorEntityDescription(
             key="cpu_usage",
@@ -91,12 +91,12 @@ class UnraidRAMUsageSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="ram"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="ram"
+        # )
 
         description = UnraidSensorEntityDescription(
             key="ram_usage",
@@ -132,11 +132,12 @@ class UnraidCPUTempSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="cpu"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="cpu"
+        # )
 
         super().__init__(
             coordinator,
@@ -238,11 +239,12 @@ class UnraidMotherboardTempSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="motherboard"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="motherboard"
+        # )
 
         super().__init__(
             coordinator,
@@ -344,12 +346,12 @@ class UnraidFanSensor(UnraidSensorBase):
 
     def __init__(self, coordinator, fan_id: str, fan_data: dict) -> None:
         """Initialize the fan sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="fan"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="fan"
+        # )
 
         # Get clean fan label
         display_name = fan_data["label"]
@@ -406,12 +408,12 @@ class UnraidDockerVDiskSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="docker"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="docker"
+        # )
 
         super().__init__(
             coordinator,
@@ -451,12 +453,12 @@ class UnraidLogFileSystemSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="log"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="log"
+        # )
 
         super().__init__(
             coordinator,
@@ -496,12 +498,12 @@ class UnraidBootUsageSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="boot"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="boot"
+        # )
 
         super().__init__(
             coordinator,
@@ -541,12 +543,12 @@ class UnraidUptimeSensor(UnraidSensorBase):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="uptime"
-        )
+        # Entity naming not used in this class
+        # EntityNaming(
+        #     domain=DOMAIN,
+        #     hostname=coordinator.hostname,
+        #     component="uptime"
+        # )
 
         description = UnraidSensorEntityDescription(
             key="uptime",

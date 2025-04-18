@@ -37,6 +37,9 @@ MAX_UPDATE_METRICS_HISTORY: Final = 10
 CONF_GENERAL_INTERVAL = "general_interval"
 CONF_DISK_INTERVAL = "disk_interval"
 CONF_HAS_UPS = "has_ups"
+CONF_HOST = "host"
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"
 
 
 # Platforms

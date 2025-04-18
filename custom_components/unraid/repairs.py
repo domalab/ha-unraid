@@ -14,7 +14,7 @@ connection and hardware, improving the overall reliability and user experience.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional, Set, cast, Final
+from typing import Any, Dict, Set, Final
 
 try:
     from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow # type: ignore
@@ -25,7 +25,7 @@ except ImportError:
     class RepairsFlow(FlowHandler):
         """Fallback class for RepairsFlow."""
 
-        async def async_step_init(self, user_input=None):
+        async def async_step_init(self, _=None):
             """Handle the first step of the flow."""
             return await self.async_step_confirm()
 
@@ -44,16 +44,16 @@ except ImportError:
             pass
 from homeassistant.core import HomeAssistant # type: ignore
 from homeassistant.data_entry_flow import FlowResult # type: ignore
-from homeassistant.config_entries import ConfigEntry # type: ignore
-from homeassistant.exceptions import HomeAssistantError # type: ignore
+# from homeassistant.config_entries import ConfigEntry # type: ignore
+# from homeassistant.exceptions import HomeAssistantError # type: ignore
 from homeassistant.helpers import issue_registry as ir # type: ignore
-from homeassistant.helpers.selector import ( # type: ignore
-    TextSelector,
-    TextSelectorConfig,
-    TextSelectorType,
-)
+# from homeassistant.helpers.selector import ( # type: ignore
+#     TextSelector,
+#     TextSelectorConfig,
+#     TextSelectorType,
+# )
 
-from .const import DOMAIN, CONF_HOSTNAME, CONF_HAS_UPS
+from .const import DOMAIN
 from .coordinator import UnraidDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -449,7 +449,7 @@ class UnraidConnectionRepairFlow(RepairsFlow):
         self.error = data.get("error", "Unknown error")
 
     async def async_step_init(
-        self, user_input: Dict[str, Any] | None = None
+        self, _: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the first step of the repair flow."""
         return await self.async_step_confirm()
@@ -512,7 +512,7 @@ class UnraidConnectionRepairFlow(RepairsFlow):
 
     def _get_reconfigure_schema(self):
         """Get the schema for the reconfigure step."""
-        from homeassistant.helpers import config_validation as cv # type: ignore
+        # from homeassistant.helpers import config_validation as cv # type: ignore
         import voluptuous as vol # type: ignore
 
         # Get the config entry
@@ -613,7 +613,7 @@ class UnraidParityCheckFailedRepairFlow(ConfirmRepairFlow):
 
 # This function is required by the repairs platform
 async def async_create_fix_flow(
-    hass: HomeAssistant, issue_id: str, data: Dict[str, Any]
+    _: HomeAssistant, issue_id: str, data: Dict[str, Any]
 ) -> RepairsFlow:
     """Create a repair flow for an issue."""
     if ISSUE_CONNECTION_FAILED in issue_id or ISSUE_AUTHENTICATION_FAILED in issue_id:

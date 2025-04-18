@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional
 from enum import IntEnum
 
 from .disk_mapper import DiskMapper
-from .error_handling import with_error_handling, safe_parse, UnraidDataError
+from .error_handling import with_error_handling, safe_parse
 
 _LOGGER = logging.getLogger(__name__)
 

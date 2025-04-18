@@ -26,7 +26,7 @@ from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_PO
 from homeassistant.data_entry_flow import FlowResult # type: ignore
 from homeassistant.exceptions import HomeAssistantError # type: ignore
 from homeassistant.core import HomeAssistant, callback # type: ignore
-from homeassistant.helpers import importlib as ha_importlib # type: ignore
+# from homeassistant.helpers import importlib as ha_importlib # type: ignore
 
 from .migrations import async_migrate_with_rollback
 
