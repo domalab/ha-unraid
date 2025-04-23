@@ -10,7 +10,7 @@
           "password": "[%key:common::config_flow::data::password%]",
           "port": "[%key:common::config_flow::data::port%]",
           "general_interval": "General Update Interval (Minutes)",
-          "disk_interval": "Disk Update Interval (Hours)",
+          "disk_interval": "Disk Update Interval",
           "has_ups": "UPS Insights"
         },
         "data_description": {
@@ -111,7 +111,7 @@
       }
     },
     "system_shutdown": {
-      "name": "Shutdown System", 
+      "name": "Shutdown System",
       "description": "Shutdown the Unraid system",
       "fields": {
         "entry_id": {

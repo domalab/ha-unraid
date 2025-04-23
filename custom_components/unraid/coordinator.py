@@ -31,6 +31,7 @@ from .const import (
     CONF_DISK_INTERVAL,
     DEFAULT_GENERAL_INTERVAL,
     DEFAULT_DISK_INTERVAL,
+    DISK_INTERVAL_OPTIONS,
     CONF_HAS_UPS,
 )
 from .unraid import UnraidAPI
@@ -110,14 +111,13 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
                 entry.options.get(CONF_GENERAL_INTERVAL, DEFAULT_GENERAL_INTERVAL)
             )
         )
-        self._disk_interval = max(
-            1,
-            min(
-                24,
-                entry.options.get(CONF_DISK_INTERVAL, DEFAULT_DISK_INTERVAL)
-            )
-        )
-        self._disk_update_interval = timedelta(hours=self._disk_interval)
+
+        # Get disk update interval in minutes
+        disk_interval_minutes = entry.options.get(CONF_DISK_INTERVAL, DEFAULT_DISK_INTERVAL)
+        self._disk_interval = disk_interval_minutes
+
+        # Convert minutes to timedelta
+        self._disk_update_interval = timedelta(minutes=self._disk_interval)
 
         # Always use entity format version 2
         self._entity_format = 2

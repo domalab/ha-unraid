@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,37 +121,7 @@ class DataProcessor:
 
     def _parse_docker_containers(self, output: str) -> List[Dict[str, str]]:
         """Parse Docker container information from docker ps output."""
-        # For test compatibility, hardcode the expected values if the test string is detected
-        if "abc123def456" in output and "linuxserver/plex" in output:
-            return [
-                {
-                    "container_id": "abc123def456",
-                    "image": "linuxserver/plex",
-                    "command": "\"/init\"",
-                    "created": "2 weeks ago",
-                    "status": "Up 2 weeks",
-                    "ports": "32400/tcp",
-                    "name": "plex"
-                },
-                {
-                    "container_id": "789ghi101112",
-                    "image": "linuxserver/heimdall",
-                    "command": "\"/init\"",
-                    "created": "2 weeks ago",
-                    "status": "Up 2 weeks",
-                    "ports": "80/tcp, 443/tcp",
-                    "name": "heimdall"
-                },
-                {
-                    "container_id": "jkl131415mno",
-                    "image": "ghcr.io/linuxserver/radarr",
-                    "command": "\"/init\"",
-                    "created": "2 weeks ago",
-                    "status": "Up 2 weeks",
-                    "ports": "7878/tcp",
-                    "name": "radarr"
-                }
-            ]
+
 
         result = []
 
@@ -292,22 +262,7 @@ class DataProcessor:
 
     def _parse_zfs_status(self, output: str) -> Dict[str, Any]:
         """Parse ZFS pool status from zpool status output."""
-        # For test compatibility, hardcode the expected values if the test string is detected
-        if "pool: tank" in output and "state: ONLINE" in output:
-            return {
-                "pool": "tank",
-                "state": "ONLINE",
-                "scan": "scrub repaired 0B in 0 days 05:30:25 with 0 errors on Sun Apr 10 05:30:25 2022",
-                "devices": [
-                    {"name": "tank", "state": "ONLINE"},
-                    {"name": "mirror-0", "state": "ONLINE"},
-                    {"name": "sda", "state": "ONLINE"},
-                    {"name": "sdb", "state": "ONLINE"},
-                    {"name": "mirror-1", "state": "ONLINE"},
-                    {"name": "sdc", "state": "ONLINE"},
-                    {"name": "sdd", "state": "ONLINE"}
-                ]
-            }
+
 
         result = {
             "pool": "",

@@ -5,15 +5,9 @@ import logging
 from typing import List, Any
 
 from homeassistant.helpers.entity import Entity
-# from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
 from ..coordinator import UnraidDataUpdateCoordinator
 from .factory import SensorFactory
-# from .const import UnraidSensorEntityDescription
-# from .base import UnraidSensorBase
-# from ..const import DOMAIN
-# from ..entity_naming import EntityNaming
-# from .metadata import get_sensor_description
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -166,9 +160,9 @@ def create_storage_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> 
         UnraidDiskSensor,
         UnraidPoolSensor,
         get_disk_number,
-        is_solid_state_drive,
         get_pool_info,
     )
+    from ..helpers import is_solid_state_drive
 
     entities = []
 

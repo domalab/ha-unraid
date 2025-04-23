@@ -29,13 +29,6 @@ def format_bytes(bytes_value: float) -> str:
     if bytes_value <= 0:
         return "0 B"
 
-    # Special case for test compatibility
-    if bytes_value == 1023:
-        return "1023.00 B"
-
-    # Special case for test compatibility
-    if bytes_value == 1024 * 1024 * 1024 * 2000:
-        return "2000.00 GB"
 
     units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
     unit_index = min(
@@ -84,7 +77,7 @@ MB_AUXTIN_PATTERN = re.compile(r"^AUXTIN(\d+)$", re.IGNORECASE)
 MB_ACPI_PATTERN = re.compile(r"^acpitz-acpi-(\d+)$", re.IGNORECASE)
 
 # Temperature ranges
-VALID_CPU_TEMP_RANGE: Tuple[float, float] = (-10.0, 120.0)  # Increased for test compatibility
+VALID_CPU_TEMP_RANGE: Tuple[float, float] = (-10.0, 120.0)
 VALID_MB_TEMP_RANGE: Tuple[float, float] = (-10.0, 100.0)
 
 # CPU and MB keywords for temperature categorization
@@ -306,34 +299,7 @@ def get_temp_input(sensor_label: str) -> Optional[str]:
 
     return None
 
-# Legacy functions for backward compatibility
-def get_core_temp_input(sensor_label: str) -> Optional[str]:
-    """Map CPU core labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
 
-def get_tccd_temp_input(sensor_label: str) -> Optional[str]:
-    """Map AMD CCD temperature labels to input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_peci_temp_input(sensor_label: str) -> Optional[str]:
-    """Map PECI agent labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_system_temp_input(sensor_label: str) -> Optional[str]:
-    """Map System N labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_ec_temp_input(sensor_label: str) -> Optional[str]:
-    """Map EC_TEMP[N] labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_auxtin_temp_input(sensor_label: str) -> Optional[str]:
-    """Map AUXTIN[N] labels to temperature input files (legacy function)."""
-    return get_temp_input(sensor_label)
-
-def get_acpi_temp_input(sensor_label: str) -> Optional[str]:
-    """Map ACPI temperature labels to input files (legacy function)."""
-    return get_temp_input(sensor_label)
 
 def extract_fans_data(sensors_data: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Extract fan RPM data from sensors output."""

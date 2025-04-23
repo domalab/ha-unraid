@@ -39,8 +39,9 @@ from .const import (
     DEFAULT_DISK_INTERVAL,
     MIN_UPDATE_INTERVAL,
     MAX_GENERAL_INTERVAL,
-    MIN_DISK_INTERVAL,
-    MAX_DISK_INTERVAL,
+    MIN_DISK_INTERVAL_MINUTES,
+    MAX_DISK_INTERVAL_HOURS,
+    DISK_INTERVAL_OPTIONS,
     CONF_HAS_UPS,
     MIGRATION_VERSION,
 )
@@ -68,6 +69,12 @@ def get_schema_base(
     has_ups: bool = False,
 ) -> vol.Schema:
     """Get base schema with sliders for both intervals."""
+    # Create a list of options for the disk interval selector
+    disk_interval_options = {
+        option: f"{option // 60} hours" if option >= 60 else f"{option} minutes"
+        for option in DISK_INTERVAL_OPTIONS
+    }
+
     if include_auth:
         # Initial setup schema with correct field order
         schema = {
@@ -90,15 +97,7 @@ def get_schema_base(
             vol.Required(
             CONF_DISK_INTERVAL,
             default=disk_interval
-            ): vol.All(
-            vol.Coerce(int),
-            vol.Range(
-                min=MIN_DISK_INTERVAL,
-                max=MAX_DISK_INTERVAL,
-                msg="Disk interval must be between "
-                f"{MIN_DISK_INTERVAL} and {MAX_DISK_INTERVAL} hours"
-            )
-            ),
+            ): vol.In(disk_interval_options),
             vol.Required(CONF_HAS_UPS, default=has_ups): bool,
         }
     else:
@@ -118,13 +117,7 @@ def get_schema_base(
             vol.Required(
                 CONF_DISK_INTERVAL,
                 default=disk_interval
-            ): vol.All(
-                vol.Coerce(int),
-                vol.Range(
-                    min=MIN_DISK_INTERVAL,
-                    max=MAX_DISK_INTERVAL
-                )
-            ),
+            ): vol.In(disk_interval_options),
             vol.Required(CONF_HAS_UPS, default=has_ups): bool,
         }
 
@@ -322,7 +315,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "How often to update non-disk sensors (1-60 minutes)"
                 ),
                 "disk_interval_description": (
-                    "How often to update disk information (1-24 hours)"
+                    "How often to update disk information (5 minutes to 24 hours)"
                 ),
             },
         )
@@ -390,6 +383,12 @@ class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
                 },
             )
 
+        # Create a list of options for the disk interval selector
+        disk_interval_options = {
+            option: f"{option // 60} hours" if option >= 60 else f"{option} minutes"
+            for option in DISK_INTERVAL_OPTIONS
+        }
+
         schema = vol.Schema({
             vol.Optional(CONF_PORT, default=self._port): vol.Coerce(int),
             vol.Required(
@@ -405,13 +404,7 @@ class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required(
                 CONF_DISK_INTERVAL,
                 default=self._disk_interval
-            ): vol.All(
-                vol.Coerce(int),
-                vol.Range(
-                    min=MIN_DISK_INTERVAL,
-                    max=MAX_DISK_INTERVAL
-                )
-            ),
+            ): vol.In(disk_interval_options),
             vol.Required(CONF_HAS_UPS, default=self._has_ups): bool,
         })
 
@@ -423,7 +416,7 @@ class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
                     "How often to update non-disk sensors (1-60 minutes)"
                 ),
                 "disk_interval_description": (
-                    "How often to update disk information (1-24 hours)"
+                    "How often to update disk information (5 minutes to 24 hours)"
                 ),
             },
         )

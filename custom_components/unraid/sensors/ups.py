@@ -21,7 +21,7 @@ from .const import (
     UnraidSensorEntityDescription,
     UPS_METRICS,
 )
-from ..naming import EntityNaming
+from ..entity_naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -1,12 +1,11 @@
 """Docker-related sensors for Unraid."""
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable
 from dataclasses import dataclass, field
 
 from homeassistant.components.sensor import ( # type: ignore
-    SensorEntityDescription,
-    SensorStateClass,
+    SensorEntityDescription
 )
 from homeassistant.const import EntityCategory # type: ignore
 
@@ -168,80 +167,4 @@ class UnraidDockerSensors:
                     )
                 )
 
-# Compatibility classes for tests
-from .test_base import UnraidTestSensor
 
-class UnraidDockerContainerCountSensor(UnraidTestSensor):
-    """Sensor for Unraid Docker container count - compatibility for tests."""
-
-    def __init__(self, coordinator) -> None:
-        """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._attr_unique_id = f"unraid_docker_container_count"
-        self._attr_name = "Docker Containers"
-        self._attr_icon = "mdi:docker"
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-
-    @property
-    def native_value(self) -> Optional[int]:
-        """Return the number of Docker containers."""
-        if not self.coordinator.data or "docker_info" not in self.coordinator.data:
-            return None
-
-        docker_info = self.coordinator.data.get("docker_info", {})
-        return docker_info.get("container_count", None)
-
-    @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
-        """Return additional attributes about Docker containers."""
-        attrs = {}
-
-        if not self.coordinator.data or "docker_info" not in self.coordinator.data:
-            return attrs
-
-        docker_info = self.coordinator.data.get("docker_info", {})
-        containers = docker_info.get("docker_containers", [])
-
-        # Count running and stopped containers
-        running_count = 0
-        stopped_count = 0
-
-        for container in containers:
-            state = container.get("state", "").lower()
-            if state == "running":
-                running_count += 1
-            elif state in ["exited", "stopped"]:
-                stopped_count += 1
-
-        attrs["running_containers"] = running_count
-        attrs["stopped_containers"] = stopped_count
-
-        return attrs
-
-
-class UnraidDockerStatusSensor(UnraidTestSensor):
-    """Sensor for Unraid Docker service status - compatibility for tests."""
-
-    def __init__(self, coordinator) -> None:
-        """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._attr_unique_id = f"unraid_docker_status"
-        self._attr_name = "Docker Status"
-        self._attr_icon = "mdi:docker"
-
-    @property
-    def native_value(self) -> str:
-        """Return the Docker service status."""
-        if not self.coordinator.data or "docker_info" not in self.coordinator.data:
-            return "not_detected"
-
-        docker_info = self.coordinator.data.get("docker_info", {})
-        if not docker_info:
-            return "not_detected"
-
-        docker_running = docker_info.get("docker_running", False)
-
-        if docker_running:
-            return "running"
-        else:
-            return "stopped"

@@ -36,7 +36,7 @@
           "password": "Password",
           "port": "Port",
           "general_interval": "General Update Interval (Minutes)",
-          "disk_interval": "Disk Update Interval (Hours)",
+          "disk_interval": "Disk Update Interval",
           "has_ups": "UPS Insights"
         },
         "data_description": {
@@ -71,13 +71,13 @@
         "description": "Configure update intervals and settings",
         "data": {
           "general_interval": "General Update Interval (Minutes)",
-          "disk_interval": "Disk Update Interval (Hours)",
+          "disk_interval": "Disk Update Interval",
           "port": "SSH Port",
           "has_ups": "UPS Insights"
         },
         "data_description": {
           "general_interval": "How often to update non-disk sensors (1-60 minutes)",
-          "disk_interval": "How often to update disk information (1-24 hours)",
+          "disk_interval": "How often to update disk information",
           "port": "SSH port for connecting to your Unraid server",
           "has_ups": "Enable if you have a UPS connected to your Unraid server"
         }

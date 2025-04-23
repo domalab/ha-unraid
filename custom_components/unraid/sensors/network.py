@@ -20,7 +20,6 @@ from .const import (
 )
 
 from  ..api.network_operations import NetworkRateSmoothingMixin
-# from ..entity_naming import EntityNaming
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,12 +50,7 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
         self._direction = direction
         self._unit = NetworkSpeedUnit(1, "bit/s")  # Start with lowest unit
 
-        # Entity naming not used in this class
-        # EntityNaming(
-        #     domain=DOMAIN,
-        #     hostname=coordinator.hostname,
-        #     component="network"
-        # )
+
 
         description = UnraidSensorEntityDescription(
             key=f"network_{interface}_{direction}",

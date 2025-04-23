@@ -17,8 +17,7 @@ from ..helpers import (
     DiskDataHelperMixin,
     format_bytes,
     get_disk_identifiers,
-    get_pool_info,
-    is_solid_state_drive,
+    get_pool_info
 )
 
 # from ..helpers import EntityNaming
@@ -71,12 +70,7 @@ class UnraidDiskSensor(UnraidSensorBase, DiskDataHelperMixin):
         self._last_value: Optional[float] = None
         self._last_temperature: Optional[int] = None
 
-        # Entity naming not used in this class
-        # EntityNaming(
-        #     domain=DOMAIN,
-        #     hostname=coordinator.hostname,
-        #     component="disk"
-        # )
+
 
         # Get pretty name with capitalized first letter
         pretty_name = disk_name.capitalize()
@@ -242,12 +236,7 @@ class UnraidArraySensor(UnraidSensorBase, DiskDataHelperMixin):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Entity naming not used in this class
-        # EntityNaming(
-        #     domain=DOMAIN,
-        #     hostname=coordinator.hostname,
-        #     component="array"
-        # )
+
 
         description = UnraidSensorEntityDescription(
             key="array_usage",
@@ -306,12 +295,7 @@ class UnraidPoolSensor(UnraidSensorBase, DiskDataHelperMixin):
         # Get device and serial using the helper BEFORE using them in get_pool_icon
         self._device, self._serial = get_disk_identifiers(coordinator.data, pool_name)
 
-        # Entity naming not used in this class
-        # EntityNaming(
-        #     domain=DOMAIN,
-        #     hostname=coordinator.hostname,
-        #     component="pool"
-        # )
+
 
         # Get pretty name with capitalized first letter
         pretty_name = pool_name.capitalize()
@@ -448,28 +432,4 @@ class UnraidStorageSensors:
         # Add array sensor
         self.entities.append(UnraidArraySensor(coordinator))
 
-# Compatibility class for tests
-class UnraidDiskTempSensor(UnraidSensorBase):
-    """Disk temperature sensor - compatibility for tests."""
-
-    def __init__(self, coordinator, disk_name: str) -> None:
-        """Initialize the sensor."""
-        self._disk_name = disk_name
-
-        description = UnraidSensorEntityDescription(
-            key=f"disk_{disk_name}_temp",
-            name=f"{disk_name.capitalize()} Temperature",
-            icon="mdi:thermometer",
-            device_class=None,
-            state_class=SensorStateClass.MEASUREMENT,
-            value_fn=self._get_disk_temp
-        )
-        super().__init__(coordinator, description)
-
-    def _get_disk_temp(self, data: dict) -> float | None:
-        """Get disk temperature."""
-        for disk in data.get("system_stats", {}).get("individual_disks", []):
-            if disk.get("name") == self._disk_name and "temperature" in disk:
-                return float(disk["temperature"])
-        return None
 

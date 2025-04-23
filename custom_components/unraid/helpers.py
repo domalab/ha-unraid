@@ -10,12 +10,7 @@ from enum import Enum
 
 from .utils import format_bytes
 
-# Import EntityNaming from the new module was removed
-# from .entity_naming import EntityNaming
 
-# Removed unused import: from .api.disk_mapper import DiskMapper, DiskIdentifier
-
-# Temperature-related imports moved to utils.py to avoid circular imports
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,19 +75,12 @@ def get_memory_info(system_stats: Dict[str, Any]) -> Dict[str, Any]:
 
     return result
 
-# These functions have been moved to utils.py to avoid circular imports
-# def get_network_speed_unit(bytes_per_sec: float) -> Tuple[float, str]:
-#     """Get the most appropriate unit for a given network speed."""
-#     ...
 
-# def format_bytes(bytes_value: float) -> str:
-#     """Format bytes into appropriate units."""
-#     ...
 
 # Updated disk and pool mapping code
 DISK_NUMBER_PATTERN: Pattern = re.compile(r'disk(\d+)$')
 MOUNT_POINT_PATTERN: Pattern = re.compile(r'/mnt/disk(\d+)$')
-# Removed unused pattern: VALID_DEVICE_PATTERN
+
 
 @dataclass
 class DiskInfo:
@@ -217,12 +205,7 @@ def detect_pools(system_stats: dict) -> Dict[str, PoolInfo]:
                     "Detected ZFS pool: %s",
                     disk_name
                 )
-            # Special handling for testing with 'garbage' ZFS pool
-            if disk_name == "garbage":
-                filesystem = "zfs"
-                _LOGGER.info(
-                    "Detected test ZFS pool 'garbage'"
-                )
+
             if filesystem and filesystem not in ("", "unknown"):
                 _LOGGER.info(
                     "Detected pool from disk mappings: %s, filesystem: %s",
@@ -377,12 +360,7 @@ def get_disk_identifiers(coordinator_data: dict, disk_name: str) -> Tuple[Option
         )
         return None, None
 
-# Removed unused disk mapping functions:
-# - validate_device_path
-# - process_cache_disk
-# - process_array_disk
 
-# get_unraid_disk_mapping function has been moved to api/disk_mapping.py to avoid circular imports
 
 def get_pool_info(system_stats: dict) -> Dict[str, Dict[str, Any]]:
     """Get detailed information about all storage pools."""
@@ -439,7 +417,7 @@ def is_solid_state_drive(disk_data: dict) -> bool:
         )
         return False
 
-# Temperature-related functions have been moved to utils.py to avoid circular imports
+
 
 class DiskDataHelperMixin:
     """Mixin providing common disk data handling methods."""

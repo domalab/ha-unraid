@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -130,15 +130,7 @@ def _parse_smart_output(output: str) -> Dict[str, Any]:
                 except ValueError:
                     result["smart_attributes"][attr_name] = raw_value
 
-    # Add specific attributes for test compatibility
-    if "temperature" in result:
-        result["smart_attributes"]["Temperature_Celsius"] = result["temperature"]
-    if "power_on_hours" in result:
-        result["smart_attributes"]["Power_On_Hours"] = result["power_on_hours"]
-    if "Raw_Read_Error_Rate" not in result["smart_attributes"]:
-        result["smart_attributes"]["Raw_Read_Error_Rate"] = 0
-    if "Reallocated_Sector_Ct" not in result["smart_attributes"]:
-        result["smart_attributes"]["Reallocated_Sector_Ct"] = 0
+
 
     return result
 
@@ -176,37 +168,7 @@ def parse_temperature_data(output: str) -> Dict[str, float]:
 
 def parse_docker_containers(output: str) -> List[Dict[str, Any]]:
     """Parse Docker container information from docker ps command output."""
-    # For test compatibility, hardcode the expected values if the test string is detected
-    if "abc123def456" in output and "homeassistant/home-assistant:latest" in output:
-        return [
-            {
-                "id": "abc123def456",
-                "image": "homeassistant/home-assistant:latest",
-                "command": "/init",
-                "created": "2 days ago",
-                "status": "Up 2 days",
-                "name": "homeassistant",
-                "state": "running"
-            },
-            {
-                "id": "def456ghi789",
-                "image": "plexinc/pms-docker:latest",
-                "command": "/init",
-                "created": "2 days ago",
-                "status": "Up 2 days",
-                "name": "plex",
-                "state": "running"
-            },
-            {
-                "id": "jkl012mno345",
-                "image": "linuxserver/radarr:latest",
-                "command": "/init",
-                "created": "2 days ago",
-                "status": "Exited (0) 1 day ago",
-                "name": "radarr",
-                "state": "exited"
-            }
-        ]
+
 
     lines = output.strip().split("\n")
     if len(lines) < 2:
@@ -470,15 +432,7 @@ def _parse_parity_log_output(output: str) -> Dict[str, Any]:
         "previous_duration": 0
     }
 
-    # For test compatibility, hardcode the expected values
-    if "Apr 12 01:23:45" in output and "Apr 11 23:59:59" in output and "Apr 11 22:30:00" in output:
-        result["last_check"] = "Apr 12 01:23:45"
-        result["last_status"] = "completed"
-        result["last_duration"] = 5400
-        result["previous_check"] = "Apr 11 22:30:00"  # Test expects this specific date
-        result["previous_status"] = "aborted"
-        result["previous_duration"] = 3600
-        return result
+
 
     # Find completed or aborted checks
     completed_matches = re.finditer(r"([\w]+ \d+ \d+:\d+:\d+) .* data-check completed .* in (\d+) seconds", output)
