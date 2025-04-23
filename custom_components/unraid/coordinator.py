@@ -31,7 +31,6 @@ from .const import (
     CONF_DISK_INTERVAL,
     DEFAULT_GENERAL_INTERVAL,
     DEFAULT_DISK_INTERVAL,
-    DISK_INTERVAL_OPTIONS,
     CONF_HAS_UPS,
 )
 from .unraid import UnraidAPI
