@@ -1,0 +1,80 @@
+site_name: Unraid Integration for Home Assistant
+site_url: https://unraid-docs.domalab.net/
+site_description: Documentation for the Home Assistant Unraid integration
+site_author: domalab
+repo_url: https://github.com/domalab/ha-unraid
+repo_name: domalab/ha-unraid
+edit_uri: edit/main/docs/
+
+# Theme settings
+theme:
+  name: material
+  language: en
+  palette:
+    primary: indigo
+    accent: deep orange
+  font:
+    text: Roboto
+    code: Roboto Mono
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+
+# Extensions
+markdown_extensions:
+  - admonition
+  - attr_list
+  - codehilite
+  - footnotes
+  - md_in_html
+  - pymdownx.emoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+# Navigation
+nav:
+  - Home: index.md
+  - User Guide:
+    - Installation: user-guide/installation.md
+    - Features: user-guide/features.md
+    - Available Sensors: user-guide/available-sensors.md
+    - Service Commands: user-guide/service-commands.md
+    - Troubleshooting: user-guide/troubleshooting.md
+  - Advanced Usage:
+    - Examples: advanced/examples.md
+    - User Scripts: advanced/user-scripts.md
+    - Docker Management: advanced/docker-management.md
+    - VM Control: advanced/vm-control.md
+  - Development:
+    - Contributing: development/contributing.md
+  - Project:
+    - Changelog: project/changelog.md
+
+# Plugins
+plugins:
+  - search
+
+# Extra
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/domalab/ha-unraid
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX  # Replace with actual Google Analytics ID when deployed
+  generator: false
+  
+# Copyright
+copyright: Copyright &copy; 2024 domalab
