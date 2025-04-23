@@ -7,7 +7,6 @@ import aiofiles # type: ignore
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass
 import re
-import json
 from datetime import datetime
 
 from .disk_utils import is_valid_disk_name
@@ -397,8 +396,14 @@ class DiskOperationsMixin:
             return key, err
 
     async def collect_disk_info(self) -> List[Dict[str, Any]]:
-        """Collect information about disks using batched commands."""
-        _LOGGER.debug("Collecting disk information with batched command")
+        """Collect information about disks using batched commands.
+
+        This method is designed to respect disk standby states by:
+        1. First collecting basic disk information without SMART data
+        2. Only collecting SMART data for disks that are already in ACTIVE state
+        3. Never waking up disks that are in STANDBY mode
+        """
+        _LOGGER.debug("Collecting disk information with standby-aware batched command")
         disks = []
 
         try:
@@ -406,7 +411,8 @@ class DiskOperationsMixin:
             array_info_result = await self.execute_command("mdcmd status")
             array_info = array_info_result.stdout if array_info_result.exit_status == 0 else ""
 
-            # Get all disk information in a single command
+            # Get all disk information in a single command, but without SMART data first
+            # This prevents waking up disks in standby mode
             cmd = (
                 # Get disk usage
                 "echo '===DISK_USAGE==='; "
@@ -414,21 +420,12 @@ class DiskOperationsMixin:
                 # Get mount points and devices
                 "echo '===MOUNT_INFO==='; "
                 "mount | grep -E '/mnt/' | awk '{print $1,$3,$5}'; "
+                # Get disk serial numbers
+                "echo '===DISK_SERIALS==='; "
+                "lsblk -o NAME,SERIAL | grep -v '^NAME'; "
                 # Add ZFS support
                 "echo '===ZFS_POOLS==='; "
-                "if command -v zpool >/dev/null 2>&1; then zpool list -H -o name,size,alloc,free,capacity,health; else echo 'zfs_not_installed'; fi; "
-                # Get SMART data for all disks
-                "echo '===SMART_DATA==='; "
-                # First get a list of all physical devices
-                "for dev in $(ls -1 /dev/sd[a-z] /dev/nvme[0-9]n[0-9] 2>/dev/null); do "
-                "  echo \"$dev\"; "
-                "  if [[ $dev == *nvme* ]]; then "
-                "    nvme smart-log -o json $dev 2>/dev/null || smartctl -d nvme -a -j $dev 2>/dev/null || echo '{}'; "
-                "  else "
-                "    smartctl -A -j $dev 2>/dev/null || echo '{}'; "
-                "  fi; "
-                "  echo '---NEXT_DEVICE---'; "
-                "done"
+                "if command -v zpool >/dev/null 2>&1; then zpool list -H -o name,size,alloc,free,capacity,health; else echo 'zfs_not_installed'; fi"
             )
 
             result = await self.execute_command(cmd)
@@ -438,12 +435,25 @@ class DiskOperationsMixin:
                 sections = result.stdout.split('===DISK_USAGE===')[1].split('===MOUNT_INFO===')
                 disk_usage_output = sections[0].strip()
 
-                sections = sections[1].split('===ZFS_POOLS===')
+                sections = sections[1].split('===DISK_SERIALS===')
                 mount_info_output = sections[0].strip()
 
-                sections = sections[1].split('===SMART_DATA===')
-                zfs_pools_output = sections[0].strip()
-                smart_data_output = sections[1].strip()
+                sections = sections[1].split('===ZFS_POOLS===')
+                disk_serials_output = sections[0].strip()
+                zfs_pools_output = sections[1].strip()
+
+                # Parse disk serial numbers
+                device_to_serial = {}
+                for line in disk_serials_output.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        device_name = parts[0].strip()
+                        serial = parts[1].strip()
+                        if serial and serial != "":
+                            device_to_serial[device_name] = serial
+                            _LOGGER.debug(f"Found serial for {device_name}: {serial}")
+
+                # We don't collect SMART data in the initial batch to avoid waking up disks
 
                 # Parse mount info to create a mapping of mount points to devices and filesystem types
                 mount_to_device = {}
@@ -508,29 +518,7 @@ class DiskOperationsMixin:
                                     physical_device = f"/dev/{value}"
                                     md_to_physical[md_device] = physical_device
 
-                # Parse SMART data
-                device_to_smart_data = {}
-                current_device = None
-                current_data = ""
-
-                for line in smart_data_output.splitlines():
-                    if line.startswith("/dev/"):
-                        current_device = line.strip()
-                        current_data = ""
-                    elif line == "---NEXT_DEVICE---":
-                        if current_device and current_data:
-                            try:
-                                device_to_smart_data[current_device] = json.loads(current_data)
-                            except json.JSONDecodeError:
-                                # Suppress warnings for boot devices (typically /dev/sda)
-                                if current_device == "/dev/sda":
-                                    _LOGGER.debug("No SMART data available for boot device %s", current_device)
-                                else:
-                                    _LOGGER.warning("Failed to parse SMART data for %s", current_device)
-                        current_device = None
-                        current_data = ""
-                    elif current_device:
-                        current_data += line + "\n"
+                # No need to initialize SMART data dictionary as we'll collect it per active disk
 
                 # Parse disk usage and create disk entries
                 for line in disk_usage_output.splitlines():
@@ -549,8 +537,8 @@ class DiskOperationsMixin:
 
                         # Check if this is a ZFS pool
                         is_zfs_pool = False
-                        for pool_name, pool_info in zfs_pools.items():
-                            if pool_name == disk_name:
+                        for zfs_pool_name in zfs_pools.keys():
+                            if zfs_pool_name == disk_name:
                                 is_zfs_pool = True
                                 _LOGGER.debug(f"Detected {disk_name} as ZFS pool")
 
@@ -586,55 +574,25 @@ class DiskOperationsMixin:
                                 device_path = md_to_physical[device_path]
                             disk_info["device"] = device_path
 
-                        # Add SMART data if available and disk is active
-                        if state == DiskState.ACTIVE and device_path and device_path in device_to_smart_data:
-                            smart_data = device_to_smart_data[device_path]
+                            # Get disk serial number if available
+                            if device_path and device_path.startswith("/dev/"):
+                                # Extract the device name without /dev/ prefix
+                                device_name = device_path.replace("/dev/", "")
+                                # Check if we have serial number in the device_to_serial mapping
+                                if device_name in device_to_serial:
+                                    disk_info["serial"] = device_to_serial[device_name]
 
-                            # Extract SMART status
-                            if "smart_status" in smart_data:
-                                # Check if smart_status is already a string (from our updated SMART processing)
-                                if isinstance(smart_data["smart_status"], str):
-                                    # Convert to title case for consistency
-                                    disk_info["smart_status"] = smart_data["smart_status"].title()
-                                else:
-                                    # Legacy format: smart_status is an object with a passed property
-                                    disk_info["smart_status"] = "Passed" if smart_data["smart_status"].get("passed", True) else "Failed"
-
-                            # Extract temperature
-                            temperature = None
-                            is_nvme = "nvme" in device_path.lower()
-
-                            if is_nvme:
-                                # Try different temperature field locations for NVMe
-                                nvme_data = smart_data.get("nvme_smart_health_information_log", {})
-                                if isinstance(nvme_data, dict) and "temperature" in nvme_data:
-                                    temperature = nvme_data["temperature"]
-                                elif "temperature" in smart_data:
-                                    temp_data = smart_data["temperature"]
-                                    if isinstance(temp_data, dict) and "current" in temp_data:
-                                        temperature = temp_data["current"]
-                                    elif isinstance(temp_data, (int, float)):
-                                        temperature = temp_data
-
-                                # Fix for NVMe temperature values reported in tenths of a degree
-                                if temperature is not None and temperature > 100 and temperature < 1000:
-                                    temperature = temperature / 10
-                            else:
-                                # For SATA drives
-                                if "temperature" in smart_data and "current" in smart_data["temperature"]:
-                                    temperature = smart_data["temperature"]["current"]
-                                else:
-                                    # Try to find temperature in attributes
-                                    for attr in smart_data.get("ata_smart_attributes", {}).get("table", []):
-                                        if attr.get("name") == "Temperature_Celsius" and "raw" in attr:
-                                            temperature = attr["raw"].get("value")
-                                            break
-
-                            if temperature is not None:
-                                disk_info["temperature"] = int(temperature)
-
-                            # Store the full SMART data
-                            disk_info["smart_data"] = smart_data
+                        # Only collect SMART data if disk is active to avoid waking up standby disks
+                        if state == DiskState.ACTIVE and device_path:
+                            # Get SMART data for this specific active disk
+                            smart_data = await self._smart_manager.get_smart_data(device_path)
+                            if smart_data:
+                                disk_info.update({
+                                    "smart_status": "Passed" if smart_data.get("smart_status") else "Failed",
+                                    "temperature": smart_data.get("temperature"),
+                                    "power_on_hours": smart_data.get("power_on_hours"),
+                                    "smart_data": smart_data
+                                })
 
                         disks.append(disk_info)
                     except (ValueError, IndexError) as err:
@@ -646,72 +604,55 @@ class DiskOperationsMixin:
 
                     # Add ZFS pools to individual_disks list if they're not already there
                     existing_disk_names = {disk.get('name') for disk in disks}
-                    for pool_name, pool_info in zfs_pools.items():
+                    for pool_name in zfs_pools.keys():
                         if pool_name not in existing_disk_names:
                             # Check if the pool is mounted
                             mount_point = f"/mnt/{pool_name}"
 
-                            # Convert size strings to bytes
+                            # Parse ZFS pool data from command output
                             try:
-                                # Parse size (e.g., 222G)
-                                size_str = pool_info.get('size', '0')
-                                size_value = float(size_str[:-1])
-                                size_unit = size_str[-1].upper()
-                                total_bytes = 0
+                                # Get the pool data from zpool command output
+                                zpool_cmd = f"zpool list -H -o name,size,alloc,free,capacity,health {pool_name}"
+                                zpool_result = await self.execute_command(zpool_cmd)
 
-                                if size_unit == 'T':
-                                    total_bytes = int(size_value * 1024 * 1024 * 1024 * 1024)
-                                elif size_unit == 'G':
-                                    total_bytes = int(size_value * 1024 * 1024 * 1024)
-                                elif size_unit == 'M':
-                                    total_bytes = int(size_value * 1024 * 1024)
-                                elif size_unit == 'K':
-                                    total_bytes = int(size_value * 1024)
-                                else:
-                                    total_bytes = int(size_value)
+                                if zpool_result.exit_status == 0 and zpool_result.stdout.strip():
+                                    parts = zpool_result.stdout.strip().split('\t')
+                                    if len(parts) >= 6:
+                                        # Extract values
+                                        size_str = parts[1]
+                                        alloc_str = parts[2]
+                                        free_str = parts[3]
+                                        capacity_str = parts[4].rstrip('%')
+                                        health_str = parts[5]
 
-                                # Parse allocated space (e.g., 5.00G)
-                                alloc_str = pool_info.get('alloc', '0')
-                                alloc_value = float(alloc_str[:-1])
-                                alloc_unit = alloc_str[-1].upper()
-                                used_bytes = 0
+                                        # Parse size values
+                                        total_bytes = self._parse_size_string(size_str)
+                                        used_bytes = self._parse_size_string(alloc_str)
+                                        free_bytes = self._parse_size_string(free_str)
 
-                                if alloc_unit == 'T':
-                                    used_bytes = int(alloc_value * 1024 * 1024 * 1024 * 1024)
-                                elif alloc_unit == 'G':
-                                    used_bytes = int(alloc_value * 1024 * 1024 * 1024)
-                                elif alloc_unit == 'M':
-                                    used_bytes = int(alloc_value * 1024 * 1024)
-                                elif alloc_unit == 'K':
-                                    used_bytes = int(alloc_value * 1024)
-                                else:
-                                    used_bytes = int(alloc_value)
+                                        # Get current disk state - ZFS pools are always active
+                                        # This avoids unnecessary SMART checks
+                                        state = DiskState.ACTIVE
 
-                                # Calculate free space
-                                free_bytes = total_bytes - used_bytes
+                                        # Create disk info for the ZFS pool
+                                        disk_info = {
+                                            "name": pool_name,
+                                            "mount_point": mount_point,
+                                            "total": total_bytes,
+                                            "used": used_bytes,
+                                            "free": free_bytes,
+                                            "percentage": int(capacity_str),
+                                            "state": state.value,
+                                            "smart_data": {},
+                                            "smart_status": "Unknown",
+                                            "temperature": None,
+                                            "device": None,
+                                            "filesystem": "zfs",
+                                            "health": health_str
+                                        }
 
-                                # Get current disk state
-                                state = await self._state_manager.get_disk_state(pool_name)
-
-                                # Create disk info for the ZFS pool
-                                disk_info = {
-                                    "name": pool_name,
-                                    "mount_point": mount_point,
-                                    "total": total_bytes,
-                                    "used": used_bytes,
-                                    "free": free_bytes,
-                                    "percentage": int(pool_info.get('capacity', '0').rstrip('%')),
-                                    "state": state.value,
-                                    "smart_data": {},
-                                    "smart_status": "Unknown",
-                                    "temperature": None,
-                                    "device": None,
-                                    "filesystem": "zfs",
-                                    "health": pool_info.get('health', 'UNKNOWN')
-                                }
-
-                                disks.append(disk_info)
-                                _LOGGER.info(f"Added ZFS pool {pool_name} to individual_disks")
+                                        disks.append(disk_info)
+                                        _LOGGER.info(f"Added ZFS pool {pool_name} to individual_disks")
                             except (ValueError, TypeError, IndexError) as err:
                                 _LOGGER.warning(f"Error adding ZFS pool {pool_name} to individual_disks: {err}")
 
@@ -728,11 +669,40 @@ class DiskOperationsMixin:
             _LOGGER.error("Error collecting disk information with batched command: %s", err)
             return [], {}
 
+    def _parse_size_string(self, size_str: str) -> int:
+        """Parse size strings like 1.5T, 500G, etc. to bytes."""
+        try:
+            if not size_str or size_str == '-':
+                return 0
+
+            # Handle decimal points in the value
+            if size_str[-1].isalpha():
+                size_value = float(size_str[:-1])
+                size_unit = size_str[-1].upper()
+            else:
+                size_value = float(size_str)
+                size_unit = 'B'
+
+            # Convert to bytes based on unit
+            if size_unit == 'T':
+                return int(size_value * 1024 * 1024 * 1024 * 1024)
+            elif size_unit == 'G':
+                return int(size_value * 1024 * 1024 * 1024)
+            elif size_unit == 'M':
+                return int(size_value * 1024 * 1024)
+            elif size_unit == 'K':
+                return int(size_value * 1024)
+            else:
+                return int(size_value)
+        except (ValueError, TypeError) as err:
+            _LOGGER.warning(f"Error parsing size string '{size_str}': {err}")
+            return 0
+
     async def get_individual_disk_usage(self) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Get usage information for individual disks."""
         try:
-            # Try the optimized batched command approach first
-            _LOGGER.debug("Fetching individual disk usage with optimized approach")
+            # Use the optimized batched command approach that respects disk standby state
+            _LOGGER.debug("Fetching individual disk usage with standby-aware approach")
             disks, extra_stats = await self.collect_disk_info()
             # Return the disks or an empty list if none were found
             return disks if disks else [], extra_stats
@@ -814,7 +784,10 @@ class DiskOperationsMixin:
                 # This is a ZFS pool
                 parts = zfs_result.stdout.strip().split('\t')
                 if len(parts) >= 6:
-                    name, size, alloc, free, capacity, health = parts
+                    # Extract only the values we need
+                    pool_name = parts[0]
+                    capacity = parts[4]
+                    health = parts[5]
                     # Remove '%' from capacity
                     capacity = capacity.rstrip('%')
 

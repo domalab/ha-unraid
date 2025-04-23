@@ -322,10 +322,22 @@ def get_disk_identifiers(coordinator_data: dict, disk_name: str) -> Tuple[Option
 
                         # Try serial from different possible locations
                         if not serial:
-                            serial = (
-                                disk.get("serial")
-                                or disk.get("smart_data", {}).get("serial_number")
-                            )
+                            # First try direct serial field
+                            serial = disk.get("serial")
+
+                            # Then try smart_data.serial_number
+                            if not serial and "smart_data" in disk:
+                                smart_data = disk.get("smart_data", {})
+                                serial = smart_data.get("serial_number")
+
+                                # For NVMe drives, check nvme_smart_health_information_log
+                                if not serial and "nvme_smart_health_information_log" in smart_data:
+                                    nvme_data = smart_data.get("nvme_smart_health_information_log", {})
+                                    serial = nvme_data.get("serial_number")
+
+                            # If still no serial, check if we can get it from the device
+                            if not serial and device and device.startswith("/dev/"):
+                                _LOGGER.debug("No serial found in disk data, will try to get it from lsblk")
                         break
 
                 # Check if this is a pool

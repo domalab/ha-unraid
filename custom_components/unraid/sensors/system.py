@@ -9,7 +9,7 @@ from homeassistant.components.sensor import ( # type: ignore
     SensorDeviceClass,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfTemperature # type: ignore
+from homeassistant.const import PERCENTAGE, UnitOfTemperature, EntityCategory # type: ignore
 from homeassistant.util import dt as dt_util # type: ignore
 
 from .base import UnraidSensorBase
@@ -584,6 +584,122 @@ class UnraidUptimeSensor(UnraidSensorBase):
             "last_update": dt_util.now().isoformat(),
         }
 
+class UnraidMemoryUsageSensor(UnraidSensorBase):
+    """Memory usage sensor for Unraid."""
+
+    def __init__(self, coordinator) -> None:
+        """Initialize the sensor."""
+        description = UnraidSensorEntityDescription(
+            key="memory_usage",
+            name="Memory Usage",
+            native_unit_of_measurement=PERCENTAGE,
+            device_class=SensorDeviceClass.POWER_FACTOR,
+            state_class=SensorStateClass.MEASUREMENT,
+            icon="mdi:memory",
+            suggested_display_precision=1,
+            value_fn=lambda data: round(
+                data.get("system_stats", {})
+                .get("memory_usage", {})
+                .get("percentage", 0), 1
+            ),
+        )
+        super().__init__(coordinator, description)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        memory = self.coordinator.data.get("system_stats", {}).get("memory_usage", {})
+        return {
+            "total": memory.get("total", "unknown"),
+            "used": memory.get("used", "unknown"),
+            "free": memory.get("free", "unknown"),
+            "cached": memory.get("cached", "unknown"),
+            "buffers": memory.get("buffers", "unknown"),
+            "last_update": dt_util.now().isoformat(),
+        }
+
+class UnraidArrayStatusSensor(UnraidSensorBase):
+    """Array status sensor for Unraid."""
+
+    def __init__(self, coordinator) -> None:
+        """Initialize the sensor."""
+        description = UnraidSensorEntityDescription(
+            key="array_status",
+            name="Array Status",
+            icon="mdi:harddisk-plus",
+            device_class=SensorDeviceClass.ENUM,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            options=["started", "stopped", "starting", "stopping", "unknown"],
+            value_fn=self._get_array_status,
+        )
+        super().__init__(coordinator, description)
+
+    def _get_array_status(self, data: dict) -> str:
+        """Get array status."""
+        try:
+            # Try to get array_state first (from batched command)
+            array_data = data.get("system_stats", {}).get("array_state", {})
+            if not array_data:
+                # Fall back to array_status if available
+                array_data = data.get("system_stats", {}).get("array_status", {})
+
+            # Get state from the data
+            if isinstance(array_data, dict):
+                state = array_data.get("state", "unknown").lower()
+            elif isinstance(array_data, str):
+                state = array_data.lower()
+            else:
+                state = "unknown"
+
+            # Normalize state values
+            if state == "started":
+                return "started"
+            elif state == "stopped":
+                return "stopped"
+            elif "start" in state:
+                return "starting"
+            elif "stop" in state:
+                return "stopping"
+            else:
+                return "unknown"
+        except Exception as err:
+            _LOGGER.debug("Error getting array status: %s", err)
+            return "unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        try:
+            # Try to get array_state first (from batched command)
+            array_data = self.coordinator.data.get("system_stats", {}).get("array_state", {})
+            if not array_data:
+                # Fall back to array_status if available
+                array_data = self.coordinator.data.get("system_stats", {}).get("array_status", {})
+
+            # If array_data is a string, just return the raw state
+            if isinstance(array_data, str):
+                return {
+                    "raw_state": array_data,
+                    "last_update": dt_util.now().isoformat(),
+                }
+
+            # Otherwise, extract all the attributes
+            return {
+                "raw_state": array_data.get("state", "unknown"),
+                "synced": array_data.get("synced", False),
+                "sync_action": array_data.get("sync_action"),
+                "sync_progress": array_data.get("sync_progress", 0),
+                "sync_errors": array_data.get("sync_errors", 0),
+                "num_disks": array_data.get("num_disks", 0),
+                "num_disabled": array_data.get("num_disabled", 0),
+                "num_invalid": array_data.get("num_invalid", 0),
+                "num_missing": array_data.get("num_missing", 0),
+                "last_update": dt_util.now().isoformat(),
+            }
+        except Exception as err:
+            _LOGGER.debug("Error getting array attributes: %s", err)
+            return {}
+
 class UnraidSystemSensors:
     """Helper class to create all system sensors."""
 
@@ -592,6 +708,8 @@ class UnraidSystemSensors:
         self.entities = [
             UnraidCPUUsageSensor(coordinator),
             UnraidRAMUsageSensor(coordinator),
+            UnraidMemoryUsageSensor(coordinator),
+            UnraidArrayStatusSensor(coordinator),  # Add the new Array Status sensor
             UnraidUptimeSensor(coordinator),
             UnraidCPUTempSensor(coordinator),
             UnraidMotherboardTempSensor(coordinator),

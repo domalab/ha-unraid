@@ -62,7 +62,19 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
         """Initialize the coordinator."""
         self.api = api
         self.entry = entry
-        self.has_ups = entry.options.get(CONF_HAS_UPS, False)
+
+        # Check if UPS is enabled in configuration
+        has_ups_in_data = entry.data.get(CONF_HAS_UPS, False)
+        has_ups_in_options = entry.options.get(CONF_HAS_UPS, False)
+        _LOGGER.debug(
+            "UPS configuration - Data: %s, Options: %s",
+            has_ups_in_data,
+            has_ups_in_options
+        )
+
+        # Use data if options is not set
+        self.has_ups = has_ups_in_options or has_ups_in_data
+        _LOGGER.debug("UPS enabled: %s", self.has_ups)
 
         # Device tracking
         self._device_lock = asyncio.Lock()
@@ -781,7 +793,14 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
                                     )
 
                         if ups_info and isinstance(ups_info, dict):
+                            # Store UPS info in both locations for backward compatibility
                             data["ups_info"] = ups_info
+                            _LOGGER.debug("UPS info fetched: %s", ups_info)
+
+                            # Also store in system_stats for the UPS sensors to access
+                            if "system_stats" in data and isinstance(data["system_stats"], dict):
+                                data["system_stats"]["ups_info"] = ups_info
+                                _LOGGER.debug("UPS info stored in system_stats")
                     except (ConnectionError, TimeoutError, OSError, ValueError) as err:
                         _LOGGER.error("Error getting UPS info: %s", err)
 

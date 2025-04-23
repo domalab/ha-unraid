@@ -23,6 +23,8 @@ def register_system_sensors() -> None:
     from .system import (
         UnraidCPUUsageSensor,
         UnraidRAMUsageSensor,
+        UnraidMemoryUsageSensor,
+        UnraidArrayStatusSensor,
         UnraidUptimeSensor,
         UnraidCPUTempSensor,
         UnraidMotherboardTempSensor,
@@ -35,6 +37,8 @@ def register_system_sensors() -> None:
     # Register sensor types
     SensorFactory.register_sensor_type("cpu_usage", UnraidCPUUsageSensor)
     SensorFactory.register_sensor_type("ram_usage", UnraidRAMUsageSensor)
+    SensorFactory.register_sensor_type("memory_usage", UnraidMemoryUsageSensor)
+    SensorFactory.register_sensor_type("array_status", UnraidArrayStatusSensor)
     SensorFactory.register_sensor_type("uptime", UnraidUptimeSensor)
     SensorFactory.register_sensor_type("cpu_temp", UnraidCPUTempSensor)
     SensorFactory.register_sensor_type("motherboard_temp", UnraidMotherboardTempSensor)
@@ -88,17 +92,14 @@ def register_network_sensors() -> None:
 
 
 def register_ups_sensors() -> None:
-    """Register UPS sensors with the factory."""
-    from .ups import (
-        UnraidUPSCurrentPowerSensor,
-        UnraidUPSEnergyConsumption,
-        UnraidUPSLoadPercentage,
-    )
+    """Register UPS sensors with the factory.
 
-    # Register sensor types
-    SensorFactory.register_sensor_type("ups_power", UnraidUPSCurrentPowerSensor)
-    SensorFactory.register_sensor_type("ups_energy", UnraidUPSEnergyConsumption)
-    SensorFactory.register_sensor_type("ups_load", UnraidUPSLoadPercentage)
+    Only registers the UPS Server Power sensor for Energy Dashboard.
+    """
+    from .ups import UnraidUPSServerPowerSensor
+
+    # Register only the server power sensor type
+    SensorFactory.register_sensor_type("ups_server_power", UnraidUPSServerPowerSensor)
 
     # Register creator functions
     SensorFactory.register_sensor_creator(
@@ -113,6 +114,8 @@ def create_system_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> L
     from .system import (
         UnraidCPUUsageSensor,
         UnraidRAMUsageSensor,
+        UnraidMemoryUsageSensor,
+        UnraidArrayStatusSensor,
         UnraidUptimeSensor,
         UnraidCPUTempSensor,
         UnraidMotherboardTempSensor,
@@ -125,6 +128,8 @@ def create_system_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> L
     entities = [
         UnraidCPUUsageSensor(coordinator),
         UnraidRAMUsageSensor(coordinator),
+        UnraidMemoryUsageSensor(coordinator),
+        UnraidArrayStatusSensor(coordinator),
         UnraidUptimeSensor(coordinator),
         UnraidCPUTempSensor(coordinator),
         UnraidMotherboardTempSensor(coordinator),
@@ -312,22 +317,50 @@ def create_network_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> 
 
 
 def create_ups_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> List[Entity]:
-    """Create UPS sensors."""
-    from .ups import (
-        UnraidUPSCurrentPowerSensor,
-        UnraidUPSEnergyConsumption,
-        UnraidUPSLoadPercentage,
-    )
+    """Create UPS sensors.
+
+    Only creates the UPS Server Power sensor for Energy Dashboard if NOMPOWER is available.
+    """
+    from .ups import UnraidUPSServerPowerSensor
 
     entities = []
+    _LOGGER.debug("Starting UPS sensors creation function")
+
+    # Check if UPS is enabled in configuration
+    _LOGGER.debug("UPS enabled in configuration: %s", coordinator.has_ups)
 
     if coordinator.has_ups:
-        entities.extend([
-            UnraidUPSCurrentPowerSensor(coordinator),
-            UnraidUPSEnergyConsumption(coordinator),
-            UnraidUPSLoadPercentage(coordinator),
-        ])
+        # Check if coordinator data is available
+        _LOGGER.debug("Coordinator data available: %s", bool(coordinator.data))
+        _LOGGER.debug("Coordinator data keys: %s", coordinator.data.keys() if coordinator.data else "None")
 
+        # Check if UPS info has NOMPOWER attribute
+        system_stats = coordinator.data.get("system_stats", {})
+        _LOGGER.debug("System stats available: %s", bool(system_stats))
+        _LOGGER.debug("System stats keys: %s", system_stats.keys() if system_stats else "None")
+
+        ups_info = system_stats.get("ups_info", {})
+        _LOGGER.debug("UPS info available: %s", bool(ups_info))
+        _LOGGER.debug("UPS info keys: %s", ups_info.keys() if ups_info else "None")
+        _LOGGER.debug("UPS info content: %s", ups_info)
+
+        if ups_info and "NOMPOWER" in ups_info:
+            _LOGGER.info(
+                "Creating UPS Server Power sensor for Energy Dashboard. "
+                "NOMPOWER: %sW",
+                ups_info.get("NOMPOWER")
+            )
+            entities.append(UnraidUPSServerPowerSensor(coordinator))
+            _LOGGER.debug("UPS Server Power sensor created successfully")
+        else:
+            _LOGGER.warning(
+                "NOMPOWER attribute not available in UPS data, "
+                "skipping UPS Server Power sensor"
+            )
+    else:
+        _LOGGER.debug("UPS not enabled in configuration, skipping UPS sensors")
+
+    _LOGGER.debug("UPS sensors creation complete, created %d sensors", len(entities))
     return entities
 
 

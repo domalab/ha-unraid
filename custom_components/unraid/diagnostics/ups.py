@@ -87,6 +87,16 @@ class UnraidUPSBinarySensor(UnraidBinarySensorBase):
                 "status": ups_info.get("STATUS", "Unknown"),
             }
 
+            # Store binary sensor data in coordinator for other sensors to use
+            if "binary_sensors" not in self.coordinator.data:
+                self.coordinator.data["binary_sensors"] = {}
+
+            # Use entity_id as the key
+            self.coordinator.data["binary_sensors"][self.entity_id] = {
+                "state": self.state,
+                "attributes": {},  # Will be populated below
+            }
+
             # Add percentage values with validation
             for key, attr_name in [
                 ("BCHARGE", "battery_charge"),
@@ -163,6 +173,11 @@ class UnraidUPSBinarySensor(UnraidBinarySensorBase):
                 attrs["manufacture_date"] = manufacture_date
 
             _LOGGER.debug("UPS attributes: %s", attrs)
+
+            # Store attributes in coordinator for other sensors to use
+            if "binary_sensors" in self.coordinator.data and self.entity_id in self.coordinator.data["binary_sensors"]:
+                self.coordinator.data["binary_sensors"][self.entity_id]["attributes"] = attrs.copy()
+
             return attrs
 
         except (KeyError, AttributeError, TypeError) as err:
