@@ -1,6 +1,6 @@
 # Changelog
 
-This page documents all notable changes to the Unraid Integration for Home Assistant. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+This page documents all notable changes to the Unraid Integration for Home Assistant.
 
 ## [Unreleased]
 
@@ -8,7 +8,7 @@ This page documents all notable changes to the Unraid Integration for Home Assis
 - Documentation in MkDocs with Material theme
 - Added GitHub Pages site for documentation hosting
 
-## [1.3.0] - 2024-04-15
+## [2024.04.15]
 
 ### Added
 - Power consumption monitoring for supported UPS devices
@@ -24,7 +24,7 @@ This page documents all notable changes to the Unraid Integration for Home Assis
 - Increased default disk update interval for better performance
 - Improved error messages for authentication failures
 
-## [1.2.0] - 2024-03-22
+## [2024.03.22]
 
 ### Added
 - System services: reboot, shutdown, and array stop
@@ -40,7 +40,7 @@ This page documents all notable changes to the Unraid Integration for Home Assis
 - Enhanced configuration flow with better validation
 - Improved documentation for service parameters
 
-## [1.1.0] - 2024-02-10
+## [2024.02.10]
 
 ### Added
 - Docker container pause and resume services
@@ -57,7 +57,7 @@ This page documents all notable changes to the Unraid Integration for Home Assis
 - Refactored code for better maintainability
 - Improved sensor update logic for better performance
 
-## [1.0.0] - 2024-01-08
+## [2024.01.08]
 
 ### Initial Release
 
@@ -73,8 +73,8 @@ This page documents all notable changes to the Unraid Integration for Home Assis
 - Config flow validation
 - Comprehensive diagnostics
 
-[Unreleased]: https://github.com/domalab/ha-unraid/compare/v1.3.0...HEAD
-[1.3.0]: https://github.com/domalab/ha-unraid/compare/v1.2.0...v1.3.0
-[1.2.0]: https://github.com/domalab/ha-unraid/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/domalab/ha-unraid/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/domalab/ha-unraid/releases/tag/v1.0.0 
+[Unreleased]: https://github.com/domalab/ha-unraid/compare/v2024.04.15...HEAD
+[2024.04.15]: https://github.com/domalab/ha-unraid/compare/v2024.03.22...v2024.04.15
+[2024.03.22]: https://github.com/domalab/ha-unraid/compare/v2024.02.10...v2024.03.22
+[2024.02.10]: https://github.com/domalab/ha-unraid/compare/v2024.01.08...v2024.02.10
+[2024.01.08]: https://github.com/domalab/ha-unraid/releases/tag/v2024.01.08

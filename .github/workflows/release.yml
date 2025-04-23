@@ -7,6 +7,10 @@ on:
         description: 'Version to release (e.g., 2025.04.09)'
         required: true
         type: string
+      release_notes:
+        description: 'Release notes (markdown format)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -29,12 +33,6 @@ jobs:
         run: |
           sed -i 's/"version": "[^"]*"/"version": "${{ github.event.inputs.version }}"/' custom_components/unraid/manifest.json
 
-      - name: Generate changelog
-        id: changelog
-        uses: metcalfc/changelog-generator@v4.6.2
-        with:
-          mytoken: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Commit version changes
         run: |
           git config --local user.email "action@github.com"
@@ -50,7 +48,8 @@ jobs:
           tag_name: v${{ github.event.inputs.version }}
           name: Release v${{ github.event.inputs.version }}
           body: |
-            ## What's Changed
-            ${{ steps.changelog.outputs.changelog }}
+            # Release ${{ github.event.inputs.version }}
+
+            ${{ github.event.inputs.release_notes }}
           draft: false
           prerelease: false
