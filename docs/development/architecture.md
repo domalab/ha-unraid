@@ -6,78 +6,9 @@ This document provides a detailed overview of the Unraid integration's architect
 
 The Unraid integration follows a layered architecture pattern:
 
-```mermaid
-flowchart TD
-    subgraph HomeAssistant["Home Assistant"]
-        ConfigFlow["Config Flow"]
-        UpdateCoordinator["Data Update Coordinator"]
-        
-        subgraph Platforms["Platform Entities"]
-            Sensors["Sensors"]
-            BinarySensors["Binary Sensors"]
-            Switches["Switches"]
-            Buttons["Buttons"]
-        end
-        
-        subgraph Services["Services"]
-            DockerServices["Docker Services"]
-            VMServices["VM Services"]
-            SystemServices["System Services"]
-            UserScriptServices["User Script Services"]
-        end
-    end
-    
-    subgraph UnraidAPI["Unraid API"]
-        ConnectionManager["Connection Manager"]
-        CacheManager["Cache Manager"]
-        
-        subgraph Modules["API Modules"]
-            SystemOps["System Operations"]
-            DiskOps["Disk Operations"]
-            DockerOps["Docker Operations"]
-            VMOps["VM Operations"]
-            UPSOps["UPS Operations"]
-            UserScriptOps["User Script Operations"]
-            NetworkOps["Network Operations"]
-        end
-    end
-    
-    subgraph Unraid["Unraid Server"]
-        SSH["SSH"]
-        System["System Info"]
-        Docker["Docker"]
-        VMs["VMs"]
-        Array["Array & Disks"]
-        UPS["UPS"]
-        Scripts["User Scripts"]
-    end
-    
-    ConfigFlow --> UpdateCoordinator
-    UpdateCoordinator --> Platforms
-    UpdateCoordinator --> Services
-    
-    UpdateCoordinator <--> UnraidAPI
-    
-    ConnectionManager <--> SSH
-    
-    Modules <--> ConnectionManager
-    Modules --> CacheManager
-    
-    System <--> SystemOps
-    Docker <--> DockerOps
-    VMs <--> VMOps
-    Array <--> DiskOps
-    UPS <--> UPSOps
-    Scripts <--> UserScriptOps
-    
-    classDef haNode fill:#3498db,stroke:#2980b9,color:white
-    classDef apiNode fill:#e74c3c,stroke:#c0392b,color:white
-    classDef unraidNode fill:#2ecc71,stroke:#27ae60,color:white
-    
-    class HomeAssistant,ConfigFlow,UpdateCoordinator,Platforms,Services,Sensors,BinarySensors,Switches,Buttons,DockerServices,VMServices,SystemServices,UserScriptServices haNode
-    class UnraidAPI,ConnectionManager,CacheManager,Modules,SystemOps,DiskOps,DockerOps,VMOps,UPSOps,UserScriptOps,NetworkOps apiNode
-    class Unraid,SSH,System,Docker,VMs,Array,UPS,Scripts unraidNode
-```
+*[Diagram: High-level architecture showing the layered components of the Unraid integration, including Home Assistant layer, API layer, and Unraid server layer]*
+
+**Note:** A detailed architecture diagram will be added in a future update.
 
 ## Key Components
 
@@ -85,7 +16,7 @@ flowchart TD
 
 This is the top layer that integrates with Home Assistant's framework:
 
-1. **Config Flow** (`config_flow.py`): 
+1. **Config Flow** (`config_flow.py`):
    - Handles setup and configuration of the integration
    - Validates connection settings
    - Manages integration options
@@ -173,41 +104,12 @@ The actual Unraid server that the integration communicates with:
 
 The integration uses a factory pattern for creating entities:
 
-```mermaid
-classDiagram
-    class SensorFactory {
-        +register_sensor_type(type_name, sensor_class)
-        +register_sensor_creator(name, creator_fn, group)
-        +create_all_sensors(coordinator)
-    }
-    
-    class SensorRegistry {
-        +register_all_sensors()
-        +register_system_sensors()
-        +register_storage_sensors()
-        +create_system_sensors(coordinator)
-        +create_storage_sensors(coordinator)
-    }
-    
-    class UnraidSensorBase {
-        +coordinator
-        +entity_description
-        +available()
-        +state
-        +extra_state_attributes
-    }
-    
-    class UnraidCPUUsageSensor {
-        +_get_value(data)
-        +extra_state_attributes
-    }
-    
-    UnraidSensorBase <|-- UnraidCPUUsageSensor
-    SensorRegistry ..> SensorFactory : registers with
-    SensorFactory ..> UnraidSensorBase : creates
-```
+*[Diagram: Factory pattern class diagram showing the relationship between SensorFactory, SensorRegistry, UnraidSensorBase, and related classes]*
+
+**Note:** A detailed class diagram will be added in a future update.
 
 This pattern allows for flexible entity creation:
+
 - Sensor types are registered once
 - Creator functions determine what entities to create
 - Factory orchestrates the creation process
@@ -216,26 +118,12 @@ This pattern allows for flexible entity creation:
 
 The integration implements sophisticated caching to minimize SSH connections:
 
-```mermaid
-sequenceDiagram
-    participant C as Coordinator
-    participant CM as CacheManager
-    participant API as API Client
-    participant Unraid as Unraid Server
-    
-    C->>CM: Check cache for "system_stats"
-    alt Cache hit
-        CM-->>C: Return cached data
-    else Cache miss
-        CM-->>API: Request new data
-        API->>Unraid: Execute SSH command
-        Unraid-->>API: Return command output
-        API-->>CM: Store parsed data in cache
-        CM-->>C: Return new data
-    end
-```
+*[Diagram: Sequence diagram showing the caching flow between Coordinator, SensorPriorityManager, CacheManager, API Client, and Unraid Server]*
+
+**Note:** A detailed sequence diagram will be added in a future update.
 
 Key aspects of the caching system:
+
 - Different TTLs for different data types
 - Memory-efficient storage with size limits
 - Priority-based invalidation
@@ -245,25 +133,13 @@ Key aspects of the caching system:
 
 The integration includes robust error handling:
 
-```mermaid
-flowchart TD
-    Command[Execute Command]
-    Retry{Retry?}
-    Circuit{Circuit Open?}
-    Wait[Exponential Backoff]
-    Success[Return Result]
-    Fail[Raise Exception]
-    
-    Command -->|Error| Circuit
-    Circuit -->|Yes| Fail
-    Circuit -->|No| Retry
-    Retry -->|Yes| Wait --> Command
-    Retry -->|No| Fail
-    Command -->|Success| Success
-```
+*[Diagram: Flowchart showing the error handling process with retry logic, circuit breaking, and fallback mechanisms]*
+
+**Note:** A detailed flowchart will be added in a future update.
 
 Key error handling features:
+
 - Exception hierarchy for different error types
 - Automatic retries with exponential backoff
 - Circuit breaking to prevent cascading failures
-- Detailed logging for troubleshooting 
+- Detailed logging for troubleshooting

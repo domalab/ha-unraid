@@ -41,7 +41,6 @@ markdown_extensions:
       custom_fences:
         - name: mermaid
           class: mermaid
-          format: "pymdownx.superfences.fence_code_format"
   - pymdownx.tabbed:
       alternate_style: true
   - toc:
@@ -66,8 +65,7 @@ nav:
     - Architecture: development/architecture.md
     - API: development/api.md
     - Entity Development: development/entities.md
-  - Project:
-    - Changelog: project/changelog.md
+    - Contributing: development/contributing.md
 
 # Plugins
 plugins:
@@ -86,5 +84,4 @@ extra:
 # Copyright
 copyright: Copyright &copy; 2024 domalab
 
-extra_javascript:
-  - https://unpkg.com/mermaid@9.4.3/dist/mermaid.min.js
+# No extra JavaScript needed for now

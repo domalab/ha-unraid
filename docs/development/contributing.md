@@ -28,14 +28,17 @@ To develop for this integration, you'll need:
 
 1. **Fork the Repository**: Fork [domalab/ha-unraid](https://github.com/domalab/ha-unraid) on GitHub
 2. **Clone Your Fork**:
+
    ```bash
    git clone https://github.com/your-username/ha-unraid.git
    cd ha-unraid
    ```
+
 3. **Set Up a Development Home Assistant Instance**:
    - Use [the Home Assistant development container](https://developers.home-assistant.io/docs/development_environment)
    - Or set up a dedicated test instance
 4. **Install Development Dependencies**:
+
    ```bash
    python -m pip install -r requirements_dev.txt
    ```
@@ -43,24 +46,32 @@ To develop for this integration, you'll need:
 ### Development Workflow
 
 1. **Create a Branch**: Create a branch for your feature or bug fix
+
    ```bash
    git checkout -b your-feature-name
    ```
+
 2. **Make Changes**: Implement your changes following the code style and conventions
 3. **Write Tests**: Add tests for your changes to ensure they work correctly
 4. **Run Tests Locally**: Ensure all tests pass before submitting
+
    ```bash
    pytest
    ```
+
 5. **Lint Your Code**: Ensure your code passes all linting checks
+
    ```bash
    pylint custom_components/unraid
    ```
+
 6. **Commit Your Changes**: Write clear, concise commit messages
 7. **Push to Your Fork**:
+
    ```bash
    git push origin your-feature-name
    ```
+
 8. **Create a Pull Request**: Submit a pull request from your fork to the main repository
 
 ## Code Style and Conventions
@@ -126,9 +137,11 @@ Documentation improvements are always welcome! To contribute to documentation:
 
 1. Follow the same pull request process as for code changes
 2. Preview documentation changes locally using [MkDocs](https://www.mkdocs.org/)
+
    ```bash
    mkdocs serve
    ```
+
 3. Ensure your changes are accurate and well-written
 
 ## Getting Help
@@ -151,4 +164,4 @@ Please follow these guidelines when contributing:
 
 ## License
 
-By contributing to this project, you agree that your contributions will be licensed under the project's [Apache 2.0 License](https://github.com/domalab/ha-unraid/blob/main/LICENSE). 
+By contributing to this project, you agree that your contributions will be licensed under the project's [Apache 2.0 License](https://github.com/domalab/ha-unraid/blob/main/LICENSE).

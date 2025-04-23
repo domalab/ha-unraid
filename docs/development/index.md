@@ -6,8 +6,6 @@ This guide is intended for developers who want to contribute to the Unraid Integ
 
 The Unraid integration follows the Home Assistant integration architecture with a focus on modularity and performance. It's structured around a central update coordinator that efficiently fetches and manages data from an Unraid server via SSH.
 
-![Architecture Diagram](../assets/images/architecture.png)
-
 ### Key Components
 
 1. **Data Update Coordinator**: Central component managing state, data fetching, and updates
@@ -112,6 +110,7 @@ Entities are implemented using a factory pattern with base classes for each enti
 4. Factory creates all entities during platform setup
 
 This pattern allows for:
+
 - Consistent entity behavior and attributes
 - Easy addition of new entity types
 - Centralized entity creation and registration
@@ -148,18 +147,21 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
 ### Setting Up Development Environment
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/domalab/ha-unraid.git
    cd ha-unraid
    ```
 
 2. Create a Python virtual environment:
+
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
 3. Install development dependencies:
+
    ```bash
    pip install -r requirements_dev.txt
    ```
@@ -188,6 +190,7 @@ The project follows Home Assistant's coding standards:
 The integration is designed with performance in mind:
 
 - Use the caching system appropriately:
+
   ```python
   # Register sensor with the appropriate priority
   coordinator.register_sensor(
@@ -205,6 +208,7 @@ The integration is designed with performance in mind:
 #### Adding a New Sensor
 
 1. Create a new sensor class in the appropriate sensors module:
+
    ```python
    class MyNewSensor(UnraidSensorBase):
        """My new sensor for Unraid."""
@@ -221,6 +225,7 @@ The integration is designed with performance in mind:
    ```
 
 2. Register the sensor in the appropriate registry:
+
    ```python
    # In sensors/registry.py
    SensorFactory.register_sensor_type("my_sensor", MyNewSensor)
@@ -246,6 +251,7 @@ The integration includes robust connection handling via the `ConnectionManager`,
 - Command execution timeouts
 
 Solution approaches:
+
 - Check connection settings (host, username, password, port)
 - Ensure the Unraid server allows SSH connections
 - Review logs for specific error messages
@@ -294,4 +300,4 @@ If you need assistance with development:
 - Review existing issues and discussions
 - Check the Home Assistant developer documentation
 
-By following this guide, you should be able to understand and contribute to the Unraid integration effectively. Happy coding! 
+By following this guide, you should be able to understand and contribute to the Unraid integration effectively. Happy coding!
