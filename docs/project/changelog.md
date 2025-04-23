@@ -8,73 +8,124 @@ This page documents all notable changes to the Unraid Integration for Home Assis
 - Documentation in MkDocs with Material theme
 - Added GitHub Pages site for documentation hosting
 
-## [2024.04.15]
-
-### Added
-- Power consumption monitoring for supported UPS devices
-- New UPS metrics: input voltage, power load
-- Support for environment variables in user scripts
+## [2025.01.08]
 
 ### Fixed
-- Issue with executing commands containing special characters
-- VM status detection improvements for all Unraid versions
-- Fixed Docker container execution timeout issues
+- Fix for issue #36 regarding missing VM and Container switches on Unraid versions 6.12.x
+- Fix for issue #38 regarding Parity Check Status Sensor not detecting all fields in /boot/config/parity-check.log
+- Fix for issue #37 regarding SpinDownDelay error from HA logs
+- Fix for issue #51 regarding Error checking disk state for /dev/nvme0n1p1
+- Fix for issue #43 regarding CPU Temp not working on certain chipsets
+- Fix for issue #37 regarding pool device named temp from being detected
 
 ### Changed
-- Increased default disk update interval for better performance
-- Improved error messages for authentication failures
+- Changed naming on UPS sensors to now display UPS Current Consumption, UPS Current Load and UPS Total Consumption
+- Removed Docker Insights (Beta) feature due to causing HA instability issues
 
-## [2024.03.22]
+## [2024.12.28]
 
 ### Added
-- System services: reboot, shutdown, and array stop
-- Improved diagnostics information for troubleshooting
-- Support for VM hibernation and force stop operations
+- System Fan Sensors for monitoring cooling performance
+- Parity Health Monitoring
+- Pool Usage & Custom Pool Disk Names
+- Docker Insights (Beta) - requires Dockersocket container
 
 ### Fixed
-- Fixed issues with disk spin-down detection
-- Improved error handling for SSH connection failures
-- Resolved entity duplication in some configurations
+- Entity Naming Schema & Unique IDs issues
+- Inaccuracies in network traffic calculations
 
 ### Changed
-- Enhanced configuration flow with better validation
-- Improved documentation for service parameters
+- Improved disk mappings logic
+- Reduced SSH calls for better performance
 
-## [2024.02.10]
+## [2024.11.15]
 
 ### Added
-- Docker container pause and resume services
-- VM pause and resume capabilities
-- User script buttons (optional feature)
-- Command execution with background process support
+- Configurable update intervals for sensors
+- UPS power monitoring
+- Network traffic monitoring
+- Parity check sensor
+- Disk health monitoring
 
 ### Fixed
-- Fixed issues with Docker container status reporting
-- Improved error handling for unavailable services
-- Better handling of special characters in entity names
+- Issues with executing service commands
+- Improved support for CPU and motherboard sensors
+- Fixed UPS sensor functionality
+- Fixed special characters with VMs not being recognised
 
 ### Changed
-- Refactored code for better maintainability
-- Improved sensor update logic for better performance
+- Refined naming conventions
+- Updated versioning style to align with Home Assistant standards
 
-## [2024.01.08]
+## [v0.1.5] - 2024-10-25
+
+### Added
+- Diagnostic sensors and ability to download diagnostics file for troubleshooting
+
+## [v0.1.4] - 2024-10-22
+
+### Added
+- Improved Docker container state tracking with detailed status information
+- Enhanced VM state detection with better OS type recognition
+- Dynamic icons for VMs based on OS type
+- Additional container and VM attributes
+
+### Fixed
+- VM state tracking when turned off from Unraid
+- Docker container state synchronization issues
+- JSON parsing errors in container information retrieval
+- State attribute errors in entity updates
+
+### Changed
+- Improved Docker container start/stop operations reliability
+- Enhanced state synchronization
+- Better error handling and logging
+- More robust parsing of container and VM states
+
+## [v0.1.3] - 2024-10-21
+
+### Added
+- Option to specify if UPS is connected to Unraid during setup
+- Feature to re-configure the integration after initial setup
+
+### Fixed
+- Stability improvements with SSH connection
+- Removed ping check that caused Home Assistant to hang
+
+### Changed
+- Removed Docker Container Update Sensor due to conflicts with Unraid's Auto Update
+
+## [v0.1.2] - 2024-10-18
+
+### Added
+- Docker Container Update Sensor
+
+### Changed
+- Stability improvements with SSH connection to Unraid
+
+## [v0.1.1] - 2024-10-16
+
+### Added
+- Docker vDisk sensor
+- Docker Log Sensor
+
+## [v0.1.0] - 2024-10-15
 
 ### Initial Release
+- Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
+- Monitor UPS connected to Unraid
+- Control Docker containers (start/stop)
+- Manage VMs (start/stop)
+- Execute shell commands on Unraid server
+- Manage user scripts
 
-- System monitoring (CPU, memory, disk usage)
-- Temperature sensors for CPU and motherboard
-- System fan RPM monitoring
-- Docker container management
-- VM control
-- Command execution capabilities
-- User script management
-- UPS monitoring
-- Automatic repair flows
-- Config flow validation
-- Comprehensive diagnostics
-
-[Unreleased]: https://github.com/domalab/ha-unraid/compare/v2024.04.15...HEAD
-[2024.04.15]: https://github.com/domalab/ha-unraid/compare/v2024.03.22...v2024.04.15
-[2024.03.22]: https://github.com/domalab/ha-unraid/compare/v2024.02.10...v2024.03.22
-[2024.02.10]: https://github.com/domalab/ha-unraid/compare/v2024.01.08...v2024.02.10
-[2024.01.08]: https://github.com/domalab/ha-unraid/releases/tag/v2024.01.08
+[Unreleased]: https://github.com/domalab/ha-unraid/compare/v2025.01.08...HEAD
+[2025.01.08]: https://github.com/domalab/ha-unraid/compare/v2024.12.28...v2025.01.08
+[2024.12.28]: https://github.com/domalab/ha-unraid/compare/v2024.11.15...v2024.12.28
+[2024.11.15]: https://github.com/domalab/ha-unraid/compare/v0.1.5...v2024.11.15
+[v0.1.5]: https://github.com/domalab/ha-unraid/compare/v0.1.4...v0.1.5
+[v0.1.4]: https://github.com/domalab/ha-unraid/compare/v0.1.3...v0.1.4
+[v0.1.3]: https://github.com/domalab/ha-unraid/compare/v0.1.2...v0.1.3
+[v0.1.2]: https://github.com/domalab/ha-unraid/compare/v0.1.1...v0.1.2
+[v0.1.1]: https://github.com/domalab/ha-unraid/compare/v0.1.0...v0.1.1
+[v0.1.0]: https://github.com/domalab/ha-unraid/releases/tag/v0.1.0
