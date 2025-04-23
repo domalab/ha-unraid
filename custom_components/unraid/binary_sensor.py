@@ -14,6 +14,7 @@ from .diagnostics.disk import UnraidArrayDiskSensor
 from .diagnostics.pool import UnraidPoolDiskSensor
 from .diagnostics.parity import UnraidParityDiskSensor, UnraidParityCheckSensor
 from .diagnostics.ups import UnraidUPSBinarySensor
+from .diagnostics.array import UnraidArrayStatusBinarySensor
 from .diagnostics.const import SENSOR_DESCRIPTIONS
 from .coordinator import UnraidDataUpdateCoordinator
 
@@ -68,6 +69,10 @@ async def async_setup_entry(
             description.key,
             description.name,
         )
+
+    # Add Array Status binary sensor
+    entities.append(UnraidArrayStatusBinarySensor(coordinator))
+    _LOGGER.debug("Added Array Status binary sensor")
 
     # Add UPS sensor if UPS info is available
     if coordinator.data.get("system_stats", {}).get("ups_info"):

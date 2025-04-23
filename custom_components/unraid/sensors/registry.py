@@ -18,7 +18,6 @@ def register_system_sensors() -> None:
         UnraidCPUUsageSensor,
         UnraidRAMUsageSensor,
         UnraidMemoryUsageSensor,
-        UnraidArrayStatusSensor,
         UnraidUptimeSensor,
         UnraidCPUTempSensor,
         UnraidMotherboardTempSensor,
@@ -32,7 +31,7 @@ def register_system_sensors() -> None:
     SensorFactory.register_sensor_type("cpu_usage", UnraidCPUUsageSensor)
     SensorFactory.register_sensor_type("ram_usage", UnraidRAMUsageSensor)
     SensorFactory.register_sensor_type("memory_usage", UnraidMemoryUsageSensor)
-    SensorFactory.register_sensor_type("array_status", UnraidArrayStatusSensor)
+    # Array Status sensor moved to binary sensors
     SensorFactory.register_sensor_type("uptime", UnraidUptimeSensor)
     SensorFactory.register_sensor_type("cpu_temp", UnraidCPUTempSensor)
     SensorFactory.register_sensor_type("motherboard_temp", UnraidMotherboardTempSensor)
@@ -109,7 +108,6 @@ def create_system_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> L
         UnraidCPUUsageSensor,
         UnraidRAMUsageSensor,
         UnraidMemoryUsageSensor,
-        UnraidArrayStatusSensor,
         UnraidUptimeSensor,
         UnraidCPUTempSensor,
         UnraidMotherboardTempSensor,
@@ -123,7 +121,7 @@ def create_system_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> L
         UnraidCPUUsageSensor(coordinator),
         UnraidRAMUsageSensor(coordinator),
         UnraidMemoryUsageSensor(coordinator),
-        UnraidArrayStatusSensor(coordinator),
+        # Array Status sensor moved to binary sensors
         UnraidUptimeSensor(coordinator),
         UnraidCPUTempSensor(coordinator),
         UnraidMotherboardTempSensor(coordinator),

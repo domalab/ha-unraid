@@ -48,8 +48,12 @@ class EntityNaming:
             # Get the part after the hostname_
             clean_entity_id = clean_entity_id[len(hostname) + 1:]
 
-        # Format the entity ID
-        return f"{self.domain}_{self.hostname}_{clean_entity_id}"
+        # Remove 'unraid_' prefix if it exists
+        if clean_entity_id.lower().startswith("unraid_"):
+            clean_entity_id = clean_entity_id[7:]
+
+        # Format the entity ID - include hostname to avoid conflicts with multiple servers
+        return f"{self.domain}_{hostname}_{clean_entity_id}"
 
     def clean_hostname(self) -> str:
         """Get a clean version of the hostname for display purposes."""

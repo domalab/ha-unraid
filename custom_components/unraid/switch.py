@@ -60,7 +60,7 @@ class UnraidSwitchEntity(CoordinatorEntity, SwitchEntity):
         # All switches belong to main server device
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": f"Unraid Server ({coordinator.hostname.capitalize()})",
+            "name": f"{coordinator.hostname.title()}",
             "manufacturer": "Lime Technology",
             "model": "Unraid Server",
         }

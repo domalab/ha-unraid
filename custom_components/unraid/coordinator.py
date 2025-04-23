@@ -166,9 +166,21 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
 
     @property
     def hostname(self) -> str:
-        """Get the hostname for entity naming."""
+        """Get the hostname for entity naming.
+
+        First tries to get the hostname from the Unraid server,
+        then falls back to the hostname from the config entry.
+        """
+        # Try to get the hostname from the data if available
+        if self.data and "hostname" in self.data:
+            hostname = self.data.get("hostname")
+            if hostname:
+                _LOGGER.debug("Using hostname from Unraid server: %s", hostname)
+                return hostname
+
+        # Fall back to the hostname from the config entry
         raw_hostname = self.entry.data.get(CONF_HOSTNAME, DEFAULT_NAME)
-        _LOGGER.debug("Raw hostname retrieved from entry.data: %s", raw_hostname)
+        _LOGGER.debug("Using hostname from config entry: %s", raw_hostname)
         return raw_hostname.capitalize()
 
     @property
@@ -423,6 +435,29 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
                 cache_hits = 0
                 cache_misses = 0
                 start_time = time.time()
+
+                # Get hostname from cache or fetch from Unraid server
+                hostname_key = self._get_cache_key("hostname")
+                hostname = self._cache_manager.get(hostname_key)
+
+                if hostname:
+                    data["hostname"] = hostname
+                    _LOGGER.debug("Using cached hostname: %s", hostname)
+                else:
+                    try:
+                        hostname = await self.api.get_hostname()
+                        if hostname:
+                            data["hostname"] = hostname
+                            # Cache the hostname
+                            self._cache_manager.set(
+                                hostname_key,
+                                hostname,
+                                ttl=86400,  # 24 hours - hostname rarely changes
+                                priority=CacheItemPriority.CRITICAL
+                            )
+                            _LOGGER.debug("Retrieved hostname from Unraid server: %s", hostname)
+                    except Exception as err:
+                        _LOGGER.debug("Error getting hostname from Unraid server: %s", err)
 
                 # Track what data is needed based on sensor priorities
                 # Check if self.async_contexts exists before calling len()
@@ -1103,7 +1138,19 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
         _LOGGER.debug("Warming up cache with initial data")
         async with self.api:
             try:
-                # Fetch system stats first (most critical)
+                # Fetch hostname first (needed for entity IDs)
+                hostname = await self.api.get_hostname()
+                if hostname:
+                    # Store hostname in a special cache entry
+                    self._cache_manager.set(
+                        self._get_cache_key("hostname"),
+                        hostname,
+                        ttl=86400,  # 24 hours - hostname rarely changes
+                        priority=CacheItemPriority.CRITICAL
+                    )
+                    _LOGGER.debug("Cache warmed up with hostname: %s", hostname)
+
+                # Fetch system stats (most critical)
                 system_stats = await self.api.get_system_stats()
                 if system_stats:
                     self._cache_manager.set(

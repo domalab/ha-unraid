@@ -648,6 +648,7 @@ class SystemOperationsMixin:
         """Get the Unraid server hostname.
 
         Uses a single command with fallback options to reduce SSH calls.
+        Always returns a valid hostname string, using 'server' as a fallback.
         """
         try:
             # Use a single command with || for fallback
@@ -659,15 +660,14 @@ class SystemOperationsMixin:
                 if hostname and hostname != 'unknown':
                     # Sanitize hostname
                     sanitized = self._sanitize_hostname(hostname)
-                    if sanitized:
-                        _LOGGER.debug("Retrieved hostname: %s (sanitized: %s)", hostname, sanitized)
-                        return sanitized
+                    _LOGGER.debug("Retrieved hostname: %s (sanitized: %s)", hostname, sanitized)
+                    return sanitized
 
             _LOGGER.warning("Could not retrieve valid hostname, using default name")
-            return None
+            return 'server'
         except (asyncssh.Error, OSError, ValueError) as err:
             _LOGGER.error("Error getting hostname: %s", err)
-            return None
+            return 'server'
 
     async def _get_system_timezone(self) -> str:
         """Get the system timezone.
@@ -973,7 +973,14 @@ class SystemOperationsMixin:
             return {"percentage": None}
 
     def _sanitize_hostname(self, hostname: str) -> str:
-        """Sanitize hostname for entity ID compatibility."""
+        """Sanitize hostname for entity ID compatibility.
+
+        Returns a valid hostname string that can be used in entity IDs.
+        If the hostname is invalid, returns 'server' as a fallback.
+        """
+        if not hostname or hostname == 'unknown':
+            return 'server'
+
         # Remove invalid characters
         sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', hostname.lower())
 
@@ -986,8 +993,10 @@ class SystemOperationsMixin:
         # Remove leading/trailing underscores
         sanitized = sanitized.strip('_')
 
-        # Capitalize first letter
-        sanitized = sanitized.capitalize() if sanitized else None
+        # Ensure we have a valid hostname
+        if not sanitized:
+            return 'server'
+
         return sanitized
 
     def _format_duration(self, duration_str: str) -> str:

@@ -673,7 +673,7 @@ class UnraidSystemSensors:
             UnraidCPUUsageSensor(coordinator),
             UnraidRAMUsageSensor(coordinator),
             UnraidMemoryUsageSensor(coordinator),
-            UnraidArrayStatusSensor(coordinator),  # Add the new Array Status sensor
+            # Array Status sensor moved to binary sensors
             UnraidUptimeSensor(coordinator),
             UnraidCPUTempSensor(coordinator),
             UnraidMotherboardTempSensor(coordinator),

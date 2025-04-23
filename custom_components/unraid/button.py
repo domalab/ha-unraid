@@ -153,7 +153,7 @@ class UnraidButton(ButtonEntity):
         naming = EntityNaming(
             domain=DOMAIN,
             hostname=coordinator.hostname,
-            component="button"
+            component=description.key.split('_')[0]  # Get first part of key as component
         )
 
         # Set unique_id and name using naming utility
@@ -167,7 +167,7 @@ class UnraidButton(ButtonEntity):
         # Set device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": f"Unraid Server ({naming.clean_hostname()})",
+            "name": f"{coordinator.hostname.title()}",
             "manufacturer": "Lime Technology",
             "model": "Unraid Server",
         }
@@ -229,7 +229,7 @@ class UnraidScriptButton(ButtonEntity):
         # Set device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": f"Unraid Server ({naming.clean_hostname()})",
+            "name": f"{coordinator.hostname.title()}",
             "manufacturer": "Lime Technology",
             "model": "Unraid Server",
         }

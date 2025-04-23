@@ -90,16 +90,9 @@ class UnraidUPSServerPowerSensor(UnraidSensorBase, UPSMetricsMixin):
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
-        # Initialize entity naming
-        naming = EntityNaming(
-            domain=DOMAIN,
-            hostname=coordinator.hostname,
-            component="ups"
-        )
-
         description = UnraidSensorEntityDescription(
             key="ups_server_power",
-            name=f"{naming.get_entity_name('ups')} Server Power",
+            name="UPS Server Power",
             native_unit_of_measurement=UnitOfPower.WATT,
             device_class=SensorDeviceClass.POWER,
             state_class=SensorStateClass.MEASUREMENT,

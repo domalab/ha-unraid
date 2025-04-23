@@ -150,7 +150,7 @@ class UnraidSensorBase(CoordinatorEntity, SensorEntity, SensorUpdateMixin, Value
         """Return device information."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.coordinator.entry.entry_id)},
-            name=f"Unraid Server ({self.coordinator.hostname})",
+            name=f"{self.coordinator.hostname.title()}",
             manufacturer="Lime Technology",
             model="Unraid Server",
         )
