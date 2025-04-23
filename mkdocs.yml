@@ -37,7 +37,11 @@ markdown_extensions:
   - pymdownx.emoji
   - pymdownx.highlight:
       anchor_linenums: true
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - toc:
@@ -58,7 +62,10 @@ nav:
     - Docker Management: advanced/docker-management.md
     - VM Control: advanced/vm-control.md
   - Development:
-    - Contributing: development/contributing.md
+    - Getting Started: development/index.md
+    - Architecture: development/architecture.md
+    - API: development/api.md
+    - Entity Development: development/entities.md
   - Project:
     - Changelog: project/changelog.md
 
@@ -78,3 +85,6 @@ extra:
   
 # Copyright
 copyright: Copyright &copy; 2024 domalab
+
+extra_javascript:
+  - https://unpkg.com/mermaid@9.4.3/dist/mermaid.min.js
