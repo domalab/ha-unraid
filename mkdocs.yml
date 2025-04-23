@@ -41,7 +41,7 @@ markdown_extensions:
       custom_fences:
         - name: mermaid
           class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
+          format: "pymdownx.superfences.fence_code_format"
   - pymdownx.tabbed:
       alternate_style: true
   - toc:
@@ -82,7 +82,7 @@ extra:
     provider: google
     property: G-XXXXXXXXXX  # Replace with actual Google Analytics ID when deployed
   generator: false
-  
+
 # Copyright
 copyright: Copyright &copy; 2024 domalab
 
