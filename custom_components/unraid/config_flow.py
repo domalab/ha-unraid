@@ -37,11 +37,8 @@ from .const import (
     CONF_DISK_INTERVAL,
     DEFAULT_GENERAL_INTERVAL,
     DEFAULT_DISK_INTERVAL,
-    MIN_UPDATE_INTERVAL,
-    MAX_GENERAL_INTERVAL,
-    MIN_DISK_INTERVAL_MINUTES,
-    MAX_DISK_INTERVAL_HOURS,
     DISK_INTERVAL_OPTIONS,
+    GENERAL_INTERVAL_OPTIONS,
     CONF_HAS_UPS,
     MIGRATION_VERSION,
 )
@@ -68,11 +65,16 @@ def get_schema_base(
     include_auth: bool = False,
     has_ups: bool = False,
 ) -> vol.Schema:
-    """Get base schema with sliders for both intervals."""
+    """Get base schema with dropdowns for both intervals."""
     # Create a list of options for the disk interval selector
     disk_interval_options = {
         option: f"{option // 60} hours" if option >= 60 else f"{option} minutes"
         for option in DISK_INTERVAL_OPTIONS
+    }
+
+    # Create a list of options for the general interval selector
+    general_interval_options = {
+        option: f"{option} minutes" for option in GENERAL_INTERVAL_OPTIONS
     }
 
     if include_auth:
@@ -85,15 +87,7 @@ def get_schema_base(
             vol.Required(
             CONF_GENERAL_INTERVAL,
             default=general_interval
-            ): vol.All(
-            vol.Coerce(int),
-            vol.Range(
-                min=MIN_UPDATE_INTERVAL,
-                max=MAX_GENERAL_INTERVAL,
-                msg="General interval must be between "
-                f"{MIN_UPDATE_INTERVAL} and {MAX_GENERAL_INTERVAL} minutes"
-            )
-            ),
+            ): vol.In(general_interval_options),
             vol.Required(
             CONF_DISK_INTERVAL,
             default=disk_interval
@@ -107,13 +101,7 @@ def get_schema_base(
             vol.Required(
                 CONF_GENERAL_INTERVAL,
                 default=general_interval
-            ): vol.All(
-                vol.Coerce(int),
-                vol.Range(
-                    min=MIN_UPDATE_INTERVAL,
-                    max=MAX_GENERAL_INTERVAL
-                )
-            ),
+            ): vol.In(general_interval_options),
             vol.Required(
                 CONF_DISK_INTERVAL,
                 default=disk_interval
@@ -324,24 +312,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle import from configuration.yaml."""
         return await self.async_step_user(import_data)
 
+    # Migration is now handled in __init__.py to follow best practices
+    # This method is kept for backward compatibility but delegates to the handler in __init__.py
     async def async_migrate_entry(self, hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Handle migration of config entries."""
-        _LOGGER.debug("Migrating from version %s", entry.version)
-
-        if entry.version == 1:
-            try:
-                if await async_migrate_with_rollback(hass, entry):
-                    # Update entry version after successful migration
-                    self.hass.config_entries.async_update_entry(
-                        entry,
-                        version=MIGRATION_VERSION
-                    )
-                    return True
-            except Exception as err:
-                _LOGGER.error("Migration failed: %s", err)
-                return False
-
-        return True
+        _LOGGER.debug("Delegating migration to handler in __init__.py")
+        # Import the migration handler from __init__.py
+        from . import async_migrate_entry as init_migrate_entry
+        return await init_migrate_entry(hass, entry)
 
     @staticmethod
     def async_get_options_flow(
@@ -389,18 +367,17 @@ class UnraidOptionsFlowHandler(config_entries.OptionsFlow):
             for option in DISK_INTERVAL_OPTIONS
         }
 
+        # Create a list of options for the general interval selector
+        general_interval_options = {
+            option: f"{option} minutes" for option in GENERAL_INTERVAL_OPTIONS
+        }
+
         schema = vol.Schema({
             vol.Optional(CONF_PORT, default=self._port): vol.Coerce(int),
             vol.Required(
                 CONF_GENERAL_INTERVAL,
                 default=self._general_interval
-            ): vol.All(
-                vol.Coerce(int),
-                vol.Range(
-                    min=MIN_UPDATE_INTERVAL,
-                    max=MAX_GENERAL_INTERVAL
-                )
-            ),
+            ): vol.In(general_interval_options),
             vol.Required(
                 CONF_DISK_INTERVAL,
                 default=self._disk_interval

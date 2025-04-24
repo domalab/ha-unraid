@@ -96,3 +96,63 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
     # Reload the integration
     await hass.config_entries.async_reload(entry.entry_id)
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate old entry to new version.
+
+    This function handles migration of config entries from older versions to the current version.
+    It supports:
+    - Migration from version 1 to version 2
+    - Migration from no version (None) to version 2
+    - Migration from any lower version to the current version
+
+    Returns True if migration is successful, False otherwise.
+    """
+    from .const import MIGRATION_VERSION
+    from .migrations import async_migrate_with_rollback
+
+    _LOGGER.debug("Migrating from version %s.%s to %s.%s",
+                 entry.version, getattr(entry, 'minor_version', 0),
+                 MIGRATION_VERSION, 0)
+
+    # If the user has downgraded from a future version, we can't migrate
+    if entry.version is not None and entry.version > MIGRATION_VERSION:
+        _LOGGER.error(
+            "Cannot migrate from version %s to %s (downgrade not supported)",
+            entry.version, MIGRATION_VERSION
+        )
+        return False
+
+    # Handle migration from version 1 to version 2
+    if entry.version == 1:
+        try:
+            if await async_migrate_with_rollback(hass, entry):
+                # Update entry version after successful migration
+                hass.config_entries.async_update_entry(
+                    entry,
+                    version=MIGRATION_VERSION
+                )
+                _LOGGER.info("Successfully migrated entry %s from version 1 to %s",
+                            entry.entry_id, MIGRATION_VERSION)
+                return True
+        except Exception as err:
+            _LOGGER.error("Migration failed: %s", err)
+            return False
+
+    # Handle any entry with no version (None) or other versions
+    elif entry.version is None or entry.version < MIGRATION_VERSION:
+        _LOGGER.info("Migrating entry %s from version %s to %s",
+                    entry.entry_id, entry.version, MIGRATION_VERSION)
+
+        # Simply update the version without any data changes
+        # This is safe because we're not changing the data structure
+        hass.config_entries.async_update_entry(
+            entry,
+            version=MIGRATION_VERSION
+        )
+
+        _LOGGER.info("Migration to version %s successful", MIGRATION_VERSION)
+        return True
+
+    # If we get here, the entry is already at the current version
+    return True
