@@ -4,13 +4,14 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
-from datetime import datetime, timezone, timedelta
 import re
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 from enum import IntEnum
 
 from .disk_mapper import DiskMapper
 from .error_handling import with_error_handling, safe_parse
+from .usb_detection import USBFlashDriveDetector
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class SmartDataManager:
         self._last_update: Dict[str, datetime] = {}
         self._lock = asyncio.Lock()
         self._disk_mapper = DiskMapper(instance.execute_command)
+        self._usb_detector = USBFlashDriveDetector(instance)
 
     def _convert_nvme_temperature(self, temp_value: Any) -> Optional[int]:
         """Convert NVMe temperature to Celsius with enhanced format detection."""
@@ -44,40 +46,63 @@ class SmartDataManager:
             # Handle string values with units
             if isinstance(temp_value, str):
                 temp_str = temp_value.lower().strip()
-                # Extract numeric value and handle units
-                num = float(''.join(filter(str.isdigit, temp_str)))
-                if 'f' in temp_str:  # Fahrenheit
-                    return int((num - 32) * 5/9)
-                elif 'k' in temp_str:  # Kelvin
-                    return int(num - 273)
-                elif 'c' in temp_str:  # Celsius
-                    return int(num)
+
+                # Handle complex strings like "45 Celsius" or "318 Kelvin"
+                import re
+                # Extract number and unit
+                match = re.search(r'(\d+(?:\.\d+)?)\s*([cfk]|celsius|fahrenheit|kelvin)?', temp_str)
+                if match:
+                    num = float(match.group(1))
+                    unit = match.group(2) or ''
+
+                    if 'f' in unit or 'fahrenheit' in unit:  # Fahrenheit
+                        return int((num - 32) * 5/9)
+                    elif 'k' in unit or 'kelvin' in unit:  # Kelvin
+                        return int(num - 273.15)
+                    else:  # Assume Celsius
+                        return int(num)
+                else:
+                    # Fallback: extract just the number
+                    num_match = re.search(r'(\d+(?:\.\d+)?)', temp_str)
+                    if num_match:
+                        temp = float(num_match.group(1))
+                    else:
+                        return None
 
             # Handle numeric values
             temp = float(temp_value)
 
-            # Fix for NVMe temperature values reported in tenths of a degree
-            if temp > 100 and temp < 1000:
-                _LOGGER.debug("NVMe temperature %d appears to be in tenths of a degree, dividing by 10", temp)
-                temp = temp / 10
-            # Convert Kelvin if needed (typically > 273)
-            elif temp > 273:
-                temp = temp - 273
-                _LOGGER.debug("Converting from Kelvin: %dK -> %d°C", temp + 273, temp)
+            # Enhanced temperature conversion logic
+            # NVMe drives can report temperature in various formats:
 
-            # Expanded validation range (-40°C to 125°C)
+            # 1. Kelvin (typically 273-400 range)
+            if temp > 273 and temp < 400:
+                temp = temp - 273.15
+                _LOGGER.debug("Converting from Kelvin: %.1fK -> %d°C", temp + 273.15, int(temp))
+
+            # 2. Tenths of a degree Celsius (typically 200-800 range)
+            elif temp > 150 and temp < 1000:
+                temp = temp / 10
+                _LOGGER.debug("Converting from tenths of degree: %.1f -> %d°C", temp * 10, int(temp))
+
+            # 3. Hundredths of a degree (typically 2000-8000 range)
+            elif temp > 1000:
+                temp = temp / 100
+                _LOGGER.debug("Converting from hundredths of degree: %.1f -> %d°C", temp * 100, int(temp))
+
+            # Validate temperature range (-40°C to 125°C for SSDs/NVMe)
             if -40 <= temp <= 125:
                 return int(temp)
 
             _LOGGER.warning(
-                "Temperature %d°C outside expected range (-40°C to 125°C) - raw value: %s",
+                "Temperature %.1f°C outside expected range (-40°C to 125°C) - raw value: %s",
                 temp,
                 temp_value
             )
             return None
 
         except (TypeError, ValueError) as err:
-            _LOGGER.error("Temperature conversion error for value '%s': %s", temp_value, err)
+            _LOGGER.debug("Temperature conversion error for value '%s': %s", temp_value, err)
             return None
 
     async def _map_logical_to_physical_device(self, device_path: str) -> str:
@@ -147,19 +172,52 @@ class SmartDataManager:
                 except Exception as err:
                     _LOGGER.warning("Failed to check NVME device existence for %s: %s", device_path, err)
 
-            # Skip SMART data collection for USB boot drives
-            if device_path == "/dev/sda":
-                _LOGGER.debug("Skipping SMART data collection for USB boot drive %s", device_path)
-                usb_boot_data = {
-                    "state": "unsupported",
-                    "error": "USB boot drive doesn't support SMART",
-                    "smart_status": "passed",  # Assume passed for USB boot drives
-                    "temperature": None,
-                    "device_type": "usb"
-                }
-                self._cache[device_path] = usb_boot_data
-                self._last_update[device_path] = now
-                return usb_boot_data
+            # Enhanced USB flash drive detection for any device path
+            try:
+                usb_info = await self._usb_detector.detect_usb_device(device_path)
+
+                if usb_info.is_usb:
+                    # Determine if this is a boot drive or just a regular USB device
+                    device_description = "USB boot drive" if usb_info.is_boot_drive else "USB flash drive"
+
+                    _LOGGER.info(
+                        "Detected %s at %s (confidence: %.2f, method: %s) - skipping SMART data collection",
+                        device_description, device_path, usb_info.confidence, usb_info.detection_method
+                    )
+
+                    usb_data = {
+                        "state": "usb_device",
+                        "error": f"{device_description} doesn't support SMART monitoring",
+                        "smart_status": "passed",  # Assume passed for USB devices
+                        "temperature": None,
+                        "device_type": "usb",
+                        "usb_info": {
+                            "is_boot_drive": usb_info.is_boot_drive,
+                            "mount_point": usb_info.mount_point,
+                            "filesystem": usb_info.filesystem,
+                            "model": usb_info.model,
+                            "vendor": usb_info.vendor,
+                            "size": usb_info.size,
+                            "transport": usb_info.transport_type,
+                            "detection_confidence": usb_info.confidence,
+                            "detection_method": usb_info.detection_method
+                        }
+                    }
+
+                    self._cache[device_path] = usb_data
+                    self._last_update[device_path] = now
+                    return usb_data
+                else:
+                    _LOGGER.debug(
+                        "Device %s is not USB (confidence: %.2f, transport: %s) - proceeding with SMART collection",
+                        device_path, usb_info.confidence, usb_info.transport_type
+                    )
+
+            except Exception as err:
+                _LOGGER.warning(
+                    "USB detection failed for %s: %s - proceeding with SMART collection",
+                    device_path, err
+                )
 
             # Cache check
             if not force_refresh and device_path in self._cache:
@@ -225,7 +283,8 @@ class SmartDataManager:
                         smart_cmd = f"smartctl -d nvme -a -j /dev/nvme{nvme_index}n1"
                         result = await self._instance.execute_command(smart_cmd)
                 else:
-                    smart_cmd = f"smartctl -A -j {device_path}"
+                    # Use -a instead of -A for SATA devices to get full attributes including temperature
+                    smart_cmd = f"smartctl -a -j {device_path}"
 
                 _LOGGER.debug("Executing SMART command for %s: %s", device_path, smart_cmd)
                 result = await self._instance.execute_command(smart_cmd)
@@ -255,22 +314,47 @@ class SmartDataManager:
 
                         # Get temperature based on device type
                         if is_nvme:
-                            # Enhanced NVMe temperature handling
+                            # Enhanced NVMe temperature handling with multiple detection methods
                             temp = None
                             if isinstance(smart_data, dict):
-                                # Try different temperature field locations
+                                # Method 1: NVMe smart health information log
                                 nvme_data = smart_data.get("nvme_smart_health_information_log", {})
                                 if isinstance(nvme_data, dict):
                                     temp = self._convert_nvme_temperature(nvme_data.get("temperature"))
+                                    if temp is not None:
+                                        _LOGGER.debug("NVMe temp from health log: %d°C", temp)
 
+                                # Method 2: Direct temperature field
                                 if temp is None and "temperature" in smart_data:
                                     temp_data = smart_data["temperature"]
                                     if isinstance(temp_data, dict):
-                                        temp = self._convert_nvme_temperature(temp_data.get("current"))
+                                        # Try multiple sub-fields
+                                        for field in ["current", "value", "celsius"]:
+                                            if field in temp_data:
+                                                temp = self._convert_nvme_temperature(temp_data[field])
+                                                if temp is not None:
+                                                    _LOGGER.debug("NVMe temp from temperature.%s: %d°C", field, temp)
+                                                    break
                                     elif isinstance(temp_data, (int, float)):
                                         temp = self._convert_nvme_temperature(temp_data)
+                                        if temp is not None:
+                                            _LOGGER.debug("NVMe temp from direct temperature: %d°C", temp)
 
-                            processed_data["temperature"] = temp
+                                # Method 3: Check for other common NVMe temperature fields
+                                if temp is None:
+                                    temp_fields = [
+                                        "composite_temperature",
+                                        "controller_temperature",
+                                        "current_temperature",
+                                        "temp",
+                                        "thermal_state"
+                                    ]
+                                    for field in temp_fields:
+                                        if field in smart_data:
+                                            temp = self._convert_nvme_temperature(smart_data[field])
+                                            if temp is not None:
+                                                _LOGGER.debug("NVMe temp from %s: %d°C", field, temp)
+                                                break
 
                             if temp is not None:
                                 processed_data["temperature"] = int(temp)
@@ -279,25 +363,70 @@ class SmartDataManager:
                                     device,
                                     processed_data["temperature"]
                                 )
-                        else:
-                            # Try direct temperature field first
-                            if temp := smart_data.get("temperature", {}).get("current"):
-                                processed_data["temperature"] = temp
-                                _LOGGER.debug(
-                                    "SATA temperature for %s: %d°C (direct)",
-                                    device,
-                                    temp
-                                )
                             else:
-                                # Fallback to attributes
+                                _LOGGER.debug("No temperature data found for NVMe device %s", device)
+                        else:
+                            # Enhanced SATA SSD temperature detection
+                            temp = None
+
+                            # Try direct temperature field first
+                            if temp_data := smart_data.get("temperature"):
+                                if isinstance(temp_data, dict):
+                                    temp = temp_data.get("current")
+                                elif isinstance(temp_data, (int, float)):
+                                    temp = temp_data
+
+                                if temp is not None:
+                                    processed_data["temperature"] = int(temp)
+                                    _LOGGER.debug(
+                                        "SATA temperature for %s: %d°C (direct)",
+                                        device,
+                                        temp
+                                    )
+
+                            # If no direct temperature, search SMART attributes with enhanced patterns
+                            if temp is None:
+                                # Common temperature attribute names for SSDs and HDDs
+                                temp_attr_names = [
+                                    "Temperature_Celsius",
+                                    "Airflow_Temperature_Cel",
+                                    "Temperature_Case",
+                                    "Temperature_Internal",
+                                    "Drive_Temperature",
+                                    "Current_Temperature",
+                                    "Temperature"
+                                ]
+
                                 for attr in smart_data.get("ata_smart_attributes", {}).get("table", []):
-                                    if attr.get("name") == "Temperature_Celsius":
-                                        if temp := attr.get("raw", {}).get("value"):
-                                            processed_data["temperature"] = temp
+                                    attr_name = attr.get("name", "")
+
+                                    # Check if this is a temperature attribute
+                                    if attr_name in temp_attr_names:
+                                        # Try different value extraction methods
+                                        raw_data = attr.get("raw", {})
+
+                                        # Method 1: Direct value
+                                        if temp_val := raw_data.get("value"):
+                                            temp = temp_val
+                                        # Method 2: String parsing for complex raw values
+                                        elif raw_str := raw_data.get("string"):
+                                            # Parse strings like "45 (Min/Max 20/55)" or "45 C"
+                                            match = re.search(r'(\d+)', str(raw_str))
+                                            if match:
+                                                temp = int(match.group(1))
+                                        # Method 3: Normalized value as fallback
+                                        elif norm_val := attr.get("value"):
+                                            # Some SSDs report temperature in normalized value
+                                            if 0 <= norm_val <= 150:  # Reasonable temperature range
+                                                temp = norm_val
+
+                                        if temp is not None:
+                                            processed_data["temperature"] = int(temp)
                                             _LOGGER.debug(
-                                                "SATA temperature for %s: %d°C (attribute)",
+                                                "SATA temperature for %s: %d°C (attribute: %s)",
                                                 device,
-                                                temp
+                                                temp,
+                                                attr_name
                                             )
                                             break
 
@@ -375,3 +504,43 @@ class SmartDataManager:
                 self._cache[device] = error_data
                 self._last_update[device] = now
                 return error_data
+
+    async def get_usb_detection_stats(self) -> Dict[str, Any]:
+        """Get USB detection statistics for debugging and monitoring."""
+        try:
+            # Get cache stats from USB detector
+            usb_stats = self._usb_detector.get_cache_stats()
+
+            # Get all USB devices detected in the system
+            all_usb_devices = await self._usb_detector.get_all_usb_devices()
+
+            return {
+                "usb_detector_stats": usb_stats,
+                "detected_usb_devices": [
+                    {
+                        "device_path": device.device_path,
+                        "is_usb": device.is_usb,
+                        "is_boot_drive": device.is_boot_drive,
+                        "transport": device.transport_type,
+                        "mount_point": device.mount_point,
+                        "model": device.model,
+                        "vendor": device.vendor,
+                        "confidence": device.confidence,
+                        "detection_method": device.detection_method
+                    }
+                    for device in all_usb_devices
+                ],
+                "smart_cache_entries": len(self._cache),
+                "usb_devices_in_smart_cache": len([
+                    entry for entry in self._cache.values()
+                    if entry.get("device_type") == "usb"
+                ])
+            }
+        except Exception as err:
+            _LOGGER.error("Error getting USB detection stats: %s", err)
+            return {"error": str(err)}
+
+    def clear_usb_cache(self) -> None:
+        """Clear USB detection cache (useful for testing or troubleshooting)."""
+        self._usb_detector.clear_cache()
+        _LOGGER.info("USB detection cache cleared")

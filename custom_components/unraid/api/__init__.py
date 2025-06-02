@@ -8,6 +8,7 @@ from .ups_operations import UPSOperationsMixin
 from .userscript_operations import UserScriptOperationsMixin
 from .smart_operations import SmartDataManager
 from .disk_state import DiskStateManager, DiskState
+from .usb_detection import USBFlashDriveDetector, USBDeviceInfo
 from .disk_utils import is_valid_disk_name
 from .disk_mapping import get_unraid_disk_mapping, get_disk_info
 from .connection_manager import ConnectionManager, SSHConnection, ConnectionState, ConnectionMetrics
@@ -24,6 +25,8 @@ __all__ = [
     "SmartDataManager",
     "DiskStateManager",
     "DiskState",
+    "USBFlashDriveDetector",
+    "USBDeviceInfo",
     "is_valid_disk_name",
     "get_unraid_disk_mapping",
     "get_disk_info",

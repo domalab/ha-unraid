@@ -527,8 +527,9 @@ def parse_speed_string(speed_str: str) -> float:
 
     Handles multiple formats:
     - Raw bytes/sec (e.g., "124194045")
-    - Formatted speed (e.g., "125.5 MB/s")
+    - Formatted speed (e.g., "125.5 MB/s", "84,8 MB/s")
     - Special values (e.g., "Unavailable", "nan B/s", "0")
+    - European number format with comma decimal separator
     """
     try:
         # Clean up the string
@@ -538,9 +539,11 @@ def parse_speed_string(speed_str: str) -> float:
         if speed_str in ["Unavailable", "nan B/s", "0"]:
             return 0.0
 
-        # Try parsing as raw bytes/sec first
+        # Try parsing as raw bytes/sec first (handle European format)
         try:
-            return float(speed_str)
+            # Handle European number format for raw bytes
+            raw_value = speed_str.replace(',', '.') if ',' in speed_str and '.' not in speed_str else speed_str
+            return float(raw_value)
         except ValueError:
             pass
 
@@ -552,14 +555,19 @@ def parse_speed_string(speed_str: str) -> float:
         parts = speed_str.split()
         if len(parts) != 2:
             # Try extracting numbers if units are stuck to value
+            # Updated regex to handle both dot and comma decimal separators
             import re
-            match = re.match(r"(\d+\.?\d*)([A-Za-z]+)", speed_str)
+            match = re.match(r"(\d+[.,]?\d*)([A-Za-z]+)", speed_str)
             if match:
                 value, unit = match.groups()
             else:
                 raise ValueError(f"Invalid speed format: {speed_str}")
         else:
             value, unit = parts
+
+        # Convert European number format (comma decimal) to standard format (dot decimal)
+        if ',' in value and '.' not in value:
+            value = value.replace(',', '.')
 
         # Convert value to float
         speed = float(value)
