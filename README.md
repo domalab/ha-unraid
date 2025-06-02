@@ -4,8 +4,8 @@
 [![GitHub Last Commit](https://img.shields.io/github/last-commit/domalab/ha-unraid?style=for-the-badge)](https://github.com/domalab/ha-unraid/commits/main)
 [![Community Forum](https://img.shields.io/badge/Community-Forum-blue?style=for-the-badge)](https://community.home-assistant.io/t/unraid-integration)
 [![License](https://img.shields.io/github/license/domalab/ha-unraid?style=for-the-badge)](./LICENSE)
-[![Quality Scale](https://img.shields.io/badge/Quality%20Scale-Platinum-blue?style=for-the-badge)](https://developers.home-assistant.io/docs/integration_quality_scale_index)
-[![Documentation](https://img.shields.io/badge/Documentation-GitHub%20Pages-blue?style=for-the-badge)](https://unraid-docs.domalab.net)
+[![Documentation](https://img.shields.io/badge/Documentation-GitHub%20Pages-blue?style=for-the-badge)](https://domalab.github.io/ha-unraid/)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/domalab/ha-unraid)
 
 This custom integration allows you to monitor and control your Unraid server from Home Assistant. Unraid is a popular NAS (Network Attached Storage) operating system that provides flexible storage, virtualization, and application support.
 
@@ -166,20 +166,20 @@ The integration includes advanced validation during setup:
 
 ## Documentation
 
-Comprehensive documentation is available on our [Documentation Site](https://unraid-docs.domalab.net/):
+Comprehensive documentation is available on our [Documentation Site](https://domalab.github.io/ha-unraid/):
 
-- [Installation Guide](https://unraid-docs.domalab.net/user-guide/installation/)
-- [Features Overview](https://unraid-docs.domalab.net/user-guide/features/)
-- [Examples and Use Cases](https://unraid-docs.domalab.net/advanced/examples/)
-- [Troubleshooting Guide](https://unraid-docs.domalab.net/user-guide/troubleshooting/)
-- [Docker Management](https://unraid-docs.domalab.net/advanced/docker-management/)
-- [VM Control](https://unraid-docs.domalab.net/advanced/vm-control/)
-- [User Scripts](https://unraid-docs.domalab.net/advanced/user-scripts/)
-- [Contributing Guide](https://unraid-docs.domalab.net/development/contributing/)
+- [Installation Guide](https://domalab.github.io/ha-unraid/user-guide/installation/)
+- [Features Overview](https://domalab.github.io/ha-unraid/user-guide/features/)
+- [Examples and Use Cases](https://domalab.github.io/ha-unraid/advanced/examples/)
+- [Troubleshooting Guide](https://domalab.github.io/ha-unraid/user-guide/troubleshooting/)
+- [Docker Management](https://domalab.github.io/ha-unraid/advanced/docker-management/)
+- [VM Control](https://domalab.github.io/ha-unraid/advanced/vm-control/)
+- [User Scripts](https://domalab.github.io/ha-unraid/advanced/user-scripts/)
+- [Contributing Guide](https://domalab.github.io/ha-unraid/development/contributing/)
 
 ## Contributing
 
-Contributions to this integration are welcome. Please fork the repository and submit a pull request with your changes. Make sure to follow the contribution guidelines. See our [Contributing Guide](https://unraid-docs.domalab.net/development/contributing/) for more details.
+Contributions to this integration are welcome. Please fork the repository and submit a pull request with your changes. Make sure to follow the contribution guidelines. See our [Contributing Guide](https://domalab.github.io/ha-unraid/development/contributing/) for more details.
 
 ## License
 

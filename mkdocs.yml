@@ -1,5 +1,5 @@
 site_name: Unraid Integration for Home Assistant
-site_url: https://unraid-docs.domalab.net/
+site_url: https://domalab.github.io/ha-unraid/
 site_description: Documentation for the Home Assistant Unraid integration
 site_author: domalab
 repo_url: https://github.com/domalab/ha-unraid
