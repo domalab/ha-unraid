@@ -32,6 +32,18 @@ I've already begun work on the new integration and will share updates as develop
 
 I appreciate your understanding and continued support as we move toward this improved implementation.
 
+### Beta GraphQL Integration Available
+
+For those interested in trying the new approach, a beta version of the GraphQL-based integration is now available! The [Unraid Connect integration](https://github.com/domalab/ha-unraid-connect) leverages Unraid's official GraphQL API and represents the future direction of this project.
+
+**Important Notes:**
+
+- This is currently in **beta phase** - expect some rough edges
+- You can view current issues and track development progress on the GitHub repository
+- Remaining issues will be addressed as the Unraid API Team releases more updates and improvements
+
+If you're comfortable with beta software and want to help shape the future of Unraid integration with Home Assistant, give it a try.
+
 ## Features
 
 - Monitor CPU, RAM, Boot, Cache, Array Disks, and Array usage
