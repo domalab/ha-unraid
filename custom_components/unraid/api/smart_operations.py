@@ -123,8 +123,29 @@ class SmartDataManager:
             # Strip partition numbers from device path for SMART data collection
             # For example, convert /dev/nvme0n1p1 to /dev/nvme0n1
             if 'nvme' in device_path and 'p' in device_path:
+                original_device_path = device_path
                 device_path = re.sub(r'(nvme\d+n\d+)p\d+', r'\1', device_path)
-                _LOGGER.debug("Stripped partition number from NVME device path: %s", device_path)
+                _LOGGER.debug("Stripped partition number from NVME device path: %s -> %s",
+                            original_device_path, device_path)
+
+                # Validate that the base NVME device actually exists
+                try:
+                    check_cmd = f"test -e {device_path}"
+                    check_result = await self._instance.execute_command(check_cmd)
+                    if check_result.exit_status != 0:
+                        _LOGGER.debug(
+                            "NVME base device %s does not exist (derived from %s), skipping SMART data collection",
+                            device_path, original_device_path
+                        )
+                        return {
+                            "state": "unavailable",
+                            "error": f"Base NVME device {device_path} not found",
+                            "smart_status": "unknown",
+                            "temperature": None,
+                            "device_type": "nvme"
+                        }
+                except Exception as err:
+                    _LOGGER.warning("Failed to check NVME device existence for %s: %s", device_path, err)
 
             # Skip SMART data collection for USB boot drives
             if device_path == "/dev/sda":
@@ -300,11 +321,36 @@ class SmartDataManager:
                         self._last_update[device] = now
                         return error_data
 
-                _LOGGER.warning(
-                    "SMART command failed for %s: exit_code=%d",
-                    device,
-                    result.exit_status
-                )
+                # Provide more user-friendly error messages based on exit code
+                if result.exit_status == SmartctlExitCode.DEVICE_OPEN_ERROR:
+                    _LOGGER.debug(
+                        "SMART data unavailable for %s (device not accessible, may be in standby or partition)",
+                        device
+                    )
+                elif result.exit_status == SmartctlExitCode.SMART_TEST_ERROR:
+                    # Exit code 4 is common for NVME partitions that don't exist as base devices
+                    if 'nvme' in device.lower() and 'p' in device:
+                        _LOGGER.debug(
+                            "SMART data unavailable for NVME partition %s (base device may not exist)",
+                            device
+                        )
+                    else:
+                        _LOGGER.info(
+                            "SMART self-test in progress for %s, data temporarily unavailable",
+                            device
+                        )
+                elif result.exit_status == SmartctlExitCode.SMART_OR_ATA_ERROR:
+                    _LOGGER.warning(
+                        "SMART reports potential issues for %s (exit_code=%d) - check disk health",
+                        device,
+                        result.exit_status
+                    )
+                else:
+                    _LOGGER.warning(
+                        "SMART command failed for %s: exit_code=%d",
+                        device,
+                        result.exit_status
+                    )
                 error_data = {
                     "state": "error",
                     "error": f"Command failed: {result.exit_status}",

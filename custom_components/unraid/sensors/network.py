@@ -199,7 +199,7 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional network interface attributes."""
+        """Return additional network interface attributes with user-friendly formatting."""
         try:
             stats = (
                 self.coordinator.data.get("system_stats", {})
@@ -208,33 +208,57 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
             )
 
             attrs = {
-                "interface": self._interface,
-                "connected": stats.get("connected", False),
-                "link_detected": stats.get("link_detected", False),
-                "mac_address": stats.get("mac_address", "unknown"),
+                "interface_name": self._interface,
+                "connection_status": "Connected" if stats.get("connected", False) else "Disconnected",
+                "link_detected": "Yes" if stats.get("link_detected", False) else "No",
+                "mac_address": stats.get("mac_address", "Unknown"),
                 "last_update": dt_util.now().isoformat(),
             }
 
-            # Add interface details
+            # Add interface details with user-friendly names
             if info := stats.get("interface_info"):
-                attrs["interface_info"] = info
+                attrs["interface_details"] = info
 
-            # Add error counts if available
+            # Add error counts with user-friendly formatting
             if "rx_errors" in stats or "tx_errors" in stats:
+                rx_errors = stats.get("rx_errors", 0)
+                tx_errors = stats.get("tx_errors", 0)
+                rx_dropped = stats.get("rx_dropped", 0)
+                tx_dropped = stats.get("tx_dropped", 0)
+
                 attrs.update({
-                    "rx_errors": stats.get("rx_errors", 0),
-                    "tx_errors": stats.get("tx_errors", 0),
-                    "rx_dropped": stats.get("rx_dropped", 0),
-                    "tx_dropped": stats.get("tx_dropped", 0),
+                    "receive_errors": f"{rx_errors:,}" if rx_errors > 0 else "None",
+                    "transmit_errors": f"{tx_errors:,}" if tx_errors > 0 else "None",
+                    "receive_dropped": f"{rx_dropped:,}" if rx_dropped > 0 else "None",
+                    "transmit_dropped": f"{tx_dropped:,}" if tx_dropped > 0 else "None",
                 })
 
-            # Add speed information
+            # Add speed information with proper formatting
             if speed := stats.get("speed"):
-                attrs["link_speed"] = f"{speed} Mbps"
+                try:
+                    speed_val = float(speed)
+                    if speed_val >= 1000:
+                        attrs["link_speed"] = f"{speed_val / 1000:.1f} Gbps"
+                    else:
+                        attrs["link_speed"] = f"{speed_val:.0f} Mbps"
+                except (ValueError, TypeError):
+                    attrs["link_speed"] = f"{speed} Mbps"
+            else:
+                attrs["link_speed"] = "Unknown"
 
-            # Add duplex mode
+            # Add duplex mode with user-friendly formatting
             if duplex := stats.get("duplex"):
-                attrs["duplex_mode"] = duplex
+                attrs["duplex_mode"] = duplex.title() if duplex else "Unknown"
+            else:
+                attrs["duplex_mode"] = "Unknown"
+
+            # Add total bytes transferred with formatting
+            if self._direction == "inbound":
+                total_bytes = stats.get("rx_bytes", 0)
+                attrs["total_data_received"] = self._format_bytes(total_bytes)
+            else:
+                total_bytes = stats.get("tx_bytes", 0)
+                attrs["total_data_transmitted"] = self._format_bytes(total_bytes)
 
             return attrs
 
@@ -245,6 +269,24 @@ class UnraidNetworkSensor(UnraidSensorBase, NetworkRateSmoothingMixin):
                 err
             )
             return {}
+
+    def _format_bytes(self, bytes_value: int) -> str:
+        """Format bytes into human-readable format."""
+        if bytes_value <= 0:
+            return "0 B"
+
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        unit_index = 0
+        value = float(bytes_value)
+
+        while value >= 1024 and unit_index < len(units) - 1:
+            value /= 1024
+            unit_index += 1
+
+        if unit_index == 0:
+            return f"{int(value)} {units[unit_index]}"
+        else:
+            return f"{value:.2f} {units[unit_index]}"
 
 class UnraidNetworkSensors:
     """Helper class to create all network sensors."""

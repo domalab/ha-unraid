@@ -2,25 +2,25 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up Unraid",
-        "description": "[%key:common::config_flow::description::setup_connection%]",
+        "title": "Connect to Unraid Server",
+        "description": "Welcome! Let's connect Home Assistant to your Unraid server to monitor storage, system performance, and more.",
         "data": {
-          "host": "[%key:common::config_flow::data::host%]",
-          "username": "[%key:common::config_flow::data::username%]",
-          "password": "[%key:common::config_flow::data::password%]",
-          "port": "[%key:common::config_flow::data::port%]",
-          "general_interval": "General Update Interval (Minutes)",
-          "disk_interval": "Disk Update Interval",
-          "has_ups": "UPS Insights"
+          "host": "Server Address",
+          "username": "Username",
+          "password": "Password",
+          "port": "SSH Port",
+          "general_interval": "Update Frequency (Minutes)",
+          "disk_interval": "Disk Check Frequency",
+          "has_ups": "UPS Monitoring"
         },
         "data_description": {
-          "host": "{host_description}",
-          "username": "{username_description}",
-          "password": "{password_description}",
-          "port": "{port_description}",
-          "general_interval": "{general_interval_description}",
-          "disk_interval": "{disk_interval_description}",
-          "has_ups": "Enable if you have a UPS connected to your Unraid server"
+          "host": "Enter your Unraid server's IP address (e.g., 192.168.1.100) or hostname",
+          "username": "Your Unraid username (typically 'root' for admin access)",
+          "password": "Your Unraid password for SSH access",
+          "port": "SSH port number (default is 22, change only if you've customized it)",
+          "general_interval": "How often to update sensors like CPU, memory, and network (1-60 minutes, recommended: 5)",
+          "disk_interval": "How often to check disk health and usage (recommended: every 30 minutes to preserve disk life)",
+          "has_ups": "Enable this if you have an Uninterruptible Power Supply (UPS) connected to monitor power status"
         }
       }
     },
@@ -36,91 +36,91 @@
   "options": {
     "step": {
       "init": {
-        "title": "Update Intervals",
-        "description": "Configure update intervals and settings",
+        "title": "Unraid Integration Settings",
+        "description": "Adjust monitoring settings to optimize performance and reduce system load on your Unraid server.",
         "data": {
-          "general_interval": "[%key:config::step::user::data::general_interval%]",
-          "disk_interval": "[%key:config::step::user::data::disk_interval%]",
-          "port": "[%key:common::config_flow::data::port%]",
-          "has_ups": "[%key:config::step::user::data::has_ups%]"
+          "general_interval": "Update Frequency (Minutes)",
+          "disk_interval": "Disk Check Frequency",
+          "port": "SSH Port",
+          "has_ups": "UPS Monitoring"
         },
         "data_description": {
-          "general_interval": "[%key:config::step::user::data_description::general_interval%]",
-          "disk_interval": "[%key:config::step::user::data_description::disk_interval%]",
-          "port": "SSH port for connecting to your Unraid server",
-          "has_ups": "[%key:config::step::user::data_description::has_ups%]"
+          "general_interval": "How often to update CPU, memory, and network sensors (1-60 minutes). Lower values provide more real-time data but increase system load.",
+          "disk_interval": "How often to check disk health and usage. Longer intervals help preserve disk life by reducing unnecessary wake-ups.",
+          "port": "SSH port for connecting to your Unraid server (typically 22)",
+          "has_ups": "Enable UPS monitoring if you have an Uninterruptible Power Supply connected to track power status and battery levels"
         }
       }
     }
   },
   "services": {
     "force_update": {
-      "name": "Force Update",
-      "description": "Force an immediate update of Unraid data",
+      "name": "Refresh Unraid Data",
+      "description": "Immediately refresh all sensor data from your Unraid server. Use this if you want to see the latest information without waiting for the next scheduled update.",
       "fields": {
         "config_entry": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry to update. If not provided, all Unraid instances will be updated."
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to update, or leave empty to update all configured servers."
         }
       }
     },
     "execute_command": {
-      "name": "Execute Command",
-      "description": "Execute a command on the Unraid server",
+      "name": "Run Server Command",
+      "description": "Execute a command directly on your Unraid server via SSH. ⚠️ Use with caution - only run commands you understand.",
       "fields": {
         "entry_id": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry for the Unraid instance"
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to run the command on"
         },
         "command": {
           "name": "Command",
-          "description": "The command to execute on the Unraid server"
+          "description": "The command to execute (e.g., 'ls -la', 'df -h'). Be careful with system commands."
         }
       }
     },
     "execute_user_script": {
-      "name": "Execute User Script",
-      "description": "Execute a user script on the Unraid server",
+      "name": "Run User Script",
+      "description": "Execute one of your custom user scripts on the Unraid server. This is safer than running raw commands.",
       "fields": {
         "entry_id": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry for the Unraid instance"
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to run the script on"
         },
         "script_name": {
           "name": "Script Name",
-          "description": "The name of the user script to execute"
+          "description": "The name of the user script to run (must exist in your Unraid user scripts)"
         },
         "background": {
           "name": "Run in Background",
-          "description": "Whether to run the script in the background"
+          "description": "Run the script in the background (recommended for long-running scripts)"
         }
       }
     },
     "system_reboot": {
-      "name": "Reboot System",
-      "description": "Reboot the Unraid system",
+      "name": "Reboot Server",
+      "description": "⚠️ CAUTION: This will restart your Unraid server! All running services and Docker containers will be stopped. Only use this when necessary.",
       "fields": {
         "entry_id": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry for the Unraid instance"
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to reboot"
         },
         "delay": {
-          "name": "Delay",
-          "description": "Delay in seconds before executing the reboot (0-3600)"
+          "name": "Delay (seconds)",
+          "description": "Wait this many seconds before rebooting (0-3600). This gives you time to prepare or cancel if needed."
         }
       }
     },
     "system_shutdown": {
-      "name": "Shutdown System",
-      "description": "Shutdown the Unraid system",
+      "name": "Shutdown Server",
+      "description": "⚠️ CAUTION: This will completely shut down your Unraid server! You'll need physical access to turn it back on. Use this only for maintenance or emergencies.",
       "fields": {
         "entry_id": {
-          "name": "Config Entry ID",
-          "description": "The ID of the config entry for the Unraid instance"
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to shutdown"
         },
         "delay": {
-          "name": "Delay",
-          "description": "Delay in seconds before executing the shutdown (0-3600)"
+          "name": "Delay (seconds)",
+          "description": "Wait this many seconds before shutting down (0-3600). This gives you time to prepare or cancel if needed."
         }
       }
     }
@@ -128,16 +128,123 @@
   "entity": {
     "sensor": {
       "storage_used": {
-        "name": "{name} Used",
+        "name": "{name} Usage",
         "state_attributes": {
-          "total_size": {
-            "name": "Total Size"
+          "total_capacity": {
+            "name": "Total Capacity"
           },
-          "used_space": {
-            "name": "Used Space"
+          "space_used": {
+            "name": "Space Used"
           },
-          "free_space": {
-            "name": "Free Space"
+          "space_available": {
+            "name": "Space Available"
+          },
+          "usage_percentage": {
+            "name": "Usage Percentage"
+          },
+          "disk_status": {
+            "name": "Disk Status"
+          },
+          "capacity_status": {
+            "name": "Capacity Status"
+          }
+        }
+      },
+      "network_interface": {
+        "name": "{interface} {direction}",
+        "state_attributes": {
+          "interface_name": {
+            "name": "Interface Name"
+          },
+          "connection_status": {
+            "name": "Connection Status"
+          },
+          "link_detected": {
+            "name": "Link Detected"
+          },
+          "link_speed": {
+            "name": "Link Speed"
+          },
+          "duplex_mode": {
+            "name": "Duplex Mode"
+          },
+          "total_data_received": {
+            "name": "Total Data Received"
+          },
+          "total_data_transmitted": {
+            "name": "Total Data Transmitted"
+          }
+        }
+      },
+      "cpu_usage": {
+        "name": "CPU Usage",
+        "state_attributes": {
+          "processor_cores": {
+            "name": "Processor Cores"
+          },
+          "processor_architecture": {
+            "name": "Processor Architecture"
+          },
+          "processor_model": {
+            "name": "Processor Model"
+          },
+          "maximum_frequency": {
+            "name": "Maximum Frequency"
+          },
+          "minimum_frequency": {
+            "name": "Minimum Frequency"
+          },
+          "temperature_status": {
+            "name": "Temperature Status"
+          }
+        }
+      },
+      "ups_power": {
+        "name": "UPS Server Power",
+        "state_attributes": {
+          "ups_model": {
+            "name": "UPS Model"
+          },
+          "rated_power": {
+            "name": "Rated Power"
+          },
+          "current_load": {
+            "name": "Current Load"
+          },
+          "battery_charge": {
+            "name": "Battery Charge"
+          },
+          "battery_status": {
+            "name": "Battery Status"
+          },
+          "estimated_runtime": {
+            "name": "Estimated Runtime"
+          },
+          "load_status": {
+            "name": "Load Status"
+          }
+        }
+      },
+      "docker_container": {
+        "name": "{container} Container",
+        "state_attributes": {
+          "container_state": {
+            "name": "Container State"
+          },
+          "detailed_status": {
+            "name": "Detailed Status"
+          },
+          "docker_image": {
+            "name": "Docker Image"
+          },
+          "state_description": {
+            "name": "State Description"
+          },
+          "health_status": {
+            "name": "Health Status"
+          },
+          "exposed_ports": {
+            "name": "Exposed Ports"
           }
         }
       }

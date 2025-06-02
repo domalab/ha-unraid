@@ -28,37 +28,40 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to Unraid",
-        "description": "Set up your Unraid server connection.",
+        "title": "Connect to Unraid Server",
+        "description": "Welcome! Let's connect Home Assistant to your Unraid server to monitor storage, system performance, and more.",
         "data": {
-          "host": "Host",
+          "host": "Server Address",
           "username": "Username",
           "password": "Password",
-          "port": "Port",
-          "general_interval": "General Update Interval (Minutes)",
-          "disk_interval": "Disk Update Interval",
-          "has_ups": "UPS Insights"
+          "port": "SSH Port",
+          "general_interval": "Update Frequency (Minutes)",
+          "disk_interval": "Disk Check Frequency",
+          "has_ups": "UPS Monitoring"
         },
         "data_description": {
-          "host": "{host_description}",
-          "username": "{username_description}",
-          "password": "{password_description}",
-          "port": "{port_description}",
-          "general_interval": "{general_interval_description}",
-          "disk_interval": "{disk_interval_description}",
-          "has_ups": "Check this if you have a UPS connected to your Unraid server"
+          "host": "Enter your Unraid server's IP address (e.g., 192.168.1.100) or hostname",
+          "username": "Your Unraid username (typically 'root' for admin access)",
+          "password": "Your Unraid password for SSH access",
+          "port": "SSH port number (default is 22, change only if you've customized it)",
+          "general_interval": "How often to update sensors like CPU, memory, and network (1-60 minutes, recommended: 5)",
+          "disk_interval": "How often to check disk health and usage (recommended: every 30 minutes to preserve disk life)",
+          "has_ups": "Enable this if you have an Uninterruptible Power Supply (UPS) connected to monitor power status"
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to Unraid server",
-      "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error occurred",
-      "empty_host": "Hostname cannot be empty",
-      "invalid_host": "Invalid hostname or IP address",
-      "invalid_port": "Invalid port number (must be between 1 and 65535)",
-      "empty_username": "Username cannot be empty",
-      "empty_password": "Password cannot be empty"
+      "cannot_connect": "Unable to connect to your Unraid server. Please check that:\n• Your server is powered on and connected to the network\n• The IP address or hostname is correct\n• SSH is enabled on your Unraid server\n• Your network allows SSH connections (port 22)",
+      "invalid_auth": "Login failed. Please double-check that:\n• Your username is correct (usually 'root')\n• Your password matches your Unraid login\n• SSH access is enabled for this user",
+      "unknown": "Something unexpected happened during setup. Don't worry - this is usually a temporary issue. Please try again in a moment, or check the Home Assistant logs for more details.",
+      "empty_host": "Please enter your server address. This should be your Unraid server's IP address (like 192.168.1.100) or hostname.",
+      "invalid_host": "The server address doesn't look right. Please enter a valid IP address (like 192.168.1.100) or hostname.",
+      "invalid_port": "The port number should be between 1 and 65535. Most Unraid servers use port 22 for SSH (the default).",
+      "empty_username": "Please enter your Unraid username. This is typically 'root' for administrative access.",
+      "empty_password": "Please enter your Unraid password. This is the same password you use to log into your Unraid web interface.",
+      "network_unavailable": "Network statistics are temporarily unavailable. This can happen when your server is under heavy load or if there are network interface issues. The integration will retry automatically.",
+      "smart_unavailable": "Disk health data is temporarily unavailable. This often happens when disks are in standby mode (which is normal). The integration will check again during the next update.",
+      "duplicate_entities": "Found and cleaned up some duplicate sensors. This can happen after configuration changes. If you continue seeing duplicates, try restarting Home Assistant."
     },
     "abort": {
       "already_configured": "This Unraid server is already configured"
@@ -67,19 +70,216 @@
   "options": {
     "step": {
       "init": {
-        "title": "Update Intervals",
-        "description": "Configure update intervals and settings",
+        "title": "Unraid Integration Settings",
+        "description": "Adjust monitoring settings to optimize performance and reduce system load on your Unraid server.",
         "data": {
-          "general_interval": "General Update Interval (Minutes)",
-          "disk_interval": "Disk Update Interval",
+          "general_interval": "Update Frequency (Minutes)",
+          "disk_interval": "Disk Check Frequency",
           "port": "SSH Port",
-          "has_ups": "UPS Insights"
+          "has_ups": "UPS Monitoring"
         },
         "data_description": {
-          "general_interval": "How often to update non-disk sensors (1-60 minutes)",
-          "disk_interval": "How often to update disk information",
-          "port": "SSH port for connecting to your Unraid server",
-          "has_ups": "Enable if you have a UPS connected to your Unraid server"
+          "general_interval": "How often to update CPU, memory, and network sensors (1-60 minutes). Lower values provide more real-time data but increase system load.",
+          "disk_interval": "How often to check disk health and usage. Longer intervals help preserve disk life by reducing unnecessary wake-ups.",
+          "port": "SSH port for connecting to your Unraid server (typically 22)",
+          "has_ups": "Enable UPS monitoring if you have an Uninterruptible Power Supply connected to track power status and battery levels"
+        }
+      }
+    }
+  },
+  "services": {
+    "force_update": {
+      "name": "Refresh Unraid Data",
+      "description": "Immediately refresh all sensor data from your Unraid server. Use this if you want to see the latest information without waiting for the next scheduled update.",
+      "fields": {
+        "config_entry": {
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to update, or leave empty to update all configured servers."
+        }
+      }
+    },
+    "execute_command": {
+      "name": "Run Server Command",
+      "description": "Execute a command directly on your Unraid server via SSH. ⚠️ Use with caution - only run commands you understand.",
+      "fields": {
+        "entry_id": {
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to run the command on"
+        },
+        "command": {
+          "name": "Command",
+          "description": "The command to execute (e.g., 'ls -la', 'df -h'). Be careful with system commands."
+        }
+      }
+    },
+    "execute_user_script": {
+      "name": "Run User Script",
+      "description": "Execute one of your custom user scripts on the Unraid server. This is safer than running raw commands.",
+      "fields": {
+        "entry_id": {
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to run the script on"
+        },
+        "script_name": {
+          "name": "Script Name",
+          "description": "The name of the user script to run (must exist in your Unraid user scripts)"
+        },
+        "background": {
+          "name": "Run in Background",
+          "description": "Run the script in the background (recommended for long-running scripts)"
+        }
+      }
+    },
+    "system_reboot": {
+      "name": "Reboot Server",
+      "description": "⚠️ CAUTION: This will restart your Unraid server! All running services and Docker containers will be stopped. Only use this when necessary.",
+      "fields": {
+        "entry_id": {
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to reboot"
+        },
+        "delay": {
+          "name": "Delay (seconds)",
+          "description": "Wait this many seconds before rebooting (0-3600). This gives you time to prepare or cancel if needed."
+        }
+      }
+    },
+    "system_shutdown": {
+      "name": "Shutdown Server",
+      "description": "⚠️ CAUTION: This will completely shut down your Unraid server! You'll need physical access to turn it back on. Use this only for maintenance or emergencies.",
+      "fields": {
+        "entry_id": {
+          "name": "Unraid Server",
+          "description": "Select which Unraid server to shutdown"
+        },
+        "delay": {
+          "name": "Delay (seconds)",
+          "description": "Wait this many seconds before shutting down (0-3600). This gives you time to prepare or cancel if needed."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "storage_used": {
+        "name": "{name} Usage",
+        "state_attributes": {
+          "total_capacity": {
+            "name": "Total Capacity"
+          },
+          "space_used": {
+            "name": "Space Used"
+          },
+          "space_available": {
+            "name": "Space Available"
+          },
+          "usage_percentage": {
+            "name": "Usage Percentage"
+          },
+          "disk_status": {
+            "name": "Disk Status"
+          },
+          "capacity_status": {
+            "name": "Capacity Status"
+          }
+        }
+      },
+      "network_interface": {
+        "name": "{interface} {direction}",
+        "state_attributes": {
+          "interface_name": {
+            "name": "Interface Name"
+          },
+          "connection_status": {
+            "name": "Connection Status"
+          },
+          "link_detected": {
+            "name": "Link Detected"
+          },
+          "link_speed": {
+            "name": "Link Speed"
+          },
+          "duplex_mode": {
+            "name": "Duplex Mode"
+          },
+          "total_data_received": {
+            "name": "Total Data Received"
+          },
+          "total_data_transmitted": {
+            "name": "Total Data Transmitted"
+          }
+        }
+      },
+      "cpu_usage": {
+        "name": "CPU Usage",
+        "state_attributes": {
+          "processor_cores": {
+            "name": "Processor Cores"
+          },
+          "processor_architecture": {
+            "name": "Processor Architecture"
+          },
+          "processor_model": {
+            "name": "Processor Model"
+          },
+          "maximum_frequency": {
+            "name": "Maximum Frequency"
+          },
+          "minimum_frequency": {
+            "name": "Minimum Frequency"
+          },
+          "temperature_status": {
+            "name": "Temperature Status"
+          }
+        }
+      },
+      "ups_power": {
+        "name": "UPS Server Power",
+        "state_attributes": {
+          "ups_model": {
+            "name": "UPS Model"
+          },
+          "rated_power": {
+            "name": "Rated Power"
+          },
+          "current_load": {
+            "name": "Current Load"
+          },
+          "battery_charge": {
+            "name": "Battery Charge"
+          },
+          "battery_status": {
+            "name": "Battery Status"
+          },
+          "estimated_runtime": {
+            "name": "Estimated Runtime"
+          },
+          "load_status": {
+            "name": "Load Status"
+          }
+        }
+      },
+      "docker_container": {
+        "name": "{container} Container",
+        "state_attributes": {
+          "container_state": {
+            "name": "Container State"
+          },
+          "detailed_status": {
+            "name": "Detailed Status"
+          },
+          "docker_image": {
+            "name": "Docker Image"
+          },
+          "state_description": {
+            "name": "State Description"
+          },
+          "health_status": {
+            "name": "Health Status"
+          },
+          "exposed_ports": {
+            "name": "Exposed Ports"
+          }
         }
       }
     }

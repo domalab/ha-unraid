@@ -124,6 +124,66 @@ async def async_cleanup_orphaned_entities(hass: HomeAssistant, entry: ConfigEntr
     return removed_count
 
 
+async def async_cleanup_duplicate_entities(hass: HomeAssistant, entry: ConfigEntry) -> int:
+    """Clean up duplicate entities that may have been created during restarts.
+
+    This addresses GitHub issue #81 where entities are duplicated with _2 suffix.
+
+    Args:
+        hass: HomeAssistant instance
+        entry: ConfigEntry instance
+
+    Returns:
+        Number of duplicate entities removed
+    """
+    ent_reg = er.async_get(hass)
+    removed_count = 0
+    hostname = entry.data.get(CONF_HOSTNAME, DEFAULT_NAME).lower()
+
+    # Get all Unraid entities (not just for this config entry)
+    all_unraid_entities = [
+        entity for entity in ent_reg.entities.values()
+        if entity.platform == DOMAIN
+    ]
+
+    # Group entities by their base unique_id (without _2, _3, etc. suffixes)
+    entity_groups = {}
+    for entity in all_unraid_entities:
+        # Extract base unique_id by removing numeric suffixes
+        base_unique_id = re.sub(r'_\d+$', '', entity.unique_id)
+        if base_unique_id not in entity_groups:
+            entity_groups[base_unique_id] = []
+        entity_groups[base_unique_id].append(entity)
+
+    # Find and remove duplicates
+    for base_unique_id, entities in entity_groups.items():
+        if len(entities) > 1:
+            # Sort by creation time or entity_id to keep the original
+            entities.sort(key=lambda e: e.entity_id)
+            original = entities[0]
+            duplicates = entities[1:]
+
+            _LOGGER.info(
+                "Found %d duplicate entities for base unique_id %s, keeping %s",
+                len(duplicates),
+                base_unique_id,
+                original.entity_id
+            )
+
+            for duplicate in duplicates:
+                try:
+                    _LOGGER.info("Removing duplicate entity: %s", duplicate.entity_id)
+                    ent_reg.async_remove(duplicate.entity_id)
+                    removed_count += 1
+                except Exception as err:
+                    _LOGGER.error("Failed to remove duplicate entity %s: %s", duplicate.entity_id, err)
+
+    if removed_count > 0:
+        _LOGGER.info("Removed %d duplicate entities", removed_count)
+
+    return removed_count
+
+
 async def async_migrate_with_rollback(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate entities with rollback support.
 

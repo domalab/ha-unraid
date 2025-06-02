@@ -119,14 +119,63 @@ class UnraidDockerContainerSensor(UnraidSensorBase, UnraidDiagnosticMixin):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return basic container attributes."""
+        """Return user-friendly container attributes."""
         for container in self.coordinator.data.get("docker_containers", []):
             if container.get("name") == self.container_name:
-                return {
-                    "state": container.get("state", "unknown"),
-                    "status": container.get("status", "unknown"),
-                    "image": container.get("image", "unknown"),
+                state = container.get("state", "unknown")
+                status = container.get("status", "unknown")
+                image = container.get("image", "unknown")
+
+                attrs = {
+                    "container_state": state.title() if state != "unknown" else "Unknown",
+                    "detailed_status": status.title() if status != "unknown" else "Unknown",
+                    "docker_image": image,
+                    "last_updated": dt_util.now().isoformat(),
                 }
+
+                # Add user-friendly state description
+                state_descriptions = {
+                    "running": "Container is running normally",
+                    "paused": "Container is paused",
+                    "exited": "Container has stopped",
+                    "dead": "Container is in a dead state",
+                    "restarting": "Container is restarting",
+                    "created": "Container created but not started",
+                }
+
+                if state.lower() in state_descriptions:
+                    attrs["state_description"] = state_descriptions[state.lower()]
+                else:
+                    attrs["state_description"] = "Unknown state"
+
+                # Add health status if available
+                if health := container.get("health"):
+                    attrs["health_status"] = health.title()
+
+                # Add port information if available
+                if ports := container.get("ports"):
+                    if isinstance(ports, list) and ports:
+                        port_list = []
+                        for port in ports:
+                            if isinstance(port, dict):
+                                private_port = port.get("PrivatePort", "")
+                                public_port = port.get("PublicPort", "")
+                                if public_port and private_port:
+                                    port_list.append(f"{public_port}→{private_port}")
+                                elif private_port:
+                                    port_list.append(str(private_port))
+                        if port_list:
+                            attrs["exposed_ports"] = ", ".join(port_list)
+
+                # Add uptime if available
+                if created := container.get("created"):
+                    try:
+                        # Assuming created is a timestamp
+                        attrs["created_time"] = created
+                    except (ValueError, TypeError):
+                        pass
+
+                return attrs
         return {}
 
     @property

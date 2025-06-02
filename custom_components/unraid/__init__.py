@@ -58,6 +58,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Create coordinator
         coordinator = UnraidDataUpdateCoordinator(hass, api, entry)
 
+        # Clean up any duplicate entities before setting up new ones
+        from .migrations import async_cleanup_duplicate_entities
+        try:
+            duplicates_removed = await async_cleanup_duplicate_entities(hass, entry)
+            if duplicates_removed > 0:
+                _LOGGER.info("Cleaned up %d duplicate entities during setup", duplicates_removed)
+        except Exception as cleanup_err:
+            _LOGGER.warning("Failed to clean up duplicate entities: %s", cleanup_err)
+
         # Get initial data
         await coordinator.async_config_entry_first_refresh()
 

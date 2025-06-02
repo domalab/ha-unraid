@@ -124,16 +124,76 @@ class UnraidUPSServerPowerSensor(UnraidSensorBase, UPSMetricsMixin):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
+        """Return additional state attributes with user-friendly formatting."""
         try:
             ups_info = self.coordinator.data.get("system_stats", {}).get("ups_info", {})
-            return {
-                "model": ups_info.get("MODEL", "Unknown"),
-                "nominal_power": f"{ups_info.get('NOMPOWER', '0')}W",
-                "load_percentage": f"{ups_info.get('LOADPCT', '0')}%",
-                "last_update": dt_util.now().isoformat(),
-                "energy_dashboard_compatible": True,
+
+            # Get raw values
+            model = ups_info.get("MODEL", "Unknown")
+            nominal_power = ups_info.get("NOMPOWER", "0")
+            load_pct = ups_info.get("LOADPCT", "0")
+            battery_charge = ups_info.get("BCHARGE", "0")
+            battery_runtime = ups_info.get("TIMELEFT", "0")
+
+            attrs = {
+                "ups_model": model,
+                "rated_power": f"{nominal_power}W",
+                "current_load": f"{load_pct}%",
+                "last_updated": dt_util.now().isoformat(),
+                "energy_dashboard_ready": True,
             }
+
+            # Add battery information if available
+            if battery_charge and battery_charge != "0":
+                attrs["battery_charge"] = f"{battery_charge}%"
+
+                # Add battery status description
+                try:
+                    charge_val = float(battery_charge)
+                    if charge_val >= 90:
+                        attrs["battery_status"] = "Excellent"
+                    elif charge_val >= 70:
+                        attrs["battery_status"] = "Good"
+                    elif charge_val >= 50:
+                        attrs["battery_status"] = "Fair"
+                    elif charge_val >= 25:
+                        attrs["battery_status"] = "Low"
+                    else:
+                        attrs["battery_status"] = "Critical"
+                except (ValueError, TypeError):
+                    attrs["battery_status"] = "Unknown"
+
+            # Add runtime information if available
+            if battery_runtime and battery_runtime != "0":
+                try:
+                    runtime_minutes = float(battery_runtime)
+                    if runtime_minutes >= 60:
+                        hours = int(runtime_minutes // 60)
+                        minutes = int(runtime_minutes % 60)
+                        attrs["estimated_runtime"] = f"{hours}h {minutes}m"
+                    else:
+                        attrs["estimated_runtime"] = f"{int(runtime_minutes)}m"
+                except (ValueError, TypeError):
+                    attrs["estimated_runtime"] = f"{battery_runtime} minutes"
+
+            # Add load status description
+            try:
+                load_val = float(load_pct)
+                if load_val >= 90:
+                    attrs["load_status"] = "Very High - Check connected devices"
+                elif load_val >= 70:
+                    attrs["load_status"] = "High"
+                elif load_val >= 50:
+                    attrs["load_status"] = "Moderate"
+                elif load_val >= 25:
+                    attrs["load_status"] = "Light"
+                else:
+                    attrs["load_status"] = "Very Light"
+            except (ValueError, TypeError):
+                attrs["load_status"] = "Unknown"
+
+            return attrs
+
         except (KeyError, TypeError) as err:
             _LOGGER.debug("Error getting server power attributes: %s", err)
             return {}

@@ -54,31 +54,63 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
+        """Return additional state attributes with user-friendly formatting."""
         data = self.coordinator.data.get("system_stats", {})
+
+
 
         attributes = {
             "last_update": dt_util.now().isoformat(),
-            "core_count": data.get("cpu_cores", 0),
-            "architecture": data.get("cpu_arch", "unknown"),
-            "model": data.get("cpu_model", "unknown"),
-            "threads_per_core": data.get("cpu_threads_per_core", 0),
-            "physical_sockets": data.get("cpu_sockets", 0),
-            "max_frequency": f"{data.get('cpu_max_freq', 0)} MHz",
-            "min_frequency": f"{data.get('cpu_min_freq', 0)} MHz",
         }
 
-        # Add temperature info if available
-        if "cpu_temp" in data:
-            attributes.update({
-                "temperature": f"{data['cpu_temp']}°C",
-                "temperature_warning": data.get("cpu_temp_warning", False),
-                "temperature_critical": data.get("cpu_temp_critical", False),
-            })
+        # Add CPU information with user-friendly formatting
+        if core_count := data.get("cpu_cores", 0):
+            attributes["processor_cores"] = f"{core_count} cores"
 
-        # Only include non-zero/unknown values
-        return {k: v for k, v in attributes.items()
-                if v not in (0, "unknown", "0 MHz")}
+        if arch := data.get("cpu_arch"):
+            if arch != "unknown":
+                attributes["processor_architecture"] = arch.upper()
+
+        if model := data.get("cpu_model"):
+            if model != "unknown":
+                attributes["processor_model"] = model
+
+        if threads := data.get("cpu_threads_per_core", 0):
+            if threads > 0:
+                attributes["threads_per_core"] = f"{threads} threads"
+
+        if sockets := data.get("cpu_sockets", 0):
+            if sockets > 0:
+                attributes["physical_sockets"] = f"{sockets} socket{'s' if sockets > 1 else ''}"
+
+        # Format frequencies with proper units
+        if max_freq := data.get("cpu_max_freq", 0):
+            if max_freq > 0:
+                if max_freq >= 1000:
+                    attributes["maximum_frequency"] = f"{max_freq / 1000:.2f} GHz"
+                else:
+                    attributes["maximum_frequency"] = f"{max_freq} MHz"
+
+        if min_freq := data.get("cpu_min_freq", 0):
+            if min_freq > 0:
+                if min_freq >= 1000:
+                    attributes["minimum_frequency"] = f"{min_freq / 1000:.2f} GHz"
+                else:
+                    attributes["minimum_frequency"] = f"{min_freq} MHz"
+
+        # Add temperature info with status indicators if available
+        if cpu_temp := data.get("cpu_temp"):
+            attributes["temperature"] = f"{cpu_temp}°C"
+
+            # Add temperature status with user-friendly descriptions
+            if data.get("cpu_temp_critical", False):
+                attributes["temperature_status"] = "Critical - Immediate attention required"
+            elif data.get("cpu_temp_warning", False):
+                attributes["temperature_status"] = "Warning - Monitor closely"
+            else:
+                attributes["temperature_status"] = "Normal"
+
+        return attributes
 
 class UnraidRAMUsageSensor(UnraidSensorBase):
     """RAM usage sensor for Unraid."""

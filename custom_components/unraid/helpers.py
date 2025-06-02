@@ -441,36 +441,54 @@ class DiskDataHelperMixin:
         device: Optional[str] = None,
         is_standby: bool = False
     ) -> Dict[str, Any]:
-        """Get common storage attributes with unified calculation."""
+        """Get common storage attributes with user-friendly formatting."""
         try:
             # Use centralized percentage calculation
             usage = self._calculate_usage_percentage(total, used)
             percentage = 0.0 if usage is None else usage
 
             attrs = {
-                "total_size": format_bytes(total),
-                "used_space": format_bytes(used),
-                "free_space": format_bytes(free),
-                "percentage": percentage,
-                "power_state": "standby" if is_standby else "active",
-                "last_update": dt_util.utcnow().isoformat()
+                "total_capacity": format_bytes(total),
+                "space_used": format_bytes(used),
+                "space_available": format_bytes(free),
+                "usage_percentage": f"{percentage:.1f}%",
+                "disk_status": "Standby (Spun Down)" if is_standby else "Active",
+                "last_updated": dt_util.utcnow().isoformat()
             }
 
+            # Add mount point with user-friendly label
             if mount_point:
-                attrs["mount_point"] = mount_point
+                attrs["mount_location"] = mount_point
+
+            # Add device with user-friendly label
             if device:
-                attrs["device"] = device
+                attrs["device_path"] = device
+
+            # Add capacity utilization description
+            if percentage is not None:
+                if percentage >= 95:
+                    attrs["capacity_status"] = "Critical - Nearly Full"
+                elif percentage >= 85:
+                    attrs["capacity_status"] = "Warning - High Usage"
+                elif percentage >= 70:
+                    attrs["capacity_status"] = "Moderate Usage"
+                else:
+                    attrs["capacity_status"] = "Normal"
+            else:
+                attrs["capacity_status"] = "Unknown"
 
             return attrs
 
         except Exception as err:
             _LOGGER.error("Error creating storage attributes: %s", err)
             return {
-                "total_size": "unknown",
-                "used_space": "unknown",
-                "free_space": "unknown",
-                "percentage": 0.0,
-                "last_update": dt_util.utcnow().isoformat()
+                "total_capacity": "Unknown",
+                "space_used": "Unknown",
+                "space_available": "Unknown",
+                "usage_percentage": "0.0%",
+                "disk_status": "Unknown",
+                "capacity_status": "Unknown",
+                "last_updated": dt_util.utcnow().isoformat()
             }
 
     def _get_temperature_str(

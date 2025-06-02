@@ -699,6 +699,10 @@ class SystemOperationsMixin:
             "mdcmd status; "
             "echo '===CPU_USAGE==='; "
             "top -bn1 | grep '^%Cpu' | awk '{print 100 - $8}'; "
+            "echo '===CPU_INFO==='; "
+            "echo 'CORES:'; nproc; "
+            "echo 'MODEL:'; grep 'model name' /proc/cpuinfo | head -1 | cut -d':' -f2 | sed 's/^ *//'; "
+            "echo 'ARCH:'; uname -m; "
             "echo '===MEMORY_INFO==='; "
             "cat /proc/meminfo; "
             "echo '===UPTIME==='; "
@@ -766,6 +770,39 @@ class SystemOperationsMixin:
                             system_stats['cpu_usage'] = round(cpu_usage, 2)
                     except (ValueError, TypeError):
                         _LOGGER.debug("Could not parse CPU usage from output: %s", sections['CPU_USAGE'])
+
+                # Parse CPU info
+                if 'CPU_INFO' in sections:
+                    try:
+                        cpu_info_lines = sections['CPU_INFO'].strip().split('\n')
+                        cpu_cores = None
+                        cpu_model = None
+                        cpu_arch = None
+
+                        for line in cpu_info_lines:
+                            line = line.strip()
+                            if line.startswith('CORES:'):
+                                continue
+                            elif line.startswith('MODEL:'):
+                                continue
+                            elif line.startswith('ARCH:'):
+                                continue
+                            elif cpu_cores is None and line.isdigit():
+                                cpu_cores = int(line)
+                            elif cpu_model is None and line and not line.isdigit():
+                                cpu_model = line
+                            elif cpu_arch is None and line and not line.isdigit() and cpu_model is not None:
+                                cpu_arch = line
+
+                        if cpu_cores:
+                            system_stats['cpu_cores'] = cpu_cores
+                        if cpu_model:
+                            system_stats['cpu_model'] = cpu_model
+                        if cpu_arch:
+                            system_stats['cpu_arch'] = cpu_arch
+
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.debug("Could not parse CPU info from output: %s, error: %s", sections['CPU_INFO'], err)
 
                 # Parse memory info
                 if 'MEMORY_INFO' in sections:

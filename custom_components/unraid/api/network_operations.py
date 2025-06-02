@@ -170,21 +170,33 @@ class NetworkOperationsMixin(NetworkRateSmoothingMixin):
             try:
                 result = await self.execute_command(command)
                 return result
-            except Exception:
+            except Exception as err:
                 retries += 1
                 if retries > self._max_retries:
-                    _LOGGER.error(
-                        "Command failed after %d retries: %s",
-                        self._max_retries,
-                        command
-                    )
+                    # Provide more specific error context for network operations
+                    if "cat /sys/class/net" in command:
+                        _LOGGER.error(
+                            "Network interface statistics unavailable after %d retries. "
+                            "This may indicate the interface is down or the system is under high load. "
+                            "Command: %s, Error: %s",
+                            self._max_retries,
+                            command[:50] + "..." if len(command) > 50 else command,
+                            str(err)
+                        )
+                    else:
+                        _LOGGER.error(
+                            "Network command failed after %d retries: %s, Error: %s",
+                            self._max_retries,
+                            command[:50] + "..." if len(command) > 50 else command,
+                            str(err)
+                        )
                     raise
 
                 _LOGGER.debug(
-                    "Retrying command (attempt %d/%d): %s",
+                    "Retrying network command (attempt %d/%d): %s",
                     retries,
                     self._max_retries + 1,
-                    command
+                    command[:50] + "..." if len(command) > 50 else command
                 )
                 await asyncio.sleep(self._retry_delay)
 

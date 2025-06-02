@@ -113,9 +113,28 @@ class UnraidSSHClient:
                     cpu_temp = float(temp_str)
                     break
         
+        # Get actual CPU information dynamically
+        cpu_model = "Unknown CPU"
+        cpu_cores = 1  # Default fallback
+
+        try:
+            # Get CPU model from /proc/cpuinfo
+            cpu_info_cmd = "grep 'model name' /proc/cpuinfo | head -1 | cut -d':' -f2 | sed 's/^ *//'"
+            cpu_info_result = await self.run_command(cpu_info_cmd)
+            if cpu_info_result.exit_code == 0 and cpu_info_result.stdout.strip():
+                cpu_model = cpu_info_result.stdout.strip()
+
+            # Get actual CPU core count
+            core_count_cmd = "nproc"
+            core_result = await self.run_command(core_count_cmd)
+            if core_result.exit_code == 0 and core_result.stdout.strip():
+                cpu_cores = int(core_result.stdout.strip())
+        except (ValueError, AttributeError) as err:
+            _LOGGER.debug("Error getting CPU info: %s", err)
+
         return {
-            "cpu_model": "CPU",
-            "cpu_cores": 4,  # Default value
+            "cpu_model": cpu_model,
+            "cpu_cores": cpu_cores,
             "cpu_usage": cpu_usage,
             "memory_total": mem_total,
             "memory_free": mem_free,
