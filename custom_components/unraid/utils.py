@@ -312,6 +312,21 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, Any]]) -> Dict[str, Any]
             len(sensors_data)
         )
 
+        # Enhanced diagnostic logging for troubleshooting
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            device_names = list(sensors_data.keys())
+            _LOGGER.debug("Available sensor devices: %s", device_names)
+
+            # Log potential fan-related keys for diagnosis
+            for device, readings in sensors_data.items():
+                if isinstance(readings, dict):
+                    fan_related_keys = [k for k in readings.keys()
+                                      if any(term in k.lower() for term in
+                                           ['fan', 'rpm', 'cooling', 'tach', 'pwm'])]
+                    if fan_related_keys:
+                        _LOGGER.debug("Device %s has potential fan keys: %s",
+                                    device, fan_related_keys)
+
         # Define constants needed for fan extraction
         MIN_VALID_RPM = 0
         MAX_VALID_RPM = 10000
@@ -367,6 +382,43 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, Any]]) -> Dict[str, Any]
                 patterns=["fan", "cpu_fan"],
                 rpm_keys=["fan{}_input"],
                 description="Intel Core temperature sensor"
+            ),
+            # Additional chipset patterns for better hardware support
+            "asus": ChipsetFanPattern(
+                patterns=["fan", "asus_fan", "cpu_fan", "chassis_fan"],
+                rpm_keys=["fan{}_input", "speed", "rpm"],
+                description="ASUS motherboard sensors"
+            ),
+            "msi": ChipsetFanPattern(
+                patterns=["fan", "msi_fan", "cooling"],
+                rpm_keys=["fan{}_input", "speed", "rpm"],
+                description="MSI motherboard sensors"
+            ),
+            "gigabyte": ChipsetFanPattern(
+                patterns=["fan", "sys_fan", "cpu_fan"],
+                rpm_keys=["fan{}_input", "speed"],
+                description="Gigabyte motherboard sensors"
+            ),
+            "asrock": ChipsetFanPattern(
+                patterns=["fan", "system_fan", "cpu_fan"],
+                rpm_keys=["fan{}_input", "speed"],
+                description="ASRock motherboard sensors"
+            ),
+            # Server and enterprise patterns
+            "ipmi": ChipsetFanPattern(
+                patterns=["fan", "cooling", "tach"],
+                rpm_keys=["fan{}_input", "speed", "rpm", "tach"],
+                description="IPMI/BMC sensors"
+            ),
+            "dell": ChipsetFanPattern(
+                patterns=["fan", "cooling", "system_fan"],
+                rpm_keys=["fan{}_input", "speed", "rpm"],
+                description="Dell server sensors"
+            ),
+            "hp": ChipsetFanPattern(
+                patterns=["fan", "cooling", "system_fan"],
+                rpm_keys=["fan{}_input", "speed", "rpm"],
+                description="HP server sensors"
             )
         }
 
@@ -414,6 +466,16 @@ def extract_fans_data(sensors_data: Dict[str, Dict[str, Any]]) -> Dict[str, Any]
                 if not pattern_matched and ("fan" in key_lower or "cooling" in key_lower):
                     pattern_matched = True
                     matched_pattern = "fan"
+
+                # Fallback detection for non-standard patterns
+                if not pattern_matched:
+                    fallback_patterns = ["tach", "pwm", "rpm", "speed"]
+                    for fallback in fallback_patterns:
+                        if fallback in key_lower and any(char.isdigit() for char in key_lower):
+                            pattern_matched = True
+                            matched_pattern = fallback
+                            _LOGGER.debug("Using fallback pattern '%s' for key '%s'", fallback, key)
+                            break
 
                 if pattern_matched:
                     try:

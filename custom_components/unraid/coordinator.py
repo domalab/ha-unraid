@@ -918,10 +918,10 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
             memory_info = process.memory_info()
             memory_mb = memory_info.rss / 1024 / 1024
 
-            # Log warning if over 90MB
+            # Log info if over 90MB (advisory, not actionable by user)
             if memory_mb > 90 and not self._memory_warning_emitted:
-                _LOGGER.warning(
-                    "High memory usage detected: %.1f MB - consider adjusting cache size",
+                _LOGGER.info(
+                    "High memory usage detected: %.1f MB - automatic optimization active",
                     memory_mb
                 )
                 self._memory_warning_emitted = True
@@ -931,8 +931,8 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
 
             # If extremely high, force garbage collection and cache cleanup
             if memory_mb > 110:
-                _LOGGER.warning(
-                    "Critically high memory usage: %.1f MB - forcing cache cleanup",
+                _LOGGER.debug(
+                    "Critically high memory usage: %.1f MB - automatic cleanup triggered",
                     memory_mb
                 )
 

@@ -51,10 +51,70 @@ class SystemOperationsMixin(CommandExecutor):
     def __init__(self) -> None:
         """Initialize system operations."""
         self._network_ops: Optional[NetworkOperationsMixin] = None
+        self._fan_hardware_available: Optional[bool] = None  # Cache fan hardware detection
 
     def set_network_ops(self, network_ops: NetworkOperationsMixin) -> None:
         """Set network operations instance."""
         self._network_ops = network_ops
+
+    def _detect_fan_hardware_availability(self, sensors_dict: Dict[str, Dict[str, Any]]) -> bool:
+        """
+        Detect if the system has fan hardware by checking sensor data.
+        This is a lightweight check to determine if we should attempt fan parsing.
+        """
+        if not sensors_dict:
+            return False
+
+        # Quick scan for any fan-related keywords in sensor data
+        fan_keywords = ['fan', 'cooling', 'rpm']
+
+        for device, readings in sensors_dict.items():
+            if not isinstance(readings, dict):
+                continue
+
+            device_lower = device.lower()
+            # Check device names for fan-related terms
+            if any(keyword in device_lower for keyword in fan_keywords):
+                return True
+
+            # Check sensor keys for fan-related terms
+            for key in readings.keys():
+                key_lower = key.lower()
+                if any(keyword in key_lower for keyword in fan_keywords):
+                    return True
+
+        return False
+
+    def _extract_fans_data_optimized(self, sensors_dict: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Optimized fan data extraction with hardware detection caching.
+        """
+        # Check cached fan hardware availability
+        if self._fan_hardware_available is False:
+            # We've already determined this system has no fan hardware
+            _LOGGER.debug("Skipping fan detection - no fan hardware detected previously")
+            return {}
+
+        # If we haven't checked yet, or we know fans exist, proceed with detection
+        if self._fan_hardware_available is None:
+            # First time - detect if fan hardware is available
+            self._fan_hardware_available = self._detect_fan_hardware_availability(sensors_dict)
+            if not self._fan_hardware_available:
+                _LOGGER.debug("No fan hardware detected - caching result to skip future checks")
+                return {}
+            else:
+                _LOGGER.debug("Fan hardware detected - will continue monitoring")
+
+        # Fan hardware is available, extract fan data
+        return extract_fans_data(sensors_dict)
+
+    def reset_fan_hardware_cache(self) -> None:
+        """
+        Reset the fan hardware detection cache.
+        Useful for edge cases where hardware configuration changes.
+        """
+        self._fan_hardware_available = None
+        _LOGGER.debug("Fan hardware detection cache reset")
 
     @with_error_handling(fallback_return={})
     async def get_system_stats(self) -> Dict[str, Any]:
@@ -1084,8 +1144,8 @@ class SystemOperationsMixin(CommandExecutor):
                     sensors_dict = self._parse_sensors_output(sections['TEMPERATURE'])
                     temp_data = {'sensors': sensors_dict}
 
-                    # Extract fan data
-                    fans = extract_fans_data(sensors_dict)
+                    # Extract fan data using optimized detection
+                    fans = self._extract_fans_data_optimized(sensors_dict)
                     if fans:
                         temp_data['fans'] = fans
 
