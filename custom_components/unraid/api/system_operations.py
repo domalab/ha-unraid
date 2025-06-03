@@ -5,7 +5,7 @@ import logging
 import re
 import json
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Protocol
 from dataclasses import dataclass
 
 import asyncio
@@ -18,6 +18,17 @@ from ..const import (
     TEMP_WARN_THRESHOLD,
     TEMP_CRIT_THRESHOLD,
 )
+
+class CommandExecutor(Protocol):
+    """Protocol for classes that can execute SSH commands."""
+
+    async def execute_command(
+        self,
+        command: str,
+        timeout: Optional[int] = None
+    ) -> asyncssh.SSHCompletedProcess:
+        """Execute a command on the remote server."""
+        ...
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,12 +45,12 @@ class ArrayState:
     sync_progress: float = 0.0
     sync_errors: int = 0
 
-class SystemOperationsMixin:
+class SystemOperationsMixin(CommandExecutor):
     """Mixin for system-related operations."""
 
     def __init__(self) -> None:
         """Initialize system operations."""
-        self._network_ops = None
+        self._network_ops: Optional[NetworkOperationsMixin] = None
 
     def set_network_ops(self, network_ops: NetworkOperationsMixin) -> None:
         """Set network operations instance."""
@@ -395,7 +406,7 @@ class SystemOperationsMixin:
             percentage = (used / total) * 100 if total > 0 else 0
 
             return {
-                "percentage": round(percentage, 2),
+                "percentage": float(round(percentage, 2)),
                 "total": total * 1024,  # Convert to bytes
                 "used": used * 1024,    # Convert to bytes
                 "free": free * 1024     # Convert to bytes
@@ -464,7 +475,7 @@ class SystemOperationsMixin:
             percentage = (used / total) * 100 if total > 0 else 0
 
             return {
-                "percentage": round(percentage, 2),
+                "percentage": float(round(percentage, 2)),
                 "total": total * 1024,  # Convert to bytes
                 "used": used * 1024,    # Convert to bytes
                 "free": free * 1024,    # Convert to bytes
@@ -589,6 +600,248 @@ class SystemOperationsMixin:
             except (ValueError, IndexError) as err:
                 _LOGGER.debug("Error parsing thermal zone data: %s (line: %s)", err, line)
         return thermal_zones
+
+    def _parse_intel_gpu_data(self, gpu_output: str, device_info: str) -> Dict[str, Any] | None:
+        """Parse Intel GPU data from intel_gpu_top output and device info."""
+        try:
+            gpu_output = gpu_output.strip()
+            device_info = device_info.strip()
+
+            _LOGGER.debug("Intel GPU raw output: '%s'", gpu_output)
+            _LOGGER.debug("Intel GPU device info: '%s'", device_info)
+
+            # Check if Intel GPU is available
+            if gpu_output in ('not_available', 'command_failed', '') or device_info == 'no_intel_gpu':
+                _LOGGER.debug("Intel GPU not available: output='%s', device_info='%s'", gpu_output, device_info)
+                return None
+
+            gpu_data: Dict[str, Any] = {
+                "usage_percentage": 0.0,
+                "model": "Unknown Intel GPU",
+                "driver_version": "Unknown",
+                "power_watts": None,
+                "frequency_mhz": None,
+                "memory_used_mb": None,
+                "memory_total_mb": None,
+                "engines": {}
+            }
+
+            # Parse device info from lspci
+            if device_info and device_info != 'no_intel_gpu':
+                # Extract GPU model from lspci output
+                # Example: "00:02.0 VGA compatible controller: Intel Corporation UHD Graphics 630 (rev 02)"
+                if 'Intel Corporation' in device_info:
+                    model_match = re.search(r'Intel Corporation (.+?)(?:\s+\(rev|\s*$)', device_info)
+                    if model_match:
+                        gpu_data["model"] = f"Intel {model_match.group(1).strip()}"
+
+            # Parse intel_gpu_top JSON output
+            if gpu_output and gpu_output not in ('not_available', 'command_failed', 'no_pci_device'):
+                try:
+                    # intel_gpu_top outputs JSON array with multiple objects, need to handle properly
+                    # Based on gpustat-unraid plugin approach
+                    stdout = gpu_output.strip()
+
+                    # Fix the JSON format - intel_gpu_top outputs invalid JSON with missing commas
+                    # The output looks like: [{\n}\n{\n}] instead of [{\n},{\n}]
+                    try:
+                        # First try to parse as-is in case the format is fixed in newer versions
+                        json_array = json.loads(stdout)
+                    except json.JSONDecodeError:
+                        # Fix the missing comma between JSON objects
+                        _LOGGER.debug("Fixing malformed JSON from intel_gpu_top")
+                        # Replace }{ with },{ to fix the JSON array format
+                        fixed_json = stdout.replace('}\n{', '},\n{').replace('}\r\n{', '},\r\n{').replace('}\r{', '},\r{')
+                        try:
+                            json_array = json.loads(fixed_json)
+                        except json.JSONDecodeError as e:
+                            _LOGGER.debug("Failed to parse fixed JSON: %s", e)
+                            return self._parse_intel_gpu_text_fallback(stdout, gpu_data)
+
+                    if isinstance(json_array, list) and len(json_array) >= 2:
+                        # Use the second JSON object (first sample is usually incomplete)
+                        gpu_json = json_array[1]
+                        _LOGGER.debug("Using second JSON object from intel_gpu_top output")
+                    elif isinstance(json_array, list) and len(json_array) == 1:
+                        # Use the only available object
+                        gpu_json = json_array[0]
+                        _LOGGER.debug("Using single JSON object from intel_gpu_top output")
+                    elif isinstance(json_array, dict):
+                        # Single object, use as-is
+                        gpu_json = json_array
+                        _LOGGER.debug("Using direct JSON object from intel_gpu_top output")
+                    else:
+                        _LOGGER.warning("Unexpected JSON format from intel_gpu_top: %s", type(json_array))
+                        return None
+
+                    _LOGGER.debug("Successfully parsed Intel GPU JSON data")
+
+                    # Extract overall GPU usage from engines
+                    if 'engines' in gpu_json:
+                        engines = gpu_json['engines']
+                        total_usage = 0.0
+                        engine_count = 0
+                        max_usage = 0.0
+
+                        # Parse individual engine usage
+                        for engine_name, engine_data in engines.items():
+                            if isinstance(engine_data, dict) and 'busy' in engine_data:
+                                usage = float(engine_data['busy'])
+                                gpu_data["engines"][engine_name] = round(usage, 1)
+                                total_usage += usage
+                                engine_count += 1
+                                max_usage = max(max_usage, usage)
+
+                        # Use maximum engine usage as overall GPU usage (like gpustat plugin)
+                        if engine_count > 0:
+                            gpu_data["usage_percentage"] = round(max_usage, 1)
+
+                    # Extract frequency information
+                    if 'frequency' in gpu_json:
+                        freq_data = gpu_json['frequency']
+                        if isinstance(freq_data, dict) and 'actual' in freq_data:
+                            gpu_data["frequency_mhz"] = int(freq_data['actual'])
+
+                    # Extract power information (handle both old and new formats)
+                    if 'power' in gpu_json:
+                        power_data = gpu_json['power']
+                        if isinstance(power_data, dict):
+                            # New format with GPU and Package power
+                            if 'GPU' in power_data:
+                                gpu_data["power_watts"] = round(float(power_data['GPU']), 1)
+                            elif 'Package' in power_data:
+                                gpu_data["power_watts"] = round(float(power_data['Package']), 1)
+                            # Old format with single value
+                            elif 'value' in power_data:
+                                gpu_data["power_watts"] = round(float(power_data['value']), 1)
+
+                    # Extract IMC bandwidth information
+                    if 'imc-bandwidth' in gpu_json:
+                        imc_data = gpu_json['imc-bandwidth']
+                        if isinstance(imc_data, dict):
+                            if 'reads' in imc_data:
+                                gpu_data["memory_bandwidth_read"] = round(float(imc_data['reads']), 2)
+                            if 'writes' in imc_data:
+                                gpu_data["memory_bandwidth_write"] = round(float(imc_data['writes']), 2)
+
+                except json.JSONDecodeError as err:
+                    _LOGGER.debug("Failed to parse intel_gpu_top JSON output: %s", err)
+                    # Fallback: try to parse text output if JSON parsing fails
+                    return self._parse_intel_gpu_text_fallback(gpu_output, gpu_data)
+                except Exception as err:
+                    _LOGGER.debug("Error processing Intel GPU JSON data: %s", err)
+                    return self._parse_intel_gpu_text_fallback(gpu_output, gpu_data)
+
+            # Only return data if we have a valid GPU detected
+            model = gpu_data.get("model", "Unknown Intel GPU")
+            usage = gpu_data.get("usage_percentage", 0)
+            if model != "Unknown Intel GPU" or (isinstance(usage, (int, float)) and usage > 0):
+                return gpu_data
+
+            return None
+
+        except Exception as err:
+            _LOGGER.debug("Error parsing Intel GPU data: %s", err)
+            return None
+
+    async def _get_intel_gpu_info(self) -> Optional[Dict[str, Any]]:
+        """Get Intel GPU information separately with proper timeout."""
+        try:
+            _LOGGER.debug("Fetching Intel GPU information")
+
+            # First check if Intel GPU is available
+            gpu_check_cmd = "lspci | grep -i 'vga\\|display\\|3d' | grep -i intel"
+            gpu_check_result = await self.execute_command(gpu_check_cmd)
+
+            if gpu_check_result.exit_status != 0:
+                _LOGGER.debug("No Intel GPU detected")
+                return None
+
+            device_info = gpu_check_result.stdout.strip()
+            _LOGGER.debug("Intel GPU device detected: %s", device_info)
+
+            # Check if intel_gpu_top is available
+            tool_check_cmd = "command -v intel_gpu_top"
+            tool_check_result = await self.execute_command(tool_check_cmd)
+
+            if tool_check_result.exit_status != 0:
+                _LOGGER.debug("intel_gpu_top not available")
+                return None
+
+            # Get PCI slot for specific GPU targeting
+            gpu_pci = device_info.split()[0] if device_info else ""
+
+            # Run intel_gpu_top with proper timeout
+            if gpu_pci:
+                gpu_cmd = f"timeout 10 intel_gpu_top -J -s 1000 -n 2 -d pci:slot=\"0000:{gpu_pci}\""
+            else:
+                gpu_cmd = "timeout 10 intel_gpu_top -J -s 1000 -n 2"
+
+            _LOGGER.debug("Running Intel GPU command: %s", gpu_cmd)
+            gpu_result = await self.execute_command(gpu_cmd)
+
+            if gpu_result.exit_status != 0:
+                _LOGGER.debug("Intel GPU command failed with exit status %d", gpu_result.exit_status)
+                return None
+
+            gpu_output = gpu_result.stdout.strip()
+            _LOGGER.debug("Intel GPU command output length: %d characters", len(gpu_output))
+
+            # Clean up the output - remove any potential control characters
+            gpu_output_clean = ''.join(char for char in gpu_output if ord(char) >= 32 or char in '\n\r\t')
+            _LOGGER.debug("Intel GPU cleaned output length: %d characters", len(gpu_output_clean))
+
+            # Check if output looks like valid JSON
+            if gpu_output_clean.startswith('[') and gpu_output_clean.endswith(']'):
+                _LOGGER.debug("Intel GPU output appears to be valid JSON array")
+            else:
+                _LOGGER.warning("Intel GPU output doesn't look like valid JSON: starts with '%s', ends with '%s'",
+                              gpu_output_clean[:10], gpu_output_clean[-10:])
+
+            # Parse the GPU data
+            return self._parse_intel_gpu_data(gpu_output_clean, device_info)
+
+        except Exception as err:
+            _LOGGER.debug("Error getting Intel GPU info: %s", err)
+            return None
+
+    def _parse_intel_gpu_text_fallback(self, gpu_output: str, gpu_data: Dict[str, Any]) -> Dict[str, Any] | None:
+        """Fallback parser for intel_gpu_top text output."""
+        try:
+            # If JSON parsing fails, try to parse text output
+            # This is a simplified parser for basic usage information
+            lines = gpu_output.split('\n')
+
+            for line in lines:
+                line = line.strip()
+
+                # Look for engine usage patterns
+                if 'Render/3D' in line and '%' in line:
+                    match = re.search(r'(\d+(?:\.\d+)?)%', line)
+                    if match:
+                        gpu_data["engines"]["render"] = float(match.group(1))
+
+                elif 'Blitter' in line and '%' in line:
+                    match = re.search(r'(\d+(?:\.\d+)?)%', line)
+                    if match:
+                        gpu_data["engines"]["blitter"] = float(match.group(1))
+
+                elif 'Video' in line and '%' in line:
+                    match = re.search(r'(\d+(?:\.\d+)?)%', line)
+                    if match:
+                        gpu_data["engines"]["video"] = float(match.group(1))
+
+            # Calculate average usage from engines
+            if gpu_data["engines"]:
+                total_usage = sum(gpu_data["engines"].values())
+                engine_count = len(gpu_data["engines"])
+                gpu_data["usage_percentage"] = round(total_usage / engine_count, 1)
+
+            return gpu_data if gpu_data["engines"] else None
+
+        except Exception as err:
+            _LOGGER.debug("Error in Intel GPU text fallback parser: %s", err)
+            return None
 
     async def system_reboot(self, delay: int = 0) -> bool:
         """Reboot the Unraid system."""
@@ -718,7 +971,16 @@ class SystemOperationsMixin:
             "echo '===LOG_USAGE==='; "
             "df -k /var/log | awk 'NR==2 {print $2,$3,$4,$5}'; "
             "echo '===DOCKER_VDISK==='; "
-            "df -k /var/lib/docker | awk 'NR==2 {print $2,$3,$4}' 2>/dev/null || echo 'not_mounted'"
+            "df -k /var/lib/docker | awk 'NR==2 {print $2,$3,$4}' 2>/dev/null || echo 'not_mounted'; "
+            "echo '===INTEL_GPU==='; "
+            "if command -v intel_gpu_top >/dev/null 2>&1; then "
+            "GPU_PCI=$(lspci | grep -i 'vga\\|display\\|3d' | grep -i intel | head -1 | cut -d' ' -f1); "
+            "if [ -n \"$GPU_PCI\" ]; then "
+            "timeout 8 intel_gpu_top -J -s 1000 -n 2 -d pci:slot=\"0000:$GPU_PCI\" 2>/dev/null || echo 'gpu_timeout'; "
+            "else echo 'no_pci_device'; fi; "
+            "else echo 'not_available'; fi; "
+            "echo '===GPU_DEVICE_INFO==='; "
+            "lspci | grep -i 'vga\\|display\\|3d' | grep -i intel || echo 'no_intel_gpu'"
         )
 
         result = await self.execute_command(cmd)
@@ -745,7 +1007,7 @@ class SystemOperationsMixin:
                 sections[current_section] = '\n'.join(section_content)
 
             # Parse each section
-            system_stats = {}
+            system_stats: Dict[str, Any] = {}
 
             # Parse array state
             if 'ARRAY_STATE' in sections:
@@ -767,7 +1029,7 @@ class SystemOperationsMixin:
                     try:
                         cpu_usage = float(sections['CPU_USAGE'].strip())
                         if 0 <= cpu_usage <= 100:
-                            system_stats['cpu_usage'] = round(cpu_usage, 2)
+                            system_stats['cpu_usage'] = float(round(cpu_usage, 2))
                     except (ValueError, TypeError):
                         _LOGGER.debug("Could not parse CPU usage from output: %s", sections['CPU_USAGE'])
 
@@ -775,9 +1037,9 @@ class SystemOperationsMixin:
                 if 'CPU_INFO' in sections:
                     try:
                         cpu_info_lines = sections['CPU_INFO'].strip().split('\n')
-                        cpu_cores = None
-                        cpu_model = None
-                        cpu_arch = None
+                        cpu_cores: Optional[int] = None
+                        cpu_model: Optional[str] = None
+                        cpu_arch: Optional[str] = None
 
                         for line in cpu_info_lines:
                             line = line.strip()
@@ -842,7 +1104,7 @@ class SystemOperationsMixin:
                         total, used, free = map(int, sections['BOOT_USAGE'].strip().split())
                         percentage = (used / total) * 100 if total > 0 else 0
                         system_stats['boot_usage'] = {
-                            "percentage": round(percentage, 2),
+                            "percentage": float(round(percentage, 2)),
                             "total": total * 1024,  # Convert to bytes
                             "used": used * 1024,    # Convert to bytes
                             "free": free * 1024     # Convert to bytes
@@ -866,7 +1128,7 @@ class SystemOperationsMixin:
                             total, used, free = map(int, cache_output.split())
                             percentage = (used / total) * 100 if total > 0 else 0
                             system_stats['cache_usage'] = {
-                                "percentage": round(percentage, 2),
+                                "percentage": float(round(percentage, 2)),
                                 "total": total * 1024,  # Convert to bytes
                                 "used": used * 1024,    # Convert to bytes
                                 "free": free * 1024,    # Convert to bytes
@@ -903,13 +1165,26 @@ class SystemOperationsMixin:
                             total, used, free = map(int, docker_output.split())
                             percentage = (used / total) * 100 if total > 0 else 0
                             system_stats['docker_vdisk'] = {
-                                "percentage": round(percentage, 2),
+                                "percentage": float(round(percentage, 2)),
                                 "total": total * 1024,  # Convert to bytes
                                 "used": used * 1024,    # Convert to bytes
                                 "free": free * 1024     # Convert to bytes
                             }
                         except (ValueError, TypeError):
                             _LOGGER.debug("Could not parse docker vdisk usage from output: %s", docker_output)
+
+                # Parse Intel GPU data
+                if 'INTEL_GPU' in sections and 'GPU_DEVICE_INFO' in sections:
+                    gpu_output = sections['INTEL_GPU'].strip()
+                    device_info = sections['GPU_DEVICE_INFO'].strip()
+
+                    if gpu_output not in ('not_available', 'gpu_timeout', 'no_pci_device') and device_info != 'no_intel_gpu':
+                        intel_gpu_data = self._parse_intel_gpu_data(gpu_output, device_info)
+                        if intel_gpu_data:
+                            system_stats['intel_gpu'] = intel_gpu_data
+                            _LOGGER.debug("Successfully parsed Intel GPU data from batched command: %s", intel_gpu_data.get('model', 'Unknown'))
+                    else:
+                        _LOGGER.debug("Intel GPU not available or command failed: %s", gpu_output)
 
             # Get UPS info separately as it's not part of the batched command
             system_stats['ups_info'] = await self.get_ups_info()

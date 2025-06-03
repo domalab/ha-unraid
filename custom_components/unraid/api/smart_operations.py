@@ -172,41 +172,50 @@ class SmartDataManager:
                 except Exception as err:
                     _LOGGER.warning("Failed to check NVME device existence for %s: %s", device_path, err)
 
-            # Enhanced USB flash drive detection for any device path
+            # Enhanced USB device detection and classification
             try:
                 usb_info = await self._usb_detector.detect_usb_device(device_path)
 
                 if usb_info.is_usb:
-                    # Determine if this is a boot drive or just a regular USB device
-                    device_description = "USB boot drive" if usb_info.is_boot_drive else "USB flash drive"
+                    # Check if this USB device supports SMART monitoring
+                    if not usb_info.supports_smart:
+                        # USB flash drive - skip SMART monitoring
+                        device_description = "USB boot drive" if usb_info.is_boot_drive else "USB flash drive"
 
-                    _LOGGER.info(
-                        "Detected %s at %s (confidence: %.2f, method: %s) - skipping SMART data collection",
-                        device_description, device_path, usb_info.confidence, usb_info.detection_method
-                    )
+                        _LOGGER.info(
+                            "Detected %s at %s (type: %s, confidence: %.2f, method: %s) - skipping SMART data collection",
+                            device_description, device_path, usb_info.device_type, usb_info.confidence, usb_info.detection_method
+                        )
 
-                    usb_data = {
-                        "state": "usb_device",
-                        "error": f"{device_description} doesn't support SMART monitoring",
-                        "smart_status": "passed",  # Assume passed for USB devices
-                        "temperature": None,
-                        "device_type": "usb",
-                        "usb_info": {
-                            "is_boot_drive": usb_info.is_boot_drive,
-                            "mount_point": usb_info.mount_point,
-                            "filesystem": usb_info.filesystem,
-                            "model": usb_info.model,
-                            "vendor": usb_info.vendor,
-                            "size": usb_info.size,
-                            "transport": usb_info.transport_type,
-                            "detection_confidence": usb_info.confidence,
-                            "detection_method": usb_info.detection_method
+                        usb_data = {
+                            "state": "usb_device",
+                            "error": f"{device_description} doesn't support SMART monitoring",
+                            "smart_status": "passed",  # Assume passed for USB flash drives
+                            "temperature": None,
+                            "device_type": usb_info.device_type,
+                            "usb_info": {
+                                "is_boot_drive": usb_info.is_boot_drive,
+                                "mount_point": usb_info.mount_point,
+                                "filesystem": usb_info.filesystem,
+                                "model": usb_info.model,
+                                "vendor": usb_info.vendor,
+                                "size": usb_info.size,
+                                "transport": usb_info.transport_type,
+                                "detection_confidence": usb_info.confidence,
+                                "detection_method": usb_info.detection_method,
+                                "supports_smart": usb_info.supports_smart
+                            }
                         }
-                    }
 
-                    self._cache[device_path] = usb_data
-                    self._last_update[device_path] = now
-                    return usb_data
+                        self._cache[device_path] = usb_data
+                        self._last_update[device_path] = now
+                        return usb_data
+                    else:
+                        # USB storage drive - proceed with SMART monitoring
+                        _LOGGER.debug(
+                            "Detected USB storage drive at %s (type: %s, confidence: %.2f) - proceeding with SMART collection",
+                            device_path, usb_info.device_type, usb_info.confidence
+                        )
                 else:
                     _LOGGER.debug(
                         "Device %s is not USB (confidence: %.2f, transport: %s) - proceeding with SMART collection",
@@ -520,7 +529,9 @@ class SmartDataManager:
                     {
                         "device_path": device.device_path,
                         "is_usb": device.is_usb,
+                        "device_type": device.device_type,
                         "is_boot_drive": device.is_boot_drive,
+                        "supports_smart": device.supports_smart,
                         "transport": device.transport_type,
                         "mount_point": device.mount_point,
                         "model": device.model,
@@ -533,7 +544,7 @@ class SmartDataManager:
                 "smart_cache_entries": len(self._cache),
                 "usb_devices_in_smart_cache": len([
                     entry for entry in self._cache.values()
-                    if entry.get("device_type") == "usb"
+                    if entry.get("device_type") in ["usb", "usb_flash_drive", "usb_storage_drive"]
                 ])
             }
         except Exception as err:

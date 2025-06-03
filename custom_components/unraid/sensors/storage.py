@@ -9,6 +9,7 @@ from homeassistant.components.sensor import ( # type: ignore
 )
 from homeassistant.const import PERCENTAGE # type: ignore
 from homeassistant.core import callback # type: ignore
+import homeassistant.util.dt as dt_util
 
 from .base import UnraidSensorBase
 from .const import UnraidSensorEntityDescription
@@ -164,9 +165,9 @@ class UnraidDiskSensor(UnraidSensorBase, DiskDataHelperMixin):
 
                     # Add device and serial information
                     attrs.update({
-                        "device": device or "unknown",
-                        "disk_serial": serial or "unknown",
-                        "power_state": "standby" if is_standby else "active",
+                        "Device": device or "Unknown",
+                        "Disk Serial": serial or "Unknown",
+                        "Power State": "Standby" if is_standby else "Active",
                     })
 
                     # Handle temperature using helper method
@@ -174,22 +175,22 @@ class UnraidDiskSensor(UnraidSensorBase, DiskDataHelperMixin):
                     if not is_standby and temp is not None:
                         self._last_temperature = temp
 
-                    attrs["temperature"] = self._get_temperature_str(
+                    attrs["Temperature"] = self._get_temperature_str(
                         self._last_temperature if is_standby else temp,
                         is_standby
                     )
 
                     # Add current usage with standby handling
-                    attrs["current_usage"] = (
+                    attrs["Current Usage"] = (
                         "N/A (Standby)" if is_standby
                         else f"{self._get_disk_usage(self.coordinator.data):.1f}%"
                     )
 
                     # Add additional disk information
                     if "health" in disk:
-                        attrs["health"] = disk["health"]
+                        attrs["Health Status"] = disk["health"]
                     if "spin_down_delay" in disk:
-                        attrs["spin_down_delay"] = disk["spin_down_delay"]
+                        attrs["Spin Down Delay"] = disk["spin_down_delay"]
 
                     return attrs
 
@@ -263,24 +264,75 @@ class UnraidArraySensor(UnraidSensorBase, DiskDataHelperMixin):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
         array_data = self.coordinator.data.get("system_stats", {}).get("array_usage", {})
-        array_state = self.coordinator.data.get("system_stats", {}).get("array_state", {})
 
+        # Get storage attributes with improved formatting
         attrs = self._get_storage_attributes(
             array_data.get("total", 0),
             array_data.get("used", 0),
             array_data.get("free", 0)
         )
 
-        if array_state:
-            attrs.update({
-                "status": array_state.get("state", "unknown"),
-                "synced": array_state.get("synced", False),
-                "sync_action": array_state.get("sync_action"),
-                "sync_progress": array_state.get("sync_progress", 0),
-                "sync_errors": array_state.get("sync_errors", 0),
-            })
+        # Add array-specific attributes (not duplicating Array Status sensor)
+        attrs.update({
+            "Disk Status": self._format_disk_status(),
+            "Capacity Status": self._format_capacity_status(array_data),
+            "Last Updated": dt_util.now().isoformat(),
+        })
 
         return attrs
+
+    def _format_disk_status(self) -> str:
+        """Format disk status summary for array."""
+        try:
+            array_state = self.coordinator.data.get("system_stats", {}).get("array_state", {})
+            if not array_state:
+                return "Unknown"
+
+            total_disks = array_state.get("num_disks", 0)
+            disabled = array_state.get("num_disabled", 0)
+            invalid = array_state.get("num_invalid", 0)
+            missing = array_state.get("num_missing", 0)
+
+            healthy = total_disks - disabled - invalid - missing
+
+            if total_disks == 0:
+                return "No Disks"
+            elif healthy == total_disks:
+                return f"All {total_disks} Disks Healthy"
+            else:
+                issues = []
+                if disabled > 0:
+                    issues.append(f"{disabled} Failed")
+                if invalid > 0:
+                    issues.append(f"{invalid} Invalid")
+                if missing > 0:
+                    issues.append(f"{missing} Missing")
+
+                return f"{healthy}/{total_disks} Healthy ({', '.join(issues)})"
+        except Exception:
+            return "Unknown"
+
+    def _format_capacity_status(self, array_data: dict) -> str:
+        """Format capacity status for array."""
+        try:
+            total = array_data.get("total", 0)
+            used = array_data.get("used", 0)
+
+            if total == 0:
+                return "No Capacity"
+
+            usage_pct = (used / total) * 100
+
+            if usage_pct < 70:
+                return "Good"
+            elif usage_pct < 85:
+                return "Moderate"
+            elif usage_pct < 95:
+                return "High"
+            else:
+                return "Critical"
+        except Exception:
+            return "Unknown"
 
 class UnraidPoolSensor(UnraidSensorBase, DiskDataHelperMixin):
     """Storage pool and solid state drive sensor for Unraid."""
@@ -385,10 +437,10 @@ class UnraidPoolSensor(UnraidSensorBase, DiskDataHelperMixin):
                     )
 
                     attrs.update({
-                        "device": device or "unknown",
-                        "disk_serial": serial or "unknown",
-                        "power_state": "standby" if is_standby else "active",
-                        "filesystem": disk.get("filesystem", "unknown"),
+                        "Device": device or "Unknown",
+                        "Disk Serial": serial or "Unknown",
+                        "Power State": "Standby" if is_standby else "Active",
+                        "Filesystem": disk.get("filesystem", "Unknown"),
                     })
 
                     # Handle temperature
@@ -396,7 +448,7 @@ class UnraidPoolSensor(UnraidSensorBase, DiskDataHelperMixin):
                     if not is_standby and temp is not None:
                         self._last_temperature = temp
 
-                    attrs["temperature"] = self._get_temperature_str(
+                    attrs["Temperature"] = self._get_temperature_str(
                         self._last_temperature if is_standby else temp,
                         is_standby
                     )
@@ -408,12 +460,12 @@ class UnraidPoolSensor(UnraidSensorBase, DiskDataHelperMixin):
             if self._pool_name in pool_info:
                 info = pool_info[self._pool_name]
                 return {
-                    "filesystem": info.get("filesystem", "unknown"),
-                    "device_count": len(info.get("devices", [])),
-                    "mount_point": info.get("mount_point", "unknown"),
-                    "total_size": format_bytes(info.get("total_size", 0)),
-                    "used_space": format_bytes(info.get("used_size", 0)),
-                    "free_space": format_bytes(info.get("free_size", 0)),
+                    "Filesystem": info.get("filesystem", "Unknown"),
+                    "Device Count": len(info.get("devices", [])),
+                    "Mount Point": info.get("mount_point", "Unknown"),
+                    "Total Size": format_bytes(info.get("total_size", 0)),
+                    "Used Space": format_bytes(info.get("used_size", 0)),
+                    "Free Space": format_bytes(info.get("free_size", 0)),
                 }
 
             return {}

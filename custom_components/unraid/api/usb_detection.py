@@ -16,6 +16,7 @@ class USBDeviceInfo:
     is_usb: bool
     is_boot_drive: bool
     transport_type: str
+    device_type: str = "unknown"  # "usb_flash_drive", "usb_storage_drive", "sata", etc.
     mount_point: Optional[str] = None
     filesystem: Optional[str] = None
     size: Optional[str] = None
@@ -23,6 +24,7 @@ class USBDeviceInfo:
     vendor: Optional[str] = None
     detection_method: str = "unknown"
     confidence: float = 0.0  # 0.0 to 1.0
+    supports_smart: bool = False  # Whether device supports SMART monitoring
 
 
 class USBFlashDriveDetector:
@@ -60,7 +62,9 @@ class USBFlashDriveDetector:
             device_path=device_path,
             is_usb=False,
             is_boot_drive=False,
-            transport_type="unknown"
+            transport_type="unknown",
+            device_type="unknown",
+            supports_smart=False
         )
 
         # Method 1: Transport type detection (primary method)
@@ -70,6 +74,12 @@ class USBFlashDriveDetector:
             device_info.transport_type = transport_result["transport"]
             device_info.detection_method = "transport_detection"
             device_info.confidence = 0.9 if transport_result["is_usb"] else 0.8
+
+            # Set initial device type based on transport
+            if transport_result["is_usb"]:
+                device_info.device_type = "usb_device"  # Will be refined later
+            else:
+                device_info.device_type = transport_result.get("device_type", "unknown")
 
         # Method 2: Boot drive detection (if USB confirmed)
         if device_info.is_usb:
@@ -88,42 +98,59 @@ class USBFlashDriveDetector:
             device_info.model = char_result.get("model")
             device_info.vendor = char_result.get("vendor")
 
-            # If device is USB, determine if it's a flash drive or USB-connected SSD
+            # Refine device type classification for USB devices
             if device_info.is_usb:
                 is_flash_drive = char_result.get("likely_usb", True)
 
                 if not is_flash_drive:
-                    # This is likely a USB-connected SSD/HDD - should NOT skip SMART
-                    device_info.is_usb = False  # Treat as regular storage device
-                    device_info.transport_type = "usb_storage"  # Indicate USB-connected but not flash
+                    # This is a USB-connected storage device (SSD/HDD) - should support SMART
+                    device_info.device_type = "usb_storage_drive"
+                    device_info.supports_smart = True
                     device_info.detection_method = "usb_storage_device"
-                    device_info.confidence = 0.8
+                    device_info.confidence = max(device_info.confidence, 0.8)
                     _LOGGER.debug(
-                        "Device %s detected as USB-connected storage device (not flash drive) - will monitor SMART",
+                        "Device %s classified as USB-connected storage device - will monitor SMART",
                         device_path
                     )
                 else:
-                    # This is likely a USB flash drive - should skip SMART
+                    # This is a USB flash drive - typically boot drives
+                    device_info.device_type = "usb_flash_drive"
+                    device_info.supports_smart = False
                     device_info.detection_method = "usb_flash_drive"
                     device_info.confidence = max(device_info.confidence, 0.9)
                     _LOGGER.debug(
-                        "Device %s detected as USB flash drive - will skip SMART",
+                        "Device %s classified as USB flash drive - will skip SMART monitoring",
                         device_path
                     )
-            elif not device_info.is_usb and char_result.get("likely_usb", False):
-                # Transport detection failed but characteristics suggest USB
-                device_info.is_usb = True
-                device_info.detection_method = "characteristics"
-                device_info.confidence = 0.7
+            else:
+                # Apply characteristics-based detection only for non-USB transport devices
+                # This helps catch edge cases but should not override transport detection
+                is_flash_drive = char_result.get("likely_usb", False)
+                if is_flash_drive and device_info.transport_type == "unknown":
+                    # Only flag as USB if transport is unknown and characteristics suggest it
+                    device_info.is_usb = True
+                    device_info.device_type = "usb_flash_drive"
+                    device_info.supports_smart = False
+                    device_info.transport_type = "usb"
+                    device_info.detection_method = "characteristics_fallback"
+                    device_info.confidence = 0.7
+                    _LOGGER.debug(
+                        "Device %s detected as USB flash drive via characteristics fallback",
+                        device_path
+                    )
+                else:
+                    # Regular non-USB device
+                    device_info.device_type = "sata" if "sata" in device_info.transport_type else device_info.transport_type
+                    device_info.supports_smart = True
 
         # Cache the result
         self._cache[device_path] = device_info
         self._last_update[device_path] = datetime.now()
 
         _LOGGER.debug(
-            "USB detection complete for %s: is_usb=%s, is_boot=%s, confidence=%.2f, method=%s",
-            device_path, device_info.is_usb, device_info.is_boot_drive, 
-            device_info.confidence, device_info.detection_method
+            "USB detection complete for %s: is_usb=%s, device_type=%s, is_boot=%s, supports_smart=%s, confidence=%.2f, method=%s",
+            device_path, device_info.is_usb, device_info.device_type, device_info.is_boot_drive,
+            device_info.supports_smart, device_info.confidence, device_info.detection_method
         )
 
         return device_info
@@ -345,7 +372,9 @@ class USBFlashDriveDetector:
             "devices": {
                 path: {
                     "is_usb": info.is_usb,
+                    "device_type": info.device_type,
                     "is_boot": info.is_boot_drive,
+                    "supports_smart": info.supports_smart,
                     "confidence": info.confidence,
                     "method": info.detection_method,
                     "age_seconds": (datetime.now() - self._last_update.get(path, datetime.now())).total_seconds()

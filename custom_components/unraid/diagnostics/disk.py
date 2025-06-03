@@ -413,20 +413,20 @@ class UnraidArrayDiskSensor(UnraidBinarySensorBase, DiskDataHelperMixin):
                     if not is_standby and temp is not None:
                         self._last_temperature = temp
 
-                    attrs["temperature"] = self._get_temperature_str(
+                    attrs["Temperature"] = self._get_temperature_str(
                         self._last_temperature if is_standby else temp,
                         is_standby
                     )
 
                     # Add SMART status
                     if smart_data := disk.get("smart_data", {}):
-                        attrs["smart_status"] = (
+                        attrs["SMART Status"] = (
                             "Passed" if smart_data.get("smart_status", True)
                             else "Failed"
                         )
 
                     # Add spin down delay
-                    attrs["spin_down_delay"] = self._spin_down_delay.to_human_readable()
+                    attrs["Spin Down Delay"] = self._spin_down_delay.to_human_readable()
 
                     # Add any problem details
                     if self._problem_attributes:

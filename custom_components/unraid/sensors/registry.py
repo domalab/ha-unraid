@@ -17,7 +17,7 @@ def register_system_sensors() -> None:
     from .system import (
         UnraidCPUUsageSensor,
         UnraidRAMUsageSensor,
-        UnraidMemoryUsageSensor,
+        UnraidIntelGPUSensor,
         UnraidUptimeSensor,
         UnraidCPUTempSensor,
         UnraidMotherboardTempSensor,
@@ -30,7 +30,7 @@ def register_system_sensors() -> None:
     # Register sensor types
     SensorFactory.register_sensor_type("cpu_usage", UnraidCPUUsageSensor)
     SensorFactory.register_sensor_type("ram_usage", UnraidRAMUsageSensor)
-    SensorFactory.register_sensor_type("memory_usage", UnraidMemoryUsageSensor)
+    SensorFactory.register_sensor_type("intel_gpu_usage", UnraidIntelGPUSensor)
     # Array Status sensor moved to binary sensors
     SensorFactory.register_sensor_type("uptime", UnraidUptimeSensor)
     SensorFactory.register_sensor_type("cpu_temp", UnraidCPUTempSensor)
@@ -107,7 +107,7 @@ def create_system_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> L
     from .system import (
         UnraidCPUUsageSensor,
         UnraidRAMUsageSensor,
-        UnraidMemoryUsageSensor,
+        UnraidIntelGPUSensor,
         UnraidUptimeSensor,
         UnraidCPUTempSensor,
         UnraidMotherboardTempSensor,
@@ -120,7 +120,6 @@ def create_system_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> L
     entities = [
         UnraidCPUUsageSensor(coordinator),
         UnraidRAMUsageSensor(coordinator),
-        UnraidMemoryUsageSensor(coordinator),
         # Array Status sensor moved to binary sensors
         UnraidUptimeSensor(coordinator),
         UnraidCPUTempSensor(coordinator),
@@ -129,6 +128,18 @@ def create_system_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> L
         UnraidLogFileSystemSensor(coordinator),
         UnraidBootUsageSensor(coordinator),
     ]
+
+    # Add Intel GPU sensor if Intel GPU is detected
+    intel_gpu_data = (
+        coordinator.data.get("system_stats", {})
+        .get("intel_gpu")
+    )
+    if intel_gpu_data:
+        entities.append(UnraidIntelGPUSensor(coordinator))
+        _LOGGER.debug(
+            "Added Intel GPU sensor: %s",
+            intel_gpu_data.get("model", "Unknown Intel GPU")
+        )
 
     # Add fan sensors if available
     fan_data = (

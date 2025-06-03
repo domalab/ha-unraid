@@ -580,39 +580,93 @@ class UnraidUptimeSensor(UnraidSensorBase):
             "last_update": dt_util.now().isoformat(),
         }
 
-class UnraidMemoryUsageSensor(UnraidSensorBase):
-    """Memory usage sensor for Unraid."""
+
+class UnraidIntelGPUSensor(UnraidSensorBase):
+    """Intel GPU usage sensor for Unraid."""
 
     def __init__(self, coordinator) -> None:
         """Initialize the sensor."""
         description = UnraidSensorEntityDescription(
-            key="memory_usage",
-            name="Memory Usage",
+            key="intel_gpu_usage",
+            name="Intel GPU Usage",
             native_unit_of_measurement=PERCENTAGE,
             device_class=SensorDeviceClass.POWER_FACTOR,
             state_class=SensorStateClass.MEASUREMENT,
-            icon="mdi:memory",
+            icon="mdi:expansion-card",
             suggested_display_precision=1,
-            value_fn=lambda data: round(
-                data.get("system_stats", {})
-                .get("memory_usage", {})
-                .get("percentage", 0), 1
+            value_fn=self._get_gpu_usage,
+            available_fn=lambda data: (
+                "system_stats" in data
+                and data.get("system_stats", {}).get("intel_gpu") is not None
             ),
         )
         super().__init__(coordinator, description)
 
+    def _get_gpu_usage(self, data: dict) -> float | None:
+        """Get Intel GPU usage percentage."""
+        try:
+            gpu_data = data.get("system_stats", {}).get("intel_gpu", {})
+            if not gpu_data:
+                return None
+
+            # Get GPU usage percentage
+            usage = gpu_data.get("usage_percentage")
+            if usage is not None:
+                return round(float(usage), 1)
+
+            return None
+        except (TypeError, ValueError) as err:
+            _LOGGER.debug("Error getting Intel GPU usage: %s", err)
+            return None
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
-        memory = self.coordinator.data.get("system_stats", {}).get("memory_usage", {})
-        return {
-            "total": memory.get("total", "unknown"),
-            "used": memory.get("used", "unknown"),
-            "free": memory.get("free", "unknown"),
-            "cached": memory.get("cached", "unknown"),
-            "buffers": memory.get("buffers", "unknown"),
-            "last_update": dt_util.now().isoformat(),
-        }
+        try:
+            gpu_data = self.coordinator.data.get("system_stats", {}).get("intel_gpu", {})
+            if not gpu_data:
+                return {}
+
+            attrs = {
+                "GPU Model": gpu_data.get("model", "Unknown Intel GPU"),
+                "Last Updated": dt_util.now().isoformat(),
+            }
+
+            # Add power consumption if available
+            if power := gpu_data.get("power_watts"):
+                attrs["Power Draw"] = f"{power} W"
+
+            # Add frequency information if available
+            if freq := gpu_data.get("frequency_mhz"):
+                attrs["GPU Frequency"] = f"{freq} MHz"
+
+            # Add memory bandwidth if available
+            if read_bw := gpu_data.get("memory_bandwidth_read"):
+                attrs["Memory Read Bandwidth"] = f"{read_bw} MB/s"
+
+            if write_bw := gpu_data.get("memory_bandwidth_write"):
+                attrs["Memory Write Bandwidth"] = f"{write_bw} MB/s"
+
+            # Add engine utilization breakdown if available
+            engines = gpu_data.get("engines", {})
+            if engines:
+                for engine_name, engine_usage in engines.items():
+                    if engine_usage is not None:
+                        # Clean up engine names for better readability
+                        clean_name = engine_name.replace("/", " ").replace("0", "").strip()
+                        if clean_name.endswith(" "):
+                            clean_name = clean_name[:-1]
+                        attrs[f"{clean_name} Engine"] = f"{engine_usage}%"
+
+            return attrs
+
+        except Exception as err:
+            _LOGGER.debug("Error getting Intel GPU attributes: %s", err)
+            return {
+                "GPU Model": "Unknown Intel GPU",
+                "Last Updated": dt_util.now().isoformat(),
+            }
+
 
 class UnraidArrayStatusSensor(UnraidSensorBase):
     """Array status sensor for Unraid."""
@@ -704,7 +758,6 @@ class UnraidSystemSensors:
         self.entities = [
             UnraidCPUUsageSensor(coordinator),
             UnraidRAMUsageSensor(coordinator),
-            UnraidMemoryUsageSensor(coordinator),
             # Array Status sensor moved to binary sensors
             UnraidUptimeSensor(coordinator),
             UnraidCPUTempSensor(coordinator),
@@ -713,6 +766,18 @@ class UnraidSystemSensors:
             UnraidLogFileSystemSensor(coordinator),
             UnraidBootUsageSensor(coordinator),
         ]
+
+        # Add Intel GPU sensor if Intel GPU is detected
+        intel_gpu_data = (
+            coordinator.data.get("system_stats", {})
+            .get("intel_gpu")
+        )
+        if intel_gpu_data:
+            self.entities.append(UnraidIntelGPUSensor(coordinator))
+            _LOGGER.debug(
+                "Added Intel GPU sensor: %s",
+                intel_gpu_data.get("model", "Unknown Intel GPU")
+            )
 
         # Add fan sensors if available
         fan_data = (

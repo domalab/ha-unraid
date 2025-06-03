@@ -395,7 +395,7 @@ class DiskOperationsMixin:
         except ValueError as err:
             return key, err
 
-    async def collect_disk_info(self) -> List[Dict[str, Any]]:
+    async def collect_disk_info(self) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Collect information about disks using batched commands.
 
         This method is designed to respect disk standby states by:
@@ -414,18 +414,24 @@ class DiskOperationsMixin:
             # Get all disk information in a single command, but without SMART data first
             # This prevents waking up disks in standby mode
             cmd = (
-                # Get disk usage
+                # Get disk usage for standard Unraid mounts
                 "echo '===DISK_USAGE==='; "
                 "df -P -B1 /mnt/disk[0-9]* /mnt/cache* /mnt/user* 2>/dev/null | grep -v '^Filesystem' | awk '{print $6,$2,$3,$4}'; "
-                # Get mount points and devices
+                # Get mount points and devices (including ZFS and other custom mounts)
                 "echo '===MOUNT_INFO==='; "
                 "mount | grep -E '/mnt/' | awk '{print $1,$3,$5}'; "
                 # Get disk serial numbers
                 "echo '===DISK_SERIALS==='; "
                 "lsblk -o NAME,SERIAL | grep -v '^NAME'; "
+                # Get all block devices with transport info for USB detection
+                "echo '===BLOCK_DEVICES==='; "
+                "lsblk -o NAME,TRAN,TYPE,SIZE,MODEL,VENDOR | grep -v '^NAME'; "
                 # Add ZFS support
                 "echo '===ZFS_POOLS==='; "
-                "if command -v zpool >/dev/null 2>&1; then zpool list -H -o name,size,alloc,free,capacity,health; else echo 'zfs_not_installed'; fi"
+                "if command -v zpool >/dev/null 2>&1; then zpool list -H -o name,size,alloc,free,capacity,health; else echo 'zfs_not_installed'; fi; "
+                # Get ZFS pool device mappings
+                "echo '===ZFS_DEVICES==='; "
+                "if command -v zpool >/dev/null 2>&1; then zpool status -P | grep -E '^[[:space:]]+/dev/' | awk '{print $1}'; else echo 'zfs_not_installed'; fi"
             )
 
             result = await self.execute_command(cmd)
@@ -438,9 +444,15 @@ class DiskOperationsMixin:
                 sections = sections[1].split('===DISK_SERIALS===')
                 mount_info_output = sections[0].strip()
 
-                sections = sections[1].split('===ZFS_POOLS===')
+                sections = sections[1].split('===BLOCK_DEVICES===')
                 disk_serials_output = sections[0].strip()
-                zfs_pools_output = sections[1].strip()
+
+                sections = sections[1].split('===ZFS_POOLS===')
+                block_devices_output = sections[0].strip()
+
+                sections = sections[1].split('===ZFS_DEVICES===')
+                zfs_pools_output = sections[0].strip()
+                zfs_devices_output = sections[1].strip()
 
                 # Parse disk serial numbers
                 device_to_serial = {}
@@ -452,6 +464,36 @@ class DiskOperationsMixin:
                         if serial and serial != "":
                             device_to_serial[device_name] = serial
                             _LOGGER.debug(f"Found serial for {device_name}: {serial}")
+
+                # Parse block devices information for USB detection
+                block_devices = {}
+                for line in block_devices_output.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        device_name = parts[0].strip()
+                        transport = parts[1].strip() if parts[1] != '-' else 'unknown'
+                        device_type = parts[2].strip()
+                        size = parts[3].strip() if len(parts) > 3 else 'unknown'
+                        model = parts[4].strip() if len(parts) > 4 else 'unknown'
+                        vendor = parts[5].strip() if len(parts) > 5 else 'unknown'
+
+                        block_devices[device_name] = {
+                            'transport': transport,
+                            'type': device_type,
+                            'size': size,
+                            'model': model,
+                            'vendor': vendor
+                        }
+                        _LOGGER.debug(f"Found block device {device_name}: transport={transport}, type={device_type}")
+
+                # Parse ZFS device mappings
+                zfs_devices = set()
+                if zfs_devices_output != 'zfs_not_installed':
+                    for line in zfs_devices_output.splitlines():
+                        device_path = line.strip()
+                        if device_path.startswith('/dev/'):
+                            zfs_devices.add(device_path)
+                            _LOGGER.debug(f"Found ZFS device: {device_path}")
 
                 # We don't collect SMART data in the initial batch to avoid waking up disks
 
@@ -598,20 +640,146 @@ class DiskOperationsMixin:
                     except (ValueError, IndexError) as err:
                         _LOGGER.debug("Error parsing disk line '%s': %s", line, err)
 
+                # Add individual ZFS devices to monitoring (for USB storage drives in ZFS pools)
+                for zfs_device_path in zfs_devices:
+                    # Check if this device is already being monitored
+                    device_already_monitored = any(
+                        disk.get("device") == zfs_device_path for disk in disks
+                    )
+
+                    if not device_already_monitored:
+                        # Extract device name for block device lookup
+                        device_name = zfs_device_path.replace("/dev/", "")
+
+                        # For partitions (e.g., sda1), also check the parent device (sda)
+                        parent_device_name = device_name
+                        if device_name[-1].isdigit():
+                            # Remove partition number to get parent device
+                            parent_device_name = re.sub(r'\d+$', '', device_name)
+
+                        # Check if this is a USB device (check both partition and parent device)
+                        device_info = None
+                        if device_name in block_devices:
+                            device_info = block_devices[device_name]
+                        elif parent_device_name in block_devices:
+                            device_info = block_devices[parent_device_name]
+                            device_name = parent_device_name  # Use parent device for monitoring
+
+                        if device_info:
+                            transport = device_info.get('transport', 'unknown')
+
+                            if transport == 'usb':
+                                _LOGGER.info(f"Found USB storage device in ZFS pool: {zfs_device_path}")
+
+                                # Get current disk state - assume active for ZFS devices
+                                state = DiskState.ACTIVE
+
+                                # Create a disk entry for this USB storage device
+                                # Use the parent device path for SMART monitoring
+                                monitoring_device_path = f"/dev/{device_name}"
+
+                                # Parse the device size from block device info
+                                device_size_str = device_info.get('size', '0')
+                                device_total_bytes = self._parse_size_string(device_size_str)
+
+                                # Try to get ZFS pool usage information for this device
+                                pool_used_bytes = 0
+                                pool_free_bytes = device_total_bytes
+                                pool_percentage = 0
+
+                                # Find which ZFS pool this device belongs to
+                                device_pool_name = None
+                                for pool_name, pool_data in zfs_pools.items():
+                                    # Check if this device is part of this pool by checking ZFS device list
+                                    if zfs_device_path in zfs_devices:
+                                        # Get pool usage data
+                                        pool_total_bytes = self._parse_size_string(pool_data.get('size', '0'))
+                                        pool_used_bytes = self._parse_size_string(pool_data.get('alloc', '0'))
+                                        pool_free_bytes = self._parse_size_string(pool_data.get('free', '0'))
+                                        pool_percentage = int(pool_data.get('capacity', '0'))
+                                        device_pool_name = pool_name
+                                        _LOGGER.debug(f"USB device {device_name} is part of ZFS pool {pool_name}: {device_size_str} total, pool usage {pool_percentage}%")
+                                        break
+
+                                # Use pool name for entity naming instead of device name for better UX
+                                entity_name = device_pool_name if device_pool_name else f"zfs_{device_name}"
+
+                                disk_info = {
+                                    "name": entity_name,  # Use pool name for cleaner entity naming
+                                    "mount_point": f"ZFS device ({zfs_device_path})" + (f" in pool '{device_pool_name}'" if device_pool_name else ""),
+                                    "total": device_total_bytes,  # Individual device capacity
+                                    "used": pool_used_bytes,      # Pool usage (shared across pool devices)
+                                    "free": pool_free_bytes,      # Pool free space (shared across pool devices)
+                                    "percentage": pool_percentage, # Pool usage percentage
+                                    "state": state.value,
+                                    "smart_data": {},
+                                    "smart_status": "Unknown",
+                                    "temperature": None,
+                                    "device": monitoring_device_path,
+                                    "filesystem": "zfs",
+                                    "transport": transport,
+                                    "device_type": device_info.get('type', 'disk'),
+                                    "model": device_info.get('model', 'Unknown'),
+                                    "vendor": device_info.get('vendor', 'Unknown'),
+                                    "size": device_size_str,
+                                    "pool_name": device_pool_name,  # Track which pool this device belongs to
+                                    "physical_device": device_name,  # Track the actual physical device for SMART monitoring
+                                    "zfs_device_path": zfs_device_path  # Track the ZFS device path
+                                }
+
+                                # Get disk serial number if available
+                                if device_name in device_to_serial:
+                                    disk_info["serial"] = device_to_serial[device_name]
+
+                                # Collect SMART data for USB storage devices
+                                smart_data = await self._smart_manager.get_smart_data(monitoring_device_path)
+                                if smart_data:
+                                    disk_info.update({
+                                        "smart_status": "Passed" if smart_data.get("smart_status") else "Failed",
+                                        "temperature": smart_data.get("temperature"),
+                                        "power_on_hours": smart_data.get("power_on_hours"),
+                                        "smart_data": smart_data
+                                    })
+
+                                disks.append(disk_info)
+                                _LOGGER.info(f"Added USB storage device {zfs_device_path} to monitoring as '{entity_name}' (pool: {device_pool_name})")
+
                 # Add ZFS pools information to the result
                 if zfs_pools and zfs_pools != 'zfs_not_installed':
                     _LOGGER.debug(f"Adding ZFS pools information: {list(zfs_pools.keys())}")
 
-                    # Add ZFS pools to individual_disks list if they're not already there
+                    # Check which ZFS pools already have device-level entities
                     existing_disk_names = {disk.get('name') for disk in disks}
-                    for pool_name in zfs_pools.keys():
-                        if pool_name not in existing_disk_names:
-                            # Check if the pool is mounted
-                            mount_point = f"/mnt/{pool_name}"
+                    zfs_device_pools = set()
 
-                            # Parse ZFS pool data from command output
+                    # Track which pools have individual device entities
+                    for disk in disks:
+                        pool_name = disk.get('pool_name')
+                        if pool_name:
+                            zfs_device_pools.add(pool_name)
+                            _LOGGER.debug(f"Found device-level entity for ZFS pool: {pool_name}")
+
+                    # Add pool-level entities for all ZFS pools to provide pool usage sensors
+                    # Note: Binary sensor entities are consolidated, but usage sensors are valuable
+                    for pool_name in zfs_pools.keys():
+                        # Always create pool entities for usage sensors, even if device-level entities exist
+                        # The binary sensor consolidation happens at the entity level, not here
+                            # Get pool device information to determine if it's single or multi-device
                             try:
-                                # Get the pool data from zpool command output
+                                devices_result = await self.execute_command(f"zpool list -v {pool_name} | grep -E '^\\s+\\w+' | awk '{{print $1}}'")
+                                pool_devices = []
+                                if devices_result.exit_status == 0:
+                                    pool_devices = [dev.strip() for dev in devices_result.stdout.strip().splitlines() if dev.strip()]
+
+                                # Always create pool entities for usage sensors, but mark single-device pools
+                                # The binary sensor consolidation happens at the entity level, not here
+                                pool_type = "single-device" if len(pool_devices) <= 1 else "multi-device"
+                                _LOGGER.debug(f"Creating pool entity for {pool_type} ZFS pool '{pool_name}' ({len(pool_devices)} devices)")
+
+                                # Create pool entity for multi-device pools or pools without device entities
+                                mount_point = f"/mnt/{pool_name}"
+
+                                # Parse ZFS pool data from command output
                                 zpool_cmd = f"zpool list -H -o name,size,alloc,free,capacity,health {pool_name}"
                                 zpool_result = await self.execute_command(zpool_cmd)
 
@@ -631,7 +799,6 @@ class DiskOperationsMixin:
                                         free_bytes = self._parse_size_string(free_str)
 
                                         # Get current disk state - ZFS pools are always active
-                                        # This avoids unnecessary SMART checks
                                         state = DiskState.ACTIVE
 
                                         # Create disk info for the ZFS pool
@@ -648,11 +815,13 @@ class DiskOperationsMixin:
                                             "temperature": None,
                                             "device": None,
                                             "filesystem": "zfs",
-                                            "health": health_str
+                                            "health": health_str,
+                                            "pool_devices": pool_devices,
+                                            "device_count": len(pool_devices)
                                         }
 
                                         disks.append(disk_info)
-                                        _LOGGER.info(f"Added ZFS pool {pool_name} to individual_disks")
+                                        _LOGGER.info(f"Added multi-device ZFS pool {pool_name} to individual_disks ({len(pool_devices)} devices)")
                             except (ValueError, TypeError, IndexError) as err:
                                 _LOGGER.warning(f"Error adding ZFS pool {pool_name} to individual_disks: {err}")
 
