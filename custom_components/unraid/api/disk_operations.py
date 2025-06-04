@@ -834,7 +834,12 @@ class DiskOperationsMixin:
 
                 return disks, {}
             else:
-                _LOGGER.warning("Batched disk info command failed with exit status %d", result.exit_status)
+                # Handle cases where exit_status might be None
+                exit_status = getattr(result, 'exit_status', None)
+                if exit_status is not None:
+                    _LOGGER.warning("Batched disk info command failed with exit status %d", exit_status)
+                else:
+                    _LOGGER.warning("Batched disk info command failed with unknown exit status (result: %s)", result)
                 return [], {}
 
         except Exception as err:
