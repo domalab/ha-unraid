@@ -77,7 +77,9 @@ class DiskOperationsMixin:
 
         self._smart_manager = SmartDataManager(self)
         self._state_manager = DiskStateManager(self)
-        _LOGGER.debug("Created SmartDataManager and DiskStateManager")
+        # Clear any cached MD device paths to force re-resolution
+        self._state_manager.clear_md_cache()
+        _LOGGER.debug("Created SmartDataManager and DiskStateManager, cleared MD cache")
 
         self._disk_lock = asyncio.Lock()
         self._cached_disk_info: Dict[str, DiskInfo] = {}
@@ -586,6 +588,7 @@ class DiskOperationsMixin:
 
                         # Get current disk state
                         state = await self._state_manager.get_disk_state(disk_name)
+                        _LOGGER.debug("Disk %s state from DiskStateManager: %s", disk_name, state.value)
 
                         disk_info = {
                             "name": disk_name,

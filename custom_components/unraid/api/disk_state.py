@@ -29,21 +29,83 @@ class DiskStateManager:
         self._device_types: Dict[str, str] = {}  # Track device types (nvme, sata, etc)
         self._device_paths_cache: Dict[str, str] = {}  # Cache for device paths
 
+    def clear_md_cache(self) -> None:
+        """Clear cached MD device paths to force re-resolution."""
+        md_devices = [k for k, v in self._device_paths_cache.items() if v.startswith('/dev/md')]
+        for device in md_devices:
+            del self._device_paths_cache[device]
+            _LOGGER.debug("Cleared cached MD device path for %s", device)
+
     async def _get_device_path(self, device: str) -> str | None:
         """Get actual device path from mount point."""
         try:
             # Check cache first
             if device in self._device_paths_cache:
+                _LOGGER.debug("Using cached device path for %s: %s", device, self._device_paths_cache[device])
                 return self._device_paths_cache[device]
 
             mount_cmd = f"findmnt -n -o SOURCE /mnt/{device}"
+            _LOGGER.debug("Executing mount command for %s: %s", device, mount_cmd)
             result = await self._instance.execute_command(mount_cmd)
+            _LOGGER.debug("Mount command result for %s: exit_code=%d, stdout='%s'", device, result.exit_status, result.stdout.strip())
+
             if result.exit_status == 0 and (device_path := result.stdout.strip()):
+                # If it's an MD device, resolve to underlying physical device
+                _LOGGER.debug("Checking if device_path '%s' is MD device (starts with /dev/md: %s, contains p1: %s)",
+                             device_path, device_path.startswith('/dev/md'), 'p1' in device_path)
+                if device_path.startswith('/dev/md') and 'p1' in device_path:
+                    # Extract MD number (e.g., md1 from /dev/md1p1)
+                    md_device = device_path.split('p1')[0]  # /dev/md1
+                    _LOGGER.debug("Attempting to resolve MD device %s to physical device for %s", md_device, device)
+                    physical_device = await self._resolve_md_to_physical(md_device)
+                    if physical_device:
+                        device_path = physical_device
+                        _LOGGER.debug("Resolved MD device %s to physical device %s for %s", md_device, physical_device, device)
+                    else:
+                        _LOGGER.warning("Failed to resolve MD device %s for %s", md_device, device)
+
                 self._device_paths_cache[device] = device_path
+                _LOGGER.debug("Found and cached device path for %s: %s", device, device_path)
                 return device_path
+
+            _LOGGER.warning("Could not find device path for %s (exit_code=%d)", device, result.exit_status)
             return None
         except Exception as err:
             _LOGGER.error("Error getting device path for %s: %s", device, err)
+            return None
+
+    async def _resolve_md_to_physical(self, md_device: str) -> str | None:
+        """Resolve MD device to underlying physical device using mdcmd status."""
+        try:
+            # Extract MD number (e.g., md1 from /dev/md1)
+            md_num = md_device.replace('/dev/md', '')
+
+            # Use mdcmd status to get the mapping
+            result = await self._instance.execute_command("mdcmd status")
+            if result.exit_status != 0:
+                _LOGGER.warning("mdcmd status failed with exit code %d", result.exit_status)
+                return None
+
+            # Parse the output to find the physical device for this MD device
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                # Look for diskName.X=mdYp1 where Y matches our MD number
+                if line.startswith(f"diskName.") and line.endswith(f"=md{md_num}p1"):
+                    # Extract the disk number (X from diskName.X)
+                    disk_number = line.split('.')[1].split('=')[0]
+
+                    # Now find the corresponding rdevName.X line
+                    for rdev_line in result.stdout.splitlines():
+                        rdev_line = rdev_line.strip()
+                        if rdev_line.startswith(f"rdevName.{disk_number}="):
+                            physical_device = f"/dev/{rdev_line.split('=')[1]}"
+                            _LOGGER.debug("Resolved %s to physical device: %s", md_device, physical_device)
+                            return physical_device
+
+            _LOGGER.warning("Could not find mapping for MD device %s in mdcmd status", md_device)
+            return None
+        except Exception as err:
+            _LOGGER.error("Error resolving MD device %s: %s", md_device, err)
             return None
 
     async def get_disk_state(self, device: str) -> DiskState:
@@ -79,11 +141,12 @@ class DiskStateManager:
                     _LOGGER.error("Could not find cache device path")
                     return DiskState.UNKNOWN
                 elif device.startswith("disk"):
-                    try:
-                        disk_num = int(''.join(filter(str.isdigit, device)))
-                        device_path = f"/dev/sd{chr(ord('b') + disk_num - 1)}"
-                    except ValueError:
-                        _LOGGER.error("Invalid disk number in %s", device)
+                    # Use actual device path from mount point instead of sequential assignment
+                    if actual_path := await self._get_device_path(device):
+                        device_path = actual_path
+                        _LOGGER.debug("Found device path for %s: %s", device, device_path)
+                    else:
+                        _LOGGER.error("Could not find device path for %s", device)
                         return DiskState.UNKNOWN
                 else:
                     # For custom pools or other disks

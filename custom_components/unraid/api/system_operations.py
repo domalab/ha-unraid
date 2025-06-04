@@ -13,6 +13,8 @@ import asyncssh # type: ignore
 
 from .network_operations import NetworkOperationsMixin
 from .error_handling import with_error_handling, safe_parse
+from .raid_detection import RAIDControllerDetector
+from .power_monitoring import CPUPowerMonitor
 from ..utils import format_bytes, extract_fans_data
 from ..const import (
     TEMP_WARN_THRESHOLD,
@@ -52,6 +54,8 @@ class SystemOperationsMixin(CommandExecutor):
         """Initialize system operations."""
         self._network_ops: Optional[NetworkOperationsMixin] = None
         self._fan_hardware_available: Optional[bool] = None  # Cache fan hardware detection
+        self._raid_detector: Optional[RAIDControllerDetector] = None
+        self._power_monitor: Optional[CPUPowerMonitor] = None
 
     def set_network_ops(self, network_ops: NetworkOperationsMixin) -> None:
         """Set network operations instance."""
@@ -115,6 +119,60 @@ class SystemOperationsMixin(CommandExecutor):
         """
         self._fan_hardware_available = None
         _LOGGER.debug("Fan hardware detection cache reset")
+
+    async def get_raid_controller_info(self) -> Dict[str, Any]:
+        """
+        Get RAID controller information and recommendations.
+
+        Returns advisory information about RAID controllers since Unraid
+        works best with individual disk access (JBOD/IT mode).
+        """
+        try:
+            if self._raid_detector is None:
+                self._raid_detector = RAIDControllerDetector(self.execute_command)
+
+            controllers = await self._raid_detector.detect_raid_controllers()
+            advisory = self._raid_detector.get_raid_advisory()
+
+            _LOGGER.debug("RAID controller detection complete: %s", advisory["message"])
+            return advisory
+
+        except Exception as err:
+            _LOGGER.error("Error detecting RAID controllers: %s", err)
+            return {
+                "status": "error",
+                "message": "Failed to detect RAID controllers",
+                "controllers": [],
+                "recommendations": []
+            }
+
+    async def get_cpu_power_info(self) -> Dict[str, Any]:
+        """
+        Get CPU power monitoring information.
+
+        Safely detects and returns CPU power consumption data from
+        Intel RAPL or AMD sensors without risking system stability.
+        """
+        try:
+            if self._power_monitor is None:
+                self._power_monitor = CPUPowerMonitor(self.execute_command)
+
+            power_summary = await self._power_monitor.get_power_summary()
+            _LOGGER.debug("CPU power monitoring: %s", power_summary["source"])
+            return power_summary
+
+        except Exception as err:
+            _LOGGER.debug("Error getting CPU power info: %s", err)
+            return {
+                "supported": False,
+                "source": "error",
+                "total_power": None,
+                "package_power": None,
+                "core_power": None,
+                "uncore_power": None,
+                "dram_power": None,
+                "power_limit": None
+            }
 
     @with_error_handling(fallback_return={})
     async def get_system_stats(self) -> Dict[str, Any]:

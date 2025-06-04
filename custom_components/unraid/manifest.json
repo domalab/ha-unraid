@@ -13,6 +13,6 @@
     "aiofiles>=23.2.1"
   ],
   "ssdp": [],
-  "version": "2025.06.04",
+  "version": "2025.06.05",
   "zeroconf": []
 }

@@ -31,11 +31,19 @@ class SmartDataManager:
     def __init__(self, instance: Any):
         self._instance = instance
         self._cache: Dict[str, Dict[str, Any]] = {}
-        self._cache_timeout = timedelta(minutes=5)
+        self._cache_timeout = timedelta(minutes=5)  # Default fallback
         self._last_update: Dict[str, datetime] = {}
         self._lock = asyncio.Lock()
         self._disk_mapper = DiskMapper(instance.execute_command)
         self._usb_detector = USBFlashDriveDetector(instance)
+
+        # Granular cache timeouts for real-time monitoring
+        self._cache_timeouts = {
+            "temperature": timedelta(minutes=1),    # 1 minute for temperature monitoring
+            "power_state": timedelta(seconds=30),   # 30 seconds for power state changes
+            "health_status": timedelta(minutes=10), # 10 minutes for health status
+            "static_info": timedelta(hours=1),      # 1 hour for model, serial, etc.
+        }
 
     def _convert_nvme_temperature(self, temp_value: Any) -> Optional[int]:
         """Convert NVMe temperature to Celsius with enhanced format detection."""

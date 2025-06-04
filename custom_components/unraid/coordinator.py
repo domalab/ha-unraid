@@ -136,20 +136,28 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[UnraidDataDict]):
         self._cache_ttls = {
             # Static or rarely changing data
             "disk_mapping": 3600,  # 1 hour
-            "disk_info": 1800,     # 30 minutes
-            "smart_data": 1800,    # 30 minutes
+            "disk_serial": 3600,   # 1 hour - device serials never change
+            "disk_model": 3600,    # 1 hour - device models never change
             "docker_info": 600,    # 10 minutes
             "vm_info": 600,        # 10 minutes
 
-            # Semi-dynamic data
-            "system_stats": 120,    # 2 minutes
-            "array_state": 60,      # 1 minute
-            "ups_info": 120,        # 2 minutes
+            # Semi-dynamic data (automation-friendly)
+            "disk_info": 300,      # 5 minutes - reduced from 30 min for power state changes
+            "smart_health": 600,   # 10 minutes - SMART health status changes slowly
+            "system_stats": 120,   # 2 minutes
+            "array_state": 60,     # 1 minute
+            "ups_info": 120,       # 2 minutes
 
-            # Highly dynamic data
-            "cpu_info": 30,         # 30 seconds
-            "memory_info": 30,      # 30 seconds
-            "network_stats": 15,    # 15 seconds
+            # Real-time monitoring data (automation-critical)
+            "disk_temperature": 60,    # 1 minute - for temperature monitoring automations
+            "disk_power_state": 30,    # 30 seconds - for spinup/spindown automations
+            "smart_critical": 30,      # 30 seconds - for immediate health alerts
+            "cpu_info": 30,            # 30 seconds
+            "memory_info": 30,         # 30 seconds
+            "network_stats": 15,       # 15 seconds
+
+            # Legacy compatibility (will be phased out)
+            "smart_data": 300,     # 5 minutes - reduced from 30 min, but use specific keys above
         }
 
         # Resource monitoring
