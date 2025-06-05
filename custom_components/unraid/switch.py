@@ -150,13 +150,20 @@ class UnraidVMSwitch(UnraidSwitchEntity):
         self._vm_name = vm_name
         self._last_known_state = None
 
-        # Remove any leading numbers and spaces for the entity ID
-        cleaned_name = ''.join(c for c in vm_name if not c.isdigit()).strip()
+        # Create a safe entity ID from VM name with collision detection
+        from .utils import normalize_name
+        safe_name = normalize_name(vm_name)
+        # Ensure it doesn't start with a number (Home Assistant requirement)
+        if safe_name and safe_name[0].isdigit():
+            safe_name = f"vm_{safe_name}"
+
+        # Handle entity ID collisions by checking existing VMs
+        safe_name = self._ensure_unique_entity_id(safe_name, vm_name, coordinator)
 
         super().__init__(
             coordinator,
             UnraidSwitchEntityDescription(
-                key=f"vm_{cleaned_name}",
+                key=f"vm_{safe_name}",
                 name=f"{vm_name}",
                 value_fn=self._get_vm_state,
             )
@@ -164,6 +171,73 @@ class UnraidVMSwitch(UnraidSwitchEntity):
         self._attr_entity_registry_enabled_default = True
 
         # Get OS type for specific model info
+        self._get_os_type_info(vm_name, coordinator)
+
+    def _ensure_unique_entity_id(self, base_name: str, vm_name: str, coordinator) -> str:
+        """Ensure the entity ID is unique by checking for collisions with existing VMs.
+
+        Args:
+            base_name: The normalized base name for the entity ID
+            vm_name: The original VM name
+            coordinator: The coordinator containing VM data
+
+        Returns:
+            A unique entity ID that won't collide with existing VMs
+        """
+        from .utils import normalize_name
+
+        # Get all existing VM names from coordinator data
+        existing_vms = coordinator.data.get("vms", [])
+        existing_normalized_names = set()
+
+        for vm in existing_vms:
+            existing_vm_name = vm.get("name", "")
+            if existing_vm_name and existing_vm_name != vm_name:  # Don't include current VM
+                existing_normalized = normalize_name(existing_vm_name)
+                if existing_normalized and existing_normalized[0].isdigit():
+                    existing_normalized = f"vm_{existing_normalized}"
+                existing_normalized_names.add(existing_normalized)
+
+        # If no collision, return the base name
+        if base_name not in existing_normalized_names:
+            return base_name
+
+        # Handle collision by adding a suffix based on original VM name characteristics
+        # Strategy: Use distinguishing characteristics from the original name
+
+        # Try to create a unique suffix based on the original name
+        import re
+
+        # Extract unique characteristics from the original VM name
+        # 1. Check for different separators (dash vs space vs underscore)
+        if '-' in vm_name and ' ' not in vm_name:
+            suffix = "dash"
+        elif ' ' in vm_name and '-' not in vm_name:
+            suffix = "space"
+        elif '_' in vm_name:
+            suffix = "underscore"
+        else:
+            # 2. Use position-based numbering or character-based differentiation
+            # Extract any numbers or special patterns
+            numbers = re.findall(r'\d+', vm_name)
+            if numbers:
+                suffix = f"n{numbers[-1]}"  # Use last number found
+            else:
+                # 3. Use length or hash-based suffix as last resort
+                suffix = f"len{len(vm_name)}"
+
+        candidate_name = f"{base_name}_{suffix}"
+
+        # If still collision, fall back to incremental numbering
+        counter = 2
+        while candidate_name in existing_normalized_names:
+            candidate_name = f"{base_name}_{suffix}_{counter}"
+            counter += 1
+
+        return candidate_name
+
+    def _get_os_type_info(self, vm_name: str, coordinator) -> None:
+        """Get OS type for specific model info."""
         for vm in coordinator.data.get("vms", []):
             if vm["name"] == vm_name and "os_type" in vm:
                 self._attr_device_info["model"] = f"{vm['os_type'].capitalize()} Virtual Machine"

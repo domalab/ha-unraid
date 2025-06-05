@@ -81,17 +81,18 @@ class VMOperationsMixin:
 
             # Collect VM information in a single command
             try:
-                # Use a single command to collect all VM information
+                # Use a more robust command that properly handles VM names with spaces and special characters
+                # We use a unique delimiter (§§§) that's unlikely to appear in VM names or XML data
                 cmd = (
                     "if [ -x /etc/rc.d/rc.libvirt ] && /etc/rc.d/rc.libvirt status | grep -q 'is currently running'; then "
-                    "  for vm in $(virsh list --all --name); do "
-                    "    if [ -n \"$vm\" ]; then "
+                    "  virsh list --all --name | while IFS= read -r vm; do "
+                    "    if [ -n \"$vm\" ] && [ \"$vm\" != \" \" ]; then "
                     "      state=$(virsh domstate \"$vm\" 2>/dev/null || echo 'unknown'); "
                     "      info=$(virsh dominfo \"$vm\" 2>/dev/null); "
-                    "      cpus=$(echo \"$info\" | grep 'CPU(s)' | awk '{print $2}'); "
-                    "      mem=$(echo \"$info\" | grep 'Max memory' | sed 's/Max memory://g' | xargs); "
-                    "      xml=$(virsh dumpxml \"$vm\" 2>/dev/null | grep -A5 \"<os>\"); "
-                    "      echo \"$vm|$state|$cpus|$mem|$xml\"; "
+                    "      cpus=$(echo \"$info\" | grep 'CPU(s)' | awk '{print $2}' | head -1); "
+                    "      mem=$(echo \"$info\" | grep 'Max memory' | sed 's/Max memory://g' | xargs | head -1); "
+                    "      xml=$(virsh dumpxml \"$vm\" 2>/dev/null | grep -A5 \"<os>\" | tr '\\n' ' '); "
+                    "      echo \"$vm§§§$state§§§$cpus§§§$mem§§§$xml\"; "
                     "    fi; "
                     "  done; "
                     "else "
@@ -107,17 +108,25 @@ class VMOperationsMixin:
 
                 vms = []
                 for line in result.stdout.splitlines():
-                    if not line.strip() or '|' not in line:
+                    if not line.strip() or '§§§' not in line:
                         continue
 
                     try:
-                        parts = line.split('|')
+                        # Split on our unique delimiter
+                        parts = line.split('§§§')
                         if len(parts) >= 5:
                             vm_name = parts[0].strip()
                             status = VMState.parse(parts[1].strip())
-                            cpus = parts[2].strip()
-                            memory = parts[3].strip()
+                            cpus = parts[2].strip() or '0'
+                            memory = parts[3].strip() or '0'
                             xml_data = parts[4].strip()
+
+                            # Skip empty VM names (shouldn't happen but be safe)
+                            if not vm_name:
+                                _LOGGER.debug("Skipping VM with empty name")
+                                continue
+
+                            _LOGGER.debug("Processing VM: '%s' with status: '%s'", vm_name, status)
 
                             # Determine OS type from XML data
                             os_type = 'unknown'
@@ -149,6 +158,7 @@ class VMOperationsMixin:
                         _LOGGER.debug("Error processing VM line '%s': %s", line, str(vm_err))
                         continue
 
+                _LOGGER.debug("Successfully processed %d VMs", len(vms))
                 return vms
 
             except Exception as virsh_err:
@@ -170,23 +180,27 @@ class VMOperationsMixin:
 
             vms = []
             for line in result.stdout.splitlines():
-                if not line.strip():
+                vm_name = line.strip()
+                if not vm_name:
                     continue
 
                 try:
-                    vm_name = line.strip()
+                    _LOGGER.debug("Processing VM (fallback): '%s'", vm_name)
                     status = await self.get_vm_status(vm_name)
                     os_type = await self.get_vm_os_info(vm_name)
 
                     vms.append({
                         "name": vm_name,
                         "status": status,
-                        "os_type": os_type
+                        "os_type": os_type,
+                        "cpus": "0",  # Add default values for consistency
+                        "memory": "0"
                     })
                 except Exception as vm_err:
-                    _LOGGER.debug("Error processing VM '%s': %s", line.strip(), str(vm_err))
+                    _LOGGER.debug("Error processing VM '%s': %s", vm_name, str(vm_err))
                     continue
 
+            _LOGGER.debug("Successfully processed %d VMs (fallback)", len(vms))
             return vms
         except Exception as err:
             _LOGGER.debug("Error in original VM method: %s", str(err))
@@ -236,7 +250,9 @@ class VMOperationsMixin:
     async def get_vm_status(self, vm_name: str) -> str:
         """Get detailed status of a specific virtual machine."""
         try:
-            result = await self.execute_command(f'virsh domstate "{vm_name}"')
+            # Use shlex.quote to properly escape VM names with special characters
+            escaped_name = shlex.quote(vm_name)
+            result = await self.execute_command(f'virsh domstate {escaped_name}')
             if result.exit_status != 0:
                 _LOGGER.error("Failed to get VM status for '%s': %s", vm_name, result.stderr)
                 return VMState.CRASHED.value
@@ -256,7 +272,9 @@ class VMOperationsMixin:
                 _LOGGER.info("VM '%s' is already running", vm_name)
                 return True
 
-            result = await self.execute_command(f'virsh start "{vm_name}"')
+            # Use shlex.quote to properly escape VM names with special characters
+            escaped_name = shlex.quote(vm_name)
+            result = await self.execute_command(f'virsh start {escaped_name}')
             success = result.exit_status == 0
 
             if not success:
@@ -289,7 +307,9 @@ class VMOperationsMixin:
                 _LOGGER.info("VM '%s' is already shut off", vm_name)
                 return True
 
-            result = await self.execute_command(f'virsh shutdown "{vm_name}"')
+            # Use shlex.quote to properly escape VM names with special characters
+            escaped_name = shlex.quote(vm_name)
+            result = await self.execute_command(f'virsh shutdown {escaped_name}')
             success = result.exit_status == 0
 
             if not success:
@@ -326,7 +346,8 @@ class VMOperationsMixin:
                 _LOGGER.error("Cannot pause VM '%s' because it is not running (current state: %s)", vm_name, current_state)
                 return False
 
-            result = await self.execute_command(f'virsh suspend "{vm_name}"')
+            escaped_name = shlex.quote(vm_name)
+            result = await self.execute_command(f'virsh suspend {escaped_name}')
             success = result.exit_status == 0
 
             if not success:
@@ -363,7 +384,8 @@ class VMOperationsMixin:
                 _LOGGER.error("Cannot resume VM '%s' because it is not paused (current state: %s)", vm_name, current_state)
                 return False
 
-            result = await self.execute_command(f'virsh resume "{vm_name}"')
+            escaped_name = shlex.quote(vm_name)
+            result = await self.execute_command(f'virsh resume {escaped_name}')
             success = result.exit_status == 0
 
             if not success:
@@ -396,7 +418,8 @@ class VMOperationsMixin:
                 _LOGGER.error("Cannot restart VM '%s' because it is not running (current state: %s)", vm_name, current_state)
                 return False
 
-            result = await self.execute_command(f'virsh reboot "{vm_name}"')
+            escaped_name = shlex.quote(vm_name)
+            result = await self.execute_command(f'virsh reboot {escaped_name}')
             success = result.exit_status == 0
 
             if not success:
@@ -433,7 +456,8 @@ class VMOperationsMixin:
                 _LOGGER.error("Cannot hibernate VM '%s' because it is not running (current state: %s)", vm_name, current_state)
                 return False
 
-            result = await self.execute_command(f'virsh dompmsuspend "{vm_name}" disk')
+            escaped_name = shlex.quote(vm_name)
+            result = await self.execute_command(f'virsh dompmsuspend {escaped_name} disk')
             success = result.exit_status == 0
 
             if not success:
@@ -466,7 +490,8 @@ class VMOperationsMixin:
                 _LOGGER.info("VM '%s' is already shut off", vm_name)
                 return True
 
-            result = await self.execute_command(f'virsh destroy "{vm_name}"')
+            escaped_name = shlex.quote(vm_name)
+            result = await self.execute_command(f'virsh destroy {escaped_name}')
             success = result.exit_status == 0
 
             if not success:
