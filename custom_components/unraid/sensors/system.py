@@ -110,6 +110,15 @@ class UnraidCPUUsageSensor(UnraidSensorBase):
             else:
                 attributes["temperature_status"] = "Normal"
 
+        # Add CPU load averages if available
+        if load_data := data.get("cpu_load_averages"):
+            if load_1m := load_data.get("load_1m"):
+                attributes["CPU Load (1m)"] = f"{load_1m:.2f}"
+            if load_5m := load_data.get("load_5m"):
+                attributes["CPU Load (5m)"] = f"{load_5m:.2f}"
+            if load_15m := load_data.get("load_15m"):
+                attributes["CPU Load (15m)"] = f"{load_15m:.2f}"
+
         return attributes
 
 class UnraidRAMUsageSensor(UnraidSensorBase):

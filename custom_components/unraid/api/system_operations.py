@@ -1070,6 +1070,8 @@ class SystemOperationsMixin(CommandExecutor):
             "mdcmd status; "
             "echo '===CPU_USAGE==='; "
             "top -bn1 | grep '^%Cpu' | awk '{print 100 - $8}'; "
+            "echo '===CPU_LOAD==='; "
+            "cat /proc/loadavg; "
             "echo '===CPU_INFO==='; "
             "echo 'CORES:'; nproc; "
             "echo 'MODEL:'; grep 'model name' /proc/cpuinfo | head -1 | cut -d':' -f2 | sed 's/^ *//'; "
@@ -1150,6 +1152,33 @@ class SystemOperationsMixin(CommandExecutor):
                             system_stats['cpu_usage'] = float(round(cpu_usage, 2))
                     except (ValueError, TypeError):
                         _LOGGER.debug("Could not parse CPU usage from output: %s", sections['CPU_USAGE'])
+
+                # Parse CPU load averages
+                if 'CPU_LOAD' in sections:
+                    try:
+                        load_output = sections['CPU_LOAD'].strip()
+                        # /proc/loadavg format: "load1 load5 load15 running/total last_pid"
+                        load_parts = load_output.split()
+                        if len(load_parts) >= 3:
+                            load_1m = float(load_parts[0])
+                            load_5m = float(load_parts[1])
+                            load_15m = float(load_parts[2])
+
+                            # Validate load averages (should be non-negative)
+                            if load_1m >= 0 and load_5m >= 0 and load_15m >= 0:
+                                system_stats['cpu_load_averages'] = {
+                                    'load_1m': round(load_1m, 2),
+                                    'load_5m': round(load_5m, 2),
+                                    'load_15m': round(load_15m, 2)
+                                }
+                                _LOGGER.debug("Parsed CPU load averages: 1m=%.2f, 5m=%.2f, 15m=%.2f",
+                                            load_1m, load_5m, load_15m)
+                            else:
+                                _LOGGER.warning("Invalid CPU load averages: 1m=%.2f, 5m=%.2f, 15m=%.2f",
+                                              load_1m, load_5m, load_15m)
+                    except (ValueError, TypeError, IndexError) as err:
+                        _LOGGER.debug("Could not parse CPU load averages from output: %s, error: %s",
+                                    sections['CPU_LOAD'], err)
 
                 # Parse CPU info
                 if 'CPU_INFO' in sections:
