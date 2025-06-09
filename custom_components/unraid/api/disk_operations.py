@@ -416,9 +416,15 @@ class DiskOperationsMixin:
             # Get all disk information in a single command, but without SMART data first
             # This prevents waking up disks in standby mode
             cmd = (
-                # Get disk usage for standard Unraid mounts
+                # Get disk usage for standard Unraid mounts and all cache pools
                 "echo '===DISK_USAGE==='; "
-                "df -P -B1 /mnt/disk[0-9]* /mnt/cache* /mnt/user* 2>/dev/null | grep -v '^Filesystem' | awk '{print $6,$2,$3,$4}'; "
+                "df -P -B1 /mnt/disk[0-9]* /mnt/user* 2>/dev/null | grep -v '^Filesystem' | awk '{print $6,$2,$3,$4}'; "
+                # Get all cache pools (including those with special characters)
+                "mount | grep -E '/mnt/' | grep -v -E '(fuse\\.shfs|/var/lib/docker|/etc/libvirt)' | grep -v -E '/mnt/(disk[0-9]+|user[0-9]*|disks|remotes|addons|rootshare)' | awk '{print $3}' | while read mount_point; do "
+                "  if [ -d \"$mount_point\" ] && mountpoint -q \"$mount_point\"; then "
+                "    df -P -B1 \"$mount_point\" 2>/dev/null | grep -v '^Filesystem' | awk '{print $6,$2,$3,$4}'; "
+                "  fi; "
+                "done; "
                 # Get mount points and devices (including ZFS and other custom mounts)
                 "echo '===MOUNT_INFO==='; "
                 "mount | grep -E '/mnt/' | awk '{print $1,$3,$5}'; "

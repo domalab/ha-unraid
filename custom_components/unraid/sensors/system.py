@@ -146,16 +146,44 @@ class UnraidRAMUsageSensor(UnraidSensorBase):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
+        """Return enhanced state attributes with detailed memory breakdown."""
         memory = self.coordinator.data.get("system_stats", {}).get("memory_usage", {})
-        return {
-            "total": memory.get("total", "unknown"),
-            "used": memory.get("used", "unknown"),
-            "free": memory.get("free", "unknown"),
-            "cached": memory.get("cached", "unknown"),
-            "buffers": memory.get("buffers", "unknown"),
-            "last_update": dt_util.now().isoformat(),
+
+        # Basic memory information
+        attrs = {
+            "Total Memory": memory.get("total", "Unknown"),
+            "Used Memory": memory.get("used", "Unknown"),
+            "Free Memory": memory.get("free_memory", "Unknown"),
+            "Cached Memory": memory.get("cached", "Unknown"),
+            "Buffer Memory": memory.get("buffers", "Unknown"),
+            "Available Memory": memory.get("available", "Unknown"),
         }
+
+        # Enhanced memory breakdown - always show breakdown
+        system_mem = memory.get("system_memory", "N/A")
+        system_pct = memory.get("system_memory_percentage", 0)
+        attrs["System Memory"] = f"{system_mem} ({system_pct}%)" if system_mem != "N/A" else "N/A"
+
+        vm_mem = memory.get("vm_memory", "N/A")
+        vm_pct = memory.get("vm_memory_percentage", 0)
+        attrs["VM Memory"] = f"{vm_mem} ({vm_pct}%)" if vm_mem != "N/A" else "N/A"
+
+        docker_mem = memory.get("docker_memory", "N/A")
+        docker_pct = memory.get("docker_memory_percentage", 0)
+        attrs["Docker Memory"] = f"{docker_mem} ({docker_pct}%)" if docker_mem != "N/A" else "N/A"
+
+        zfs_mem = memory.get("zfs_memory", "N/A")
+        zfs_pct = memory.get("zfs_memory_percentage", 0)
+        attrs["ZFS Cache Memory"] = f"{zfs_mem} ({zfs_pct}%)" if zfs_mem != "N/A" else "N/A"
+
+        # Use Available Memory as "Free Memory" to match Unraid GUI convention
+        available_mem = memory.get("available", "Unknown")
+        available_pct = 100 - memory.get("percentage", 0) if memory.get("percentage") else 0
+        attrs["Free Memory"] = f"{available_mem} ({available_pct:.1f}%)"
+
+        attrs["Last Update"] = dt_util.now().isoformat()
+
+        return attrs
 
 class UnraidCPUTempSensor(UnraidSensorBase):
     """CPU temperature sensor for Unraid."""

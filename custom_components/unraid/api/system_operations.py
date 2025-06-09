@@ -459,17 +459,19 @@ class SystemOperationsMixin(CommandExecutor):
             return None
 
     async def _get_memory_usage(self) -> Dict[str, Any]:
-        """Fetch RAM information from the Unraid system."""
+        """Fetch comprehensive RAM information with detailed breakdown."""
         try:
-            _LOGGER.debug("Fetching memory usage from /proc/meminfo")
-            result = await self.execute_command("cat /proc/meminfo")
-            if result.exit_status != 0:
-                _LOGGER.error("Memory usage command failed with exit status %d", result.exit_status)
+            _LOGGER.debug("Fetching comprehensive memory usage information")
+
+            # Get basic memory info from /proc/meminfo
+            meminfo_result = await self.execute_command("cat /proc/meminfo")
+            if meminfo_result.exit_status != 0:
+                _LOGGER.error("Memory usage command failed with exit status %d", meminfo_result.exit_status)
                 return {"percentage": None}
 
             # Parse meminfo into a dictionary
             memory_info = {}
-            for line in result.stdout.splitlines():
+            for line in meminfo_result.stdout.splitlines():
                 try:
                     key, value = line.split(':')
                     # Convert kB to bytes and strip 'kB'
@@ -478,38 +480,223 @@ class SystemOperationsMixin(CommandExecutor):
                 except (ValueError, IndexError):
                     continue
 
-            # Calculate memory values
+            # Calculate basic memory values
             total = memory_info.get('MemTotal', 0)
             free = memory_info.get('MemFree', 0)
             cached = memory_info.get('Cached', 0)
             buffers = memory_info.get('Buffers', 0)
             available = memory_info.get('MemAvailable', 0)
 
-            # Calculate used memory (total - free - cached - buffers)
-            used = total - free - cached - buffers
-
             # Validate values to prevent division by zero or negative values
             if total <= 0:
                 _LOGGER.error("Invalid total memory value: %d", total)
                 return {"percentage": None}
 
-            # Format values for reporting
+            # Get detailed memory breakdown
+            _LOGGER.debug("Fetching detailed memory breakdown for total memory: %s", format_bytes(total))
+            memory_breakdown = await self._get_detailed_memory_breakdown(total)
+
+            # Calculate system memory (total - VMs - Docker - ZFS - free)
+            vm_memory = memory_breakdown.get('vm_memory_bytes', 0)
+            docker_memory = memory_breakdown.get('docker_memory_bytes', 0)
+            zfs_memory = memory_breakdown.get('zfs_memory_bytes', 0)
+
+            _LOGGER.debug("Memory breakdown results: VM=%s, Docker=%s, ZFS=%s",
+                         format_bytes(vm_memory), format_bytes(docker_memory), format_bytes(zfs_memory))
+
+            # Calculate used memory for percentage calculation (exclude cached/buffered memory)
+            # This follows the standard Linux memory calculation: used = total - free - cached - buffers
+            # However, we need to account for ZFS ARC being included in cached memory
+
+            # Adjust cached memory to exclude ZFS ARC (to avoid double counting)
+            cached_excluding_zfs = cached - zfs_memory
+
+            # Calculate used memory excluding cached/buffered memory
+            used = total - free - cached_excluding_zfs - buffers
+
+            # Ensure used memory is not negative (fallback to simple calculation)
+            if used < 0:
+                used = total - available if available > 0 else total - free
+
+            # System memory is the actual memory used by kernel and system processes
+            # It's calculated as: used memory minus specific allocations (VMs, Docker, ZFS)
+            system_memory = used - vm_memory - docker_memory - zfs_memory
+
+            # Ensure system memory is not negative (fallback calculation)
+            if system_memory < 0:
+                # If calculation results in negative, use a conservative estimate
+                system_memory = max(0, int(used * 0.1))  # Assume 10% of used memory for system
+
+
+
+            # Format values for reporting with detailed breakdown
             memory_stats = {
                 "percentage": round((used / total) * 100, 2),
                 "total": format_bytes(total),
                 "used": format_bytes(used),
                 "free": format_bytes(free),
-                "cached": format_bytes(cached),
+                "cached": format_bytes(cached_excluding_zfs),  # Show cached memory excluding ZFS ARC
                 "buffers": format_bytes(buffers),
                 "available": format_bytes(available),
+
+                # Enhanced breakdown attributes
+                "system_memory": format_bytes(system_memory),
+                "system_memory_bytes": system_memory,
+                "system_memory_percentage": round((system_memory / total) * 100, 1),
+
+                "vm_memory": memory_breakdown.get('vm_memory', 'N/A'),
+                "vm_memory_bytes": vm_memory,
+                "vm_memory_percentage": round((vm_memory / total) * 100, 1) if vm_memory > 0 else 0,
+
+                "docker_memory": memory_breakdown.get('docker_memory', 'N/A'),
+                "docker_memory_bytes": docker_memory,
+                "docker_memory_percentage": round((docker_memory / total) * 100, 1) if docker_memory > 0 else 0,
+
+                "zfs_memory": memory_breakdown.get('zfs_memory', 'N/A'),
+                "zfs_memory_bytes": zfs_memory,
+                "zfs_memory_percentage": round((zfs_memory / total) * 100, 1) if zfs_memory > 0 else 0,
+
+                "free_memory": format_bytes(free),
+                "free_memory_bytes": free,
+                "free_memory_percentage": round((free / total) * 100, 1),
             }
 
-            _LOGGER.debug("Memory stats calculated: %s", memory_stats)
+            _LOGGER.debug("Enhanced memory stats calculated with breakdown")
             return memory_stats
 
         except (asyncssh.Error, asyncio.TimeoutError, OSError, ValueError) as err:
             _LOGGER.error("Error getting memory usage: %s", err)
             return {"percentage": None}
+
+    async def _get_detailed_memory_breakdown(self, total_memory: int) -> Dict[str, Any]:
+        """Get detailed memory breakdown for VMs, Docker, and ZFS."""
+        breakdown = {
+            'vm_memory': 'N/A',
+            'vm_memory_bytes': 0,
+            'docker_memory': 'N/A',
+            'docker_memory_bytes': 0,
+            'zfs_memory': 'N/A',
+            'zfs_memory_bytes': 0
+        }
+
+        try:
+            # Get VM memory usage
+            vm_memory = await self._get_vm_memory_usage()
+            if vm_memory > 0:
+                breakdown['vm_memory'] = format_bytes(vm_memory)
+                breakdown['vm_memory_bytes'] = vm_memory
+                _LOGGER.debug("VM memory usage: %s", format_bytes(vm_memory))
+
+            # Get Docker memory usage
+            docker_memory = await self._get_docker_memory_usage()
+            if docker_memory > 0:
+                breakdown['docker_memory'] = format_bytes(docker_memory)
+                breakdown['docker_memory_bytes'] = docker_memory
+                _LOGGER.debug("Docker memory usage: %s", format_bytes(docker_memory))
+
+            # Get ZFS ARC memory usage
+            zfs_memory = await self._get_zfs_memory_usage()
+            if zfs_memory > 0:
+                breakdown['zfs_memory'] = format_bytes(zfs_memory)
+                breakdown['zfs_memory_bytes'] = zfs_memory
+                _LOGGER.debug("ZFS ARC memory usage: %s", format_bytes(zfs_memory))
+
+        except Exception as err:
+            _LOGGER.debug("Error getting detailed memory breakdown: %s", err)
+
+        return breakdown
+
+    async def _get_vm_memory_usage(self) -> int:
+        """Get total memory used by running VMs (RSS-based like Unraid GUI)."""
+        try:
+            # Check if libvirt is running
+            libvirt_check = await self.execute_command("pgrep -f libvirtd")
+            if libvirt_check.exit_status != 0:
+                _LOGGER.debug("Libvirt not running, no VM memory usage")
+                return 0
+
+            # Get actual RSS memory usage of QEMU processes (matches Unraid GUI method)
+            vm_memory_cmd = (
+                "ps aux | grep -E 'qemu.*-name' | grep -v grep | "
+                "awk '{sum += $6} END {print sum+0}'"
+            )
+
+            result = await self.execute_command(vm_memory_cmd)
+            if result.exit_status == 0 and result.stdout.strip():
+                # Convert from KB to bytes (ps aux shows RSS in KB)
+                vm_memory_kb = int(result.stdout.strip())
+                return vm_memory_kb * 1024
+
+        except Exception as err:
+            _LOGGER.debug("Error getting VM memory usage: %s", err)
+
+        return 0
+
+    async def _get_docker_memory_usage(self) -> int:
+        """Get total memory used by Docker containers."""
+        try:
+            # Check if Docker is running
+            docker_check = await self.execute_command("pgrep -f dockerd")
+            if docker_check.exit_status != 0:
+                _LOGGER.debug("Docker not running, no container memory usage")
+                return 0
+
+            # Get memory usage for all containers with improved parsing
+            docker_memory_cmd = (
+                "docker stats --no-stream --format '{{.MemUsage}}' 2>/dev/null | "
+                "awk -F'/' '{print $1}' | "
+                "while read mem; do "
+                "  if echo \"$mem\" | grep -q 'GiB'; then "
+                "    echo \"$mem\" | sed 's/GiB//' | awk '{print $1 * 1024}'; "
+                "  elif echo \"$mem\" | grep -q 'MiB'; then "
+                "    echo \"$mem\" | sed 's/MiB//' | awk '{print $1}'; "
+                "  elif echo \"$mem\" | grep -q 'KiB'; then "
+                "    echo \"$mem\" | sed 's/KiB//' | awk '{print $1 / 1024}'; "
+                "  else "
+                "    echo \"$mem\" | sed 's/[^0-9.]//g'; "
+                "  fi; "
+                "done | awk '{sum += $1} END {print sum+0}'"
+            )
+
+            result = await self.execute_command(docker_memory_cmd)
+            if result.exit_status == 0 and result.stdout.strip():
+                # Result is now in MiB, convert to bytes
+                memory_mib = float(result.stdout.strip())
+                return int(memory_mib * 1024 * 1024)  # Convert MiB to bytes
+
+        except Exception as err:
+            _LOGGER.debug("Error getting Docker memory usage: %s", err)
+
+        return 0
+
+    async def _get_zfs_memory_usage(self) -> int:
+        """Get ZFS ARC (cache) memory usage."""
+        try:
+            # Check if ZFS is available
+            zfs_check = await self.execute_command("command -v zfs")
+            if zfs_check.exit_status != 0:
+                _LOGGER.debug("ZFS not available, no ARC memory usage")
+                return 0
+
+            # Get ZFS ARC memory usage from /proc/spl/kstat/zfs/arcstats
+            arc_cmd = (
+                "if [ -f /proc/spl/kstat/zfs/arcstats ]; then "
+                "  awk '/^size/ {print $3}' /proc/spl/kstat/zfs/arcstats; "
+                "else "
+                "  echo '0'; "
+                "fi"
+            )
+
+            result = await self.execute_command(arc_cmd)
+            if result.exit_status == 0 and result.stdout.strip():
+                # ARC size is already in bytes
+                arc_size = int(result.stdout.strip())
+                return arc_size
+
+        except Exception as err:
+            _LOGGER.debug("Error getting ZFS ARC memory usage: %s", err)
+
+        return 0
 
     async def _get_boot_usage(self) -> Dict[str, Optional[float]]:
         """Fetch boot information from the Unraid system."""
@@ -1086,8 +1273,13 @@ class SystemOperationsMixin(CommandExecutor):
             "paste <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp); "
             "echo '===BOOT_USAGE==='; "
             "df -k /boot | awk 'NR==2 {print $2,$3,$4}'; "
-            "echo '===CACHE_USAGE==='; "
-            "mountpoint -q /mnt/cache && df -k /mnt/cache | awk 'NR==2 {print $2,$3,$4}' || echo 'not_mounted'; "
+            "echo '===CACHE_POOLS==='; "
+            "mount | grep -E '/mnt/' | grep -v -E '(fuse\\.shfs|/var/lib/docker|/etc/libvirt)' | grep -v -E '/mnt/(disk[0-9]+|user[0-9]*|disks|remotes|addons|rootshare)' | awk '{print $3,$1,$5}' | while read mount_point device fs_type; do "
+            "  pool_name=$(basename \"$mount_point\"); "
+            "  if [ -d \"$mount_point\" ] && mountpoint -q \"$mount_point\"; then "
+            "    df -k \"$mount_point\" | awk -v pool=\"$pool_name\" -v device=\"$device\" -v fs=\"$fs_type\" 'NR==2 {print pool \":\" $2 \":\" $3 \":\" $4 \":\" device \":\" fs}'; "
+            "  fi; "
+            "done; "
             "echo '===LOG_USAGE==='; "
             "df -k /var/log | awk 'NR==2 {print $2,$3,$4,$5}'; "
             "echo '===DOCKER_VDISK==='; "
@@ -1213,9 +1405,11 @@ class SystemOperationsMixin(CommandExecutor):
                     except (ValueError, TypeError) as err:
                         _LOGGER.debug("Could not parse CPU info from output: %s, error: %s", sections['CPU_INFO'], err)
 
-                # Parse memory info
+                # Parse memory info with enhanced breakdown
                 if 'MEMORY_INFO' in sections:
-                    system_stats['memory_usage'] = self._parse_memory_info(sections['MEMORY_INFO'])
+                    # Use the enhanced memory usage function instead of basic parsing
+                    _LOGGER.debug("Getting enhanced memory usage with detailed breakdown")
+                    system_stats['memory_usage'] = await self._get_memory_usage()
 
                 # Parse uptime
                 if 'UPTIME' in sections:
@@ -1259,10 +1453,56 @@ class SystemOperationsMixin(CommandExecutor):
                     except (ValueError, TypeError):
                         _LOGGER.debug("Could not parse boot usage from output: %s", sections['BOOT_USAGE'])
 
-                # Parse cache usage
-                if 'CACHE_USAGE' in sections:
-                    cache_output = sections['CACHE_USAGE'].strip()
-                    if cache_output == 'not_mounted':
+                # Parse cache pools
+                if 'CACHE_POOLS' in sections:
+                    cache_pools_output = sections['CACHE_POOLS'].strip()
+                    cache_pools = {}
+
+                    if cache_pools_output:
+                        for line in cache_pools_output.splitlines():
+                            line = line.strip()
+                            if not line:
+                                continue
+
+                            try:
+                                # Format: pool_name:total:used:free:device:filesystem
+                                parts = line.split(':')
+                                if len(parts) >= 6:
+                                    pool_name, total_str, used_str, free_str, device, filesystem = parts[:6]
+
+                                    total = int(total_str)
+                                    used = int(used_str)
+                                    free = int(free_str)
+                                    percentage = (used / total) * 100 if total > 0 else 0
+
+                                    cache_pools[pool_name] = {
+                                        "percentage": float(round(percentage, 2)),
+                                        "total": total * 1024,  # Convert to bytes
+                                        "used": used * 1024,    # Convert to bytes
+                                        "free": free * 1024,    # Convert to bytes
+                                        "status": "mounted",
+                                        "device": device,
+                                        "filesystem": filesystem
+                                    }
+
+                                    _LOGGER.debug("Detected cache pool '%s': %.1f%% used, %s filesystem",
+                                                pool_name, percentage, filesystem)
+
+                            except (ValueError, TypeError, IndexError) as err:
+                                _LOGGER.debug("Could not parse cache pool line '%s': %s", line, err)
+
+                    # Store all cache pools
+                    system_stats['cache_pools'] = cache_pools
+
+                    # For backward compatibility, also store primary cache as 'cache_usage'
+                    if 'cache' in cache_pools:
+                        system_stats['cache_usage'] = cache_pools['cache']
+                    elif cache_pools:
+                        # If no 'cache' pool, use the first one found for backward compatibility
+                        first_pool = next(iter(cache_pools.values()))
+                        system_stats['cache_usage'] = first_pool
+                    else:
+                        # No cache pools found
                         system_stats['cache_usage'] = {
                             "percentage": 0,
                             "total": 0,
@@ -1270,19 +1510,6 @@ class SystemOperationsMixin(CommandExecutor):
                             "free": 0,
                             "status": "not_mounted"
                         }
-                    else:
-                        try:
-                            total, used, free = map(int, cache_output.split())
-                            percentage = (used / total) * 100 if total > 0 else 0
-                            system_stats['cache_usage'] = {
-                                "percentage": float(round(percentage, 2)),
-                                "total": total * 1024,  # Convert to bytes
-                                "used": used * 1024,    # Convert to bytes
-                                "free": free * 1024,    # Convert to bytes
-                                "status": "mounted"
-                            }
-                        except (ValueError, TypeError):
-                            _LOGGER.debug("Could not parse cache usage from output: %s", cache_output)
 
                 # Parse log filesystem usage
                 if 'LOG_USAGE' in sections and sections['LOG_USAGE'].strip():

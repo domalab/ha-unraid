@@ -150,8 +150,14 @@ class SmartDataManager:
                         _LOGGER.error("Invalid disk number in %s", device)
                         return {"state": "error", "error": "Invalid device name", "temperature": None}
                 else:
-                    _LOGGER.error("Unrecognized device format: %s", device)
-                    return {"state": "error", "error": "Invalid device name", "temperature": None}
+                    # Check if this is a ZFS pool name
+                    zfs_device = await self._resolve_zfs_pool_device(device)
+                    if zfs_device:
+                        device_path = zfs_device
+                        _LOGGER.debug("Resolved ZFS pool '%s' to device '%s'", device, device_path)
+                    else:
+                        _LOGGER.error("Unrecognized device format: %s", device)
+                        return {"state": "error", "error": "Invalid device name", "temperature": None}
 
             # Strip partition numbers from device path for SMART data collection
             # For example, convert /dev/nvme0n1p1 to /dev/nvme0n1
@@ -563,3 +569,34 @@ class SmartDataManager:
         """Clear USB detection cache (useful for testing or troubleshooting)."""
         self._usb_detector.clear_cache()
         _LOGGER.info("USB detection cache cleared")
+
+    async def _resolve_zfs_pool_device(self, pool_name: str) -> Optional[str]:
+        """Resolve ZFS pool name to underlying physical device path."""
+        try:
+            # Check if this is a ZFS pool
+            zpool_cmd = f"zpool list -H -o name {pool_name} 2>/dev/null"
+            result = await self._instance.execute_command(zpool_cmd)
+
+            if result.exit_status != 0 or not result.stdout.strip():
+                # Not a ZFS pool
+                return None
+
+            # Get the underlying devices for this ZFS pool
+            devices_cmd = f"zpool list -v -H {pool_name} | grep -E '^\\s+\\w+' | awk '{{print $1}}' | head -1"
+            devices_result = await self._instance.execute_command(devices_cmd)
+
+            if devices_result.exit_status == 0 and devices_result.stdout.strip():
+                device = devices_result.stdout.strip()
+                # Ensure device path starts with /dev/
+                if not device.startswith('/dev/'):
+                    device = f"/dev/{device}"
+
+                _LOGGER.debug("ZFS pool '%s' resolved to device '%s'", pool_name, device)
+                return device
+
+            _LOGGER.warning("Could not resolve ZFS pool '%s' to physical device", pool_name)
+            return None
+
+        except Exception as err:
+            _LOGGER.debug("Error resolving ZFS pool '%s': %s", pool_name, err)
+            return None
