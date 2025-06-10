@@ -87,12 +87,13 @@ def register_network_sensors() -> None:
 def register_ups_sensors() -> None:
     """Register UPS sensors with the factory.
 
-    Only registers the UPS Server Power sensor for Energy Dashboard.
+    Registers both UPS Server Power and Energy sensors for Energy Dashboard.
     """
-    from .ups import UnraidUPSServerPowerSensor
+    from .ups import UnraidUPSServerPowerSensor, UnraidUPSServerEnergySensor
 
-    # Register only the server power sensor type
+    # Register both power and energy sensor types
     SensorFactory.register_sensor_type("ups_server_power", UnraidUPSServerPowerSensor)
+    SensorFactory.register_sensor_type("ups_server_energy", UnraidUPSServerEnergySensor)
 
     # Register creator functions
     SensorFactory.register_sensor_creator(
@@ -322,9 +323,9 @@ def create_network_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> 
 def create_ups_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> List[Entity]:
     """Create UPS sensors.
 
-    Only creates the UPS Server Power sensor for Energy Dashboard if NOMPOWER is available.
+    Creates both UPS Server Power and Energy sensors for Energy Dashboard if NOMPOWER is available.
     """
-    from .ups import UnraidUPSServerPowerSensor
+    from .ups import UnraidUPSServerPowerSensor, UnraidUPSServerEnergySensor
 
     entities = []
     _LOGGER.debug("Starting UPS sensors creation function")
@@ -349,16 +350,20 @@ def create_ups_sensors(coordinator: UnraidDataUpdateCoordinator, _: Any) -> List
 
         if ups_info and "NOMPOWER" in ups_info:
             _LOGGER.info(
-                "Creating UPS Server Power sensor for Energy Dashboard. "
+                "Creating UPS Server Power and Energy sensors for Energy Dashboard. "
                 "NOMPOWER: %sW",
                 ups_info.get("NOMPOWER")
             )
+            # Add power sensor (instantaneous power consumption)
             entities.append(UnraidUPSServerPowerSensor(coordinator))
             _LOGGER.debug("UPS Server Power sensor created successfully")
+            # Add energy sensor (cumulative energy consumption)
+            entities.append(UnraidUPSServerEnergySensor(coordinator))
+            _LOGGER.debug("UPS Server Energy sensor created successfully")
         else:
             _LOGGER.warning(
                 "NOMPOWER attribute not available in UPS data, "
-                "skipping UPS Server Power sensor"
+                "skipping UPS Server sensors"
             )
     else:
         _LOGGER.debug("UPS not enabled in configuration, skipping UPS sensors")

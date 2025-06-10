@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfPower
+from homeassistant.const import UnitOfPower, UnitOfEnergy
 import homeassistant.util.dt as dt_util
 
 from .base import UnraidSensorBase, ValueValidationMixin
@@ -198,10 +198,91 @@ class UnraidUPSServerPowerSensor(UnraidSensorBase, UPSMetricsMixin):
             _LOGGER.debug("Error getting server power attributes: %s", err)
             return {}
 
+class UnraidUPSServerEnergySensor(UnraidSensorBase, UPSMetricsMixin):
+    """UPS server energy consumption sensor for Energy Dashboard."""
+
+    def __init__(self, coordinator) -> None:
+        """Initialize the sensor."""
+        description = UnraidSensorEntityDescription(
+            key="ups_server_energy",
+            name="UPS Server Energy",
+            native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            device_class=SensorDeviceClass.ENERGY,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            icon="mdi:lightning-bolt",
+            suggested_display_precision=3,
+            value_fn=self._get_server_energy_usage,
+        )
+        super().__init__(coordinator, description)
+        UPSMetricsMixin.__init__(self)
+        self._last_power: float | None = None
+        self._last_update: dt_util.datetime | None = None
+        self._total_energy: float = 0.0
+
+    def _get_server_energy_usage(self, data: dict) -> float | None:
+        """Get cumulative server energy usage from UPS."""
+        try:
+            ups_info = data.get("system_stats", {}).get("ups_info", {})
+            nominal_power = self._validate_ups_metric(
+                "NOMPOWER",
+                ups_info.get("NOMPOWER")
+            )
+            load_percent = self._validate_ups_metric(
+                "LOADPCT",
+                ups_info.get("LOADPCT")
+            )
+
+            current_power = self._calculate_power(nominal_power, load_percent)
+            current_time = dt_util.now()
+
+            if current_power is not None and self._last_power is not None and self._last_update is not None:
+                # Calculate time difference in hours
+                time_diff = (current_time - self._last_update).total_seconds() / 3600.0
+
+                # Calculate average power during this period
+                avg_power = (current_power + self._last_power) / 2.0
+
+                # Calculate energy consumed (kWh)
+                energy_consumed = (avg_power * time_diff) / 1000.0  # Convert W*h to kWh
+
+                # Add to total energy
+                self._total_energy += energy_consumed
+
+            # Update tracking variables
+            self._last_power = current_power
+            self._last_update = current_time
+
+            return round(self._total_energy, 3) if self._total_energy > 0 else 0.0
+
+        except (KeyError, TypeError) as err:
+            _LOGGER.debug("Error getting server energy usage: %s", err)
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        try:
+            ups_info = self.coordinator.data.get("system_stats", {}).get("ups_info", {})
+
+            attrs = {
+                "ups_model": ups_info.get("MODEL", "Unknown"),
+                "rated_power": f"{ups_info.get('NOMPOWER', '0')}W",
+                "current_power": f"{self._last_power or 0}W",
+                "last_updated": dt_util.now().isoformat(),
+                "energy_dashboard_ready": True,
+                "measurement_type": "cumulative_energy",
+            }
+
+            return attrs
+
+        except (KeyError, TypeError) as err:
+            _LOGGER.debug("Error getting server energy attributes: %s", err)
+            return {}
+
 class UnraidUPSSensors:
     """Helper class to create UPS sensors.
 
-    Only creates the UPS Server Power sensor for Energy Dashboard if NOMPOWER is available.
+    Creates both UPS Server Power and Energy sensors for Energy Dashboard if NOMPOWER is available.
     """
 
     def __init__(self, coordinator) -> None:
@@ -215,15 +296,18 @@ class UnraidUPSSensors:
 
             if ups_info and "NOMPOWER" in ups_info:
                 _LOGGER.info(
-                    "Creating UPS Server Power sensor for Energy Dashboard. "
+                    "Creating UPS Server Power and Energy sensors for Energy Dashboard. "
                     "NOMPOWER: %sW",
                     ups_info.get("NOMPOWER")
                 )
+                # Add power sensor (instantaneous power consumption)
                 self.entities.append(UnraidUPSServerPowerSensor(coordinator))
+                # Add energy sensor (cumulative energy consumption)
+                self.entities.append(UnraidUPSServerEnergySensor(coordinator))
             else:
                 _LOGGER.warning(
                     "NOMPOWER attribute not available in UPS data, "
-                    "skipping UPS Server Power sensor"
+                    "skipping UPS Server sensors"
                 )
 
 
