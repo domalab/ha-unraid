@@ -20,7 +20,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Unraid sensor based on a config entry."""
-    coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: UnraidDataUpdateCoordinator = entry.runtime_data
 
     try:
         # Register all sensor types

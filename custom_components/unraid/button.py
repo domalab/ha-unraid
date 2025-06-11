@@ -114,7 +114,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Unraid button based on a config entry."""
-    coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: UnraidDataUpdateCoordinator = entry.runtime_data
 
     _LOGGER.debug("Setting up Unraid buttons for %s", coordinator.hostname)
 

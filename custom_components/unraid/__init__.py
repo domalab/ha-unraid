@@ -42,8 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     log_manager = LogManager()
     log_manager.configure()
 
-    # Set up data structures
-    hass.data.setdefault(DOMAIN, {})
+    # Using modern runtime_data approach - no need for hass.data setup
 
     try:
         # Extract configuration
@@ -70,8 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Get initial data
         await coordinator.async_config_entry_first_refresh()
 
-        # Store coordinator in hass.data
-        hass.data[DOMAIN][entry.entry_id] = coordinator
+        # Store coordinator using modern runtime_data approach
+        entry.runtime_data = coordinator
 
         # Set up platforms
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -93,11 +92,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    # Clean up coordinator
-    if unload_ok and entry.entry_id in hass.data[DOMAIN]:
-        coordinator = hass.data[DOMAIN][entry.entry_id]
+    # Clean up coordinator using modern runtime_data approach
+    if unload_ok and hasattr(entry, 'runtime_data') and entry.runtime_data:
+        coordinator = entry.runtime_data
         await coordinator.async_stop()
-        hass.data[DOMAIN].pop(entry.entry_id)
+        entry.runtime_data = None
 
     return unload_ok
 

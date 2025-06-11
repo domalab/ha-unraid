@@ -19,6 +19,21 @@ from .coordinator import UnraidDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+def get_coordinator_from_entry_id(hass: HomeAssistant, entry_id: str) -> UnraidDataUpdateCoordinator:
+    """Get coordinator from entry_id using modern runtime_data approach."""
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.entry_id == entry_id and hasattr(entry, 'runtime_data') and entry.runtime_data:
+            return entry.runtime_data
+    raise ValueError(f"No Unraid instance found with config entry ID: {entry_id}")
+
+def get_all_coordinators(hass: HomeAssistant) -> list[UnraidDataUpdateCoordinator]:
+    """Get all coordinators using modern runtime_data approach."""
+    coordinators = []
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if hasattr(entry, 'runtime_data') and entry.runtime_data:
+            coordinators.append(entry.runtime_data)
+    return coordinators
+
 SERVICE_FORCE_UPDATE = "force_update"
 SERVICE_EXECUTE_COMMAND = "execute_command"
 SERVICE_EXECUTE_IN_CONTAINER = "execute_in_container"
@@ -159,13 +174,10 @@ async def handle_force_update(hass: HomeAssistant, call: ServiceCall) -> None:
     config_entry_id = call.data.get("config_entry")
 
     if config_entry_id:
-        coordinator = hass.data[DOMAIN].get(config_entry_id)
-        if coordinator:
-            await coordinator.async_request_refresh()
-        else:
-            raise ValueError(f"No Unraid instance found with config entry ID: {config_entry_id}")
+        coordinator = get_coordinator_from_entry_id(hass, config_entry_id)
+        await coordinator.async_request_refresh()
     else:
-        for coordinator in hass.data[DOMAIN].values():
+        for coordinator in get_all_coordinators(hass):
             await coordinator.async_request_refresh()
 
 async def execute_command(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
@@ -174,7 +186,7 @@ async def execute_command(hass: HomeAssistant, call: ServiceCall) -> dict[str, A
     command = call.data["command"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.execute_command(command)
@@ -213,7 +225,7 @@ async def execute_in_container(hass: HomeAssistant, call: ServiceCall) -> dict[s
     detached = call.data["detached"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.execute_in_container(container, command, detached)
@@ -254,7 +266,7 @@ async def execute_user_script(hass: HomeAssistant, call: ServiceCall) -> dict[st
     background = call.data["background"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.execute_user_script(script_name, background)
@@ -289,7 +301,7 @@ async def stop_user_script(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
     script_name = call.data["script_name"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.stop_user_script(script_name)
@@ -321,7 +333,7 @@ async def system_reboot(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
     delay = call.data["delay"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.system_reboot(delay=delay)
@@ -352,7 +364,7 @@ async def system_shutdown(hass: HomeAssistant, call: ServiceCall) -> dict[str, A
     delay = call.data["delay"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.system_shutdown(delay=delay)
@@ -384,7 +396,7 @@ async def get_optimization_stats(hass: HomeAssistant, call: ServiceCall) -> dict
     entry_id = call.data["entry_id"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
 
         # Get cache and sensor stats
         cache_stats = coordinator.get_cache_stats()
@@ -409,7 +421,7 @@ async def clear_cache(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     prefix = call.data.get("prefix", "")
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
 
         if prefix:
             # Clear cache items with the given prefix
@@ -442,7 +454,7 @@ async def force_sensor_update(hass: HomeAssistant, call: ServiceCall) -> dict[st
     sensor_id = call.data["sensor_id"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
 
         # Request update for the specific sensor
         coordinator.request_sensor_update(sensor_id)
@@ -471,7 +483,7 @@ async def docker_pause(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]
     container = call.data["container"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.pause_container(container)
@@ -503,7 +515,7 @@ async def docker_resume(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
     container = call.data["container"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.resume_container(container)
@@ -535,7 +547,7 @@ async def docker_restart(hass: HomeAssistant, call: ServiceCall) -> dict[str, An
     container = call.data["container"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.restart_container(container)
@@ -568,7 +580,7 @@ async def vm_pause(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     vm = call.data["vm"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.pause_vm(vm)
@@ -600,7 +612,7 @@ async def vm_resume(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     vm = call.data["vm"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.resume_vm(vm)
@@ -632,7 +644,7 @@ async def vm_restart(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     vm = call.data["vm"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.restart_vm(vm)
@@ -664,7 +676,7 @@ async def vm_hibernate(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]
     vm = call.data["vm"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.hibernate_vm(vm)
@@ -696,7 +708,7 @@ async def vm_force_stop(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
     vm = call.data["vm"]
 
     try:
-        coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry_id]
+        coordinator: UnraidDataUpdateCoordinator = get_coordinator_from_entry_id(hass, entry_id)
         start_time = datetime.now()
 
         result = await coordinator.api.force_stop_vm(vm)

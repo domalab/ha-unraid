@@ -1,0 +1,216 @@
+# Integration Quality Scale Assessment for Unraid Integration
+# Based on Home Assistant Integration Quality Scale requirements
+# https://developers.home-assistant.io/docs/core/integration-quality-scale/
+
+rules:
+  # 🥉 BRONZE TIER REQUIREMENTS
+  action-setup:
+    status: done
+    comment: Services are properly registered in async_setup via services.py module
+
+  appropriate-polling:
+    status: done
+    comment: Configurable polling intervals (1-60 min general, 5min-24h disk) with intelligent caching
+
+  brands:
+    status: exempt
+    comment: No specific branding assets required for Unraid server integration
+
+  common-modules:
+    status: done
+    comment: Well-organized API modules, diagnostics, sensors, and utilities in separate packages
+
+  config-flow-test-coverage:
+    status: not_done
+    comment: Config flow exists but lacks comprehensive automated test coverage
+
+  config-flow:
+    status: done
+    comment: Full UI-based setup with validation, options flow, and reauth flow implemented
+
+  dependency-transparency:
+    status: done
+    comment: Clear requirements in manifest.json (aiofiles>=23.2.1, asyncssh)
+
+  docs-actions:
+    status: not_done
+    comment: Documentation site not accessible, service descriptions exist in strings.json
+
+  docs-high-level-description:
+    status: not_done
+    comment: Documentation site (https://domalab.github.io/ha-unraid/) not accessible
+
+  docs-installation-instructions:
+    status: not_done
+    comment: Documentation site not accessible for step-by-step instructions
+
+  docs-removal-instructions:
+    status: not_done
+    comment: Documentation site not accessible for removal instructions
+
+  entity-event-setup:
+    status: done
+    comment: Entities properly subscribe to coordinator updates in lifecycle methods
+
+  entity-unique-id:
+    status: done
+    comment: All entities implement unique IDs using domain_device_entity pattern
+
+  has-entity-name:
+    status: done
+    comment: Entities use has_entity_name = True with proper naming conventions
+
+  runtime-data:
+    status: not_done
+    comment: Uses hass.data[DOMAIN] instead of ConfigEntry.runtime_data
+
+  test-before-configure:
+    status: done
+    comment: Config flow validates connection with UnraidAPI.ping() before setup
+
+  test-before-setup:
+    status: done
+    comment: Integration tests connection during async_setup_entry with proper error handling
+
+  unique-config-entry:
+    status: done
+    comment: Uses hostname as unique_id to prevent duplicate entries
+
+  # 🥈 SILVER TIER REQUIREMENTS
+  action-exceptions:
+    status: done
+    comment: Services raise appropriate exceptions with error handling decorators
+
+  config-entry-unloading:
+    status: done
+    comment: Proper unloading implemented in async_unload_entry with coordinator cleanup
+
+  docs-configuration-parameters:
+    status: not_done
+    comment: Documentation site not accessible for configuration parameter descriptions
+
+  docs-installation-parameters:
+    status: not_done
+    comment: Documentation site not accessible for installation parameter descriptions
+
+  entity-unavailable:
+    status: done
+    comment: Entities marked unavailable when coordinator data is None or connection fails
+
+  integration-owner:
+    status: done
+    comment: Active codeowner @domalab listed in manifest.json
+
+  log-when-unavailable:
+    status: done
+    comment: Proper logging for connection issues with rate limiting to avoid spam
+
+  parallel-updates:
+    status: done
+    comment: Coordinator implements proper update coordination with configurable intervals
+
+  reauthentication-flow:
+    status: done
+    comment: Reauth flow implemented in config_flow.py for credential updates
+
+  test-coverage:
+    status: not_done
+    comment: No automated test files found, lacks 95% test coverage requirement
+
+  # 🥇 GOLD TIER REQUIREMENTS
+  devices:
+    status: done
+    comment: Creates device entries for Unraid server with proper device info
+
+  diagnostics:
+    status: done
+    comment: Comprehensive diagnostics implementation with system health checks
+
+  discovery-update-info:
+    status: exempt
+    comment: Local polling integration, discovery not applicable for SSH-based connections
+
+  discovery:
+    status: exempt
+    comment: Unraid servers require manual configuration (SSH credentials)
+
+  docs-data-update:
+    status: not_done
+    comment: Documentation site not accessible for data update descriptions
+
+  docs-examples:
+    status: not_done
+    comment: Documentation site not accessible for automation examples
+
+  docs-known-limitations:
+    status: not_done
+    comment: Documentation site not accessible for known limitations
+
+  docs-supported-devices:
+    status: not_done
+    comment: Documentation site not accessible for supported device information
+
+  docs-supported-functions:
+    status: not_done
+    comment: Documentation site not accessible for supported functionality descriptions
+
+  docs-troubleshooting:
+    status: not_done
+    comment: Documentation site not accessible for troubleshooting information
+
+  docs-use-cases:
+    status: not_done
+    comment: Documentation site not accessible for use case descriptions
+
+  dynamic-devices:
+    status: done
+    comment: Supports dynamic Docker containers, VMs, and disk detection
+
+  entity-category:
+    status: done
+    comment: Entities properly categorized (diagnostic, config) where appropriate
+
+  entity-device-class:
+    status: done
+    comment: Sensors use appropriate device classes (temperature, data_size, power, etc.)
+
+  entity-disabled-by-default:
+    status: done
+    comment: Less common entities disabled by default with entity registry
+
+  entity-translations:
+    status: partial
+    comment: Basic translations in strings.json, but not comprehensive
+
+  exception-translations:
+    status: not_done
+    comment: Exception messages not fully translatable
+
+  icon-translations:
+    status: not_done
+    comment: Icons not translatable
+
+  reconfiguration-flow:
+    status: done
+    comment: Options flow allows reconfiguration of polling intervals and UPS settings
+
+  repair-issues:
+    status: done
+    comment: Comprehensive repair flows for connection, disk health, and array issues
+
+  stale-devices:
+    status: done
+    comment: Migration system cleans up duplicate entities and stale devices
+
+  # 🏆 PLATINUM TIER REQUIREMENTS
+  async-dependency:
+    status: done
+    comment: Uses asyncssh for async SSH connections
+
+  inject-websession:
+    status: exempt
+    comment: SSH-based integration doesn't use HTTP websessions
+
+  strict-typing:
+    status: partial
+    comment: Type hints present but not comprehensive, py.typed file exists

@@ -57,7 +57,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Unraid binary sensors."""
-    coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: UnraidDataUpdateCoordinator = entry.runtime_data
     entities: list[UnraidBinarySensorBase] = []
     processed_disks = set()  # Track processed disks
 

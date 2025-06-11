@@ -8,11 +8,11 @@
   "homekit": {},
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/domalab/ha-unraid/issues",
-  "quality_scale": "platinum",
+  "quality_scale": "silver",
   "requirements": [
     "aiofiles>=23.2.1"
   ],
   "ssdp": [],
-  "version": "2025.06.11",
+  "version": "2025.06.12",
   "zeroconf": []
 }
