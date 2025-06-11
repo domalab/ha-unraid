@@ -218,10 +218,16 @@ class UnraidUPSServerEnergySensor(UnraidSensorBase, UPSMetricsMixin):
         self._last_power: float | None = None
         self._last_update: dt_util.datetime | None = None
         self._total_energy: float = 0.0
+        self._initialized: bool = False
 
     def _get_server_energy_usage(self, data: dict) -> float | None:
         """Get cumulative server energy usage from UPS."""
         try:
+            # Initialize from previous state if not done yet
+            if not self._initialized:
+                self._restore_state()
+                self._initialized = True
+
             ups_info = data.get("system_stats", {}).get("ups_info", {})
             nominal_power = self._validate_ups_metric(
                 "NOMPOWER",
@@ -235,22 +241,58 @@ class UnraidUPSServerEnergySensor(UnraidSensorBase, UPSMetricsMixin):
             current_power = self._calculate_power(nominal_power, load_percent)
             current_time = dt_util.now()
 
-            if current_power is not None and self._last_power is not None and self._last_update is not None:
-                # Calculate time difference in hours
-                time_diff = (current_time - self._last_update).total_seconds() / 3600.0
+            # Only calculate energy if we have valid current power
+            if current_power is not None:
+                # If we have previous data, calculate energy consumed since last update
+                if self._last_power is not None and self._last_update is not None:
+                    # Calculate time difference in hours
+                    time_diff = (current_time - self._last_update).total_seconds() / 3600.0
 
-                # Calculate average power during this period
-                avg_power = (current_power + self._last_power) / 2.0
+                    # Only calculate if time difference is reasonable (minimum 10 seconds, maximum 2 hours)
+                    if 0.0028 <= time_diff <= 2.0:  # 10 seconds to 2 hours
+                        # Calculate average power during this period
+                        avg_power = (current_power + self._last_power) / 2.0
 
-                # Calculate energy consumed (kWh)
-                energy_consumed = (avg_power * time_diff) / 1000.0  # Convert W*h to kWh
+                        # Calculate energy consumed (kWh)
+                        energy_consumed = (avg_power * time_diff) / 1000.0  # Convert W*h to kWh
 
-                # Add to total energy
-                self._total_energy += energy_consumed
+                        # Add to total energy
+                        self._total_energy += energy_consumed
 
-            # Update tracking variables
-            self._last_power = current_power
-            self._last_update = current_time
+                        _LOGGER.debug(
+                            "UPS energy calculation: avg_power=%.2fW, time_diff=%.4fh, "
+                            "energy_consumed=%.6fkWh, total_energy=%.6fkWh",
+                            avg_power, time_diff, energy_consumed, self._total_energy
+                        )
+                    elif time_diff > 0:
+                        # For very small time differences, still accumulate but with minimal energy
+                        if time_diff < 0.0028:  # Less than 10 seconds
+                            # Use minimum time difference to avoid division by zero but still accumulate
+                            min_time_diff = 0.0028  # 10 seconds
+                            avg_power = (current_power + self._last_power) / 2.0
+                            energy_consumed = (avg_power * min_time_diff) / 1000.0
+                            self._total_energy += energy_consumed
+
+                            _LOGGER.debug(
+                                "UPS energy calculation (short interval): avg_power=%.2fW, "
+                                "actual_time_diff=%.6fh, used_time_diff=%.4fh, "
+                                "energy_consumed=%.6fkWh, total_energy=%.6fkWh",
+                                avg_power, time_diff, min_time_diff, energy_consumed, self._total_energy
+                            )
+                        else:
+                            _LOGGER.debug(
+                                "UPS energy: skipping calculation due to unusual time difference: %.4fh",
+                                time_diff
+                            )
+                    else:
+                        _LOGGER.debug(
+                            "UPS energy: skipping calculation due to negative time difference: %.6fh",
+                            time_diff
+                        )
+
+                # Update tracking variables
+                self._last_power = current_power
+                self._last_update = current_time
 
             return round(self._total_energy, 3) if self._total_energy > 0 else 0.0
 
@@ -258,20 +300,63 @@ class UnraidUPSServerEnergySensor(UnraidSensorBase, UPSMetricsMixin):
             _LOGGER.debug("Error getting server energy usage: %s", err)
             return None
 
+    def _restore_state(self) -> None:
+        """Restore previous energy state from Home Assistant registry."""
+        try:
+            if self.hass and hasattr(self.hass.states, 'get'):
+                previous_state = self.hass.states.get(self.entity_id)
+                if previous_state and previous_state.state not in ('unknown', 'unavailable'):
+                    try:
+                        self._total_energy = float(previous_state.state)
+                        _LOGGER.debug(
+                            "UPS energy sensor restored previous state: %.3f kWh",
+                            self._total_energy
+                        )
+                    except (ValueError, TypeError):
+                        _LOGGER.debug("Could not restore UPS energy state, starting from 0")
+                        self._total_energy = 0.0
+                else:
+                    _LOGGER.debug("No previous UPS energy state found, starting from 0")
+                    self._total_energy = 0.0
+        except Exception as err:
+            _LOGGER.debug("Error restoring UPS energy state: %s", err)
+            self._total_energy = 0.0
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         try:
             ups_info = self.coordinator.data.get("system_stats", {}).get("ups_info", {})
 
+            # Base attributes with proper capitalization
             attrs = {
-                "ups_model": ups_info.get("MODEL", "Unknown"),
-                "rated_power": f"{ups_info.get('NOMPOWER', '0')}W",
-                "current_power": f"{self._last_power or 0}W",
-                "last_updated": dt_util.now().isoformat(),
-                "energy_dashboard_ready": True,
-                "measurement_type": "cumulative_energy",
+                "UPS Model": ups_info.get("MODEL", "Unknown"),
+                "Rated Power": f"{ups_info.get('NOMPOWER', '0')}W",
+                "Current Power": f"{self._last_power or 0:.1f}W",
+                "Last Updated": dt_util.now().isoformat(),
+                "Energy Dashboard Ready": True,
             }
+
+            # Add useful UPS status information
+            load_pct = ups_info.get("LOADPCT")
+            if load_pct:
+                attrs["Load"] = f"{load_pct}%"
+
+            battery_charge = ups_info.get("BCHARGE")
+            if battery_charge:
+                attrs["Battery"] = f"{battery_charge}%"
+
+            runtime = ups_info.get("TIMELEFT")
+            if runtime:
+                attrs["Runtime"] = f"{runtime} minutes"
+
+            status = ups_info.get("STATUS")
+            if status:
+                attrs["Status"] = status
+
+            line_voltage = ups_info.get("LINEV")
+            if line_voltage:
+                attrs["Line Voltage"] = f"{line_voltage}V"
 
             return attrs
 
