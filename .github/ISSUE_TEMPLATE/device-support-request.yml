@@ -1,0 +1,218 @@
+name: 🆘 Support & Setup Help
+description: Get help with Unraid Integration setup, configuration, or troubleshooting
+title: "[Support] "
+labels: ["question", "help wanted"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🆘 Support & Setup Help
+
+        Need help with the Unraid Integration? This template is for **setup assistance, configuration questions, and general troubleshooting**.
+
+        ## 📋 When to use this template:
+        - ✅ You need help setting up the integration for the first time
+        - ✅ You're having trouble connecting to your Unraid server
+        - ✅ You need clarification on configuration options
+        - ✅ You want to understand how certain features work
+        - ✅ You've followed troubleshooting guides but still need help
+
+        ## ❌ When NOT to use this template:
+        - 🚫 **Bug reports**: Something was working but now it's broken → Use "Bug Report" template
+        - 🚫 **Feature requests**: Want new functionality → Use "Feature Request" template
+
+        ## 📚 Before You Continue
+
+        Please check these resources first:
+        - 📖 [Documentation](https://domalab.github.io/ha-unraid/) - Comprehensive setup and usage guide
+        - 🔧 [Troubleshooting Guide](https://domalab.github.io/ha-unraid/user-guide/troubleshooting/) - Common issues and solutions
+        - 💬 [Community Forum](https://community.home-assistant.io/t/unraid-integration) - Community discussions and help
+
+  - type: dropdown
+    id: support_category
+    attributes:
+      label: 🏷️ Support Category
+      description: "What type of help do you need?"
+      options:
+        - "Initial setup and configuration"
+        - "Connection issues (can't connect to Unraid)"
+        - "Authentication problems (SSH/credentials)"
+        - "Missing entities or sensors"
+        - "Understanding integration features"
+        - "Performance or reliability issues"
+        - "Configuration options questions"
+        - "General usage questions"
+        - "Other"
+    validations:
+      required: true
+
+  - type: input
+    id: unraid_version
+    attributes:
+      label: 🖥️ Unraid Version
+      description: "Your Unraid server version"
+      placeholder: "6.12.6"
+    validations:
+      required: true
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: 🏠 Home Assistant Version
+      description: "Your Home Assistant version"
+      placeholder: "2025.6.0"
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: 📦 Integration Version
+      description: "Version of the Unraid Integration (check in HACS or manifest.json)"
+      placeholder: "2025.06.05"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem_description
+    attributes:
+      label: 📝 Problem Description
+      description: "Describe the issue you're experiencing or what you need help with"
+      placeholder: |
+        **What are you trying to do:**
+        I'm trying to set up the Unraid integration but getting connection errors.
+
+        **What's happening:**
+        When I try to configure the integration, I get "Failed to connect" error.
+
+        **What you've tried:**
+        - Checked IP address and credentials
+        - Verified SSH is enabled on Unraid
+        - Restarted Home Assistant
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: network_setup
+    attributes:
+      label: 🌐 Network Setup
+      description: "Information about your network configuration"
+      placeholder: |
+        - Unraid server IP: 192.168.1.100
+        - Home Assistant IP: 192.168.1.50
+        - Same subnet: Yes/No
+        - VLANs or firewalls: None/Details
+        - SSH port (if not 22): 22
+        - Can you SSH manually from HA to Unraid: Yes/No/Unknown
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: error_messages
+    attributes:
+      label: ⚠️ Error Messages
+      description: "Any error messages from Home Assistant logs or during setup"
+      placeholder: |
+        **Setup errors:**
+        "Failed to connect to Unraid server"
+
+        **Home Assistant logs:**
+        ```
+        2025-06-11 10:30:00 ERROR (MainThread) [custom_components.unraid] ...
+        ```
+
+        **SSH test results:**
+        If you can test SSH manually: ssh root@192.168.1.100
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: troubleshooting_steps
+    attributes:
+      label: 🔧 Troubleshooting Steps Completed
+      description: "Please confirm what you've already tried"
+      options:
+        - label: "I have read the [documentation](https://domalab.github.io/ha-unraid/)"
+          required: true
+        - label: "I have checked the [troubleshooting guide](https://domalab.github.io/ha-unraid/user-guide/troubleshooting/)"
+          required: true
+        - label: "I have verified SSH is enabled on my Unraid server"
+          required: false
+        - label: "I have confirmed my credentials are correct"
+          required: false
+        - label: "I have tried restarting Home Assistant"
+          required: false
+
+  - type: textarea
+    id: configuration_details
+    attributes:
+      label: ⚙️ Configuration Details
+      description: "Details about your current configuration attempt"
+      placeholder: |
+        **Integration configuration:**
+        - Host/IP: 192.168.1.100
+        - Username: root
+        - SSH Port: 22
+        - Update intervals: Default
+
+        **Unraid settings:**
+        - SSH enabled: Yes/No
+        - SSH port: 22 (or custom)
+        - Any security settings or restrictions
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: 📝 Additional Information
+      description: "Any other relevant information about your setup"
+      placeholder: |
+        - Home Assistant installation type (HAOS, Docker, etc.)
+        - Network setup details (VLANs, firewalls, etc.)
+        - Previous attempts or workarounds tried
+        - Specific entities or features you're having trouble with
+        - Screenshots of error messages (if applicable)
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: help_preference
+    attributes:
+      label: 🤝 How Can We Help?
+      description: "What type of assistance would be most helpful?"
+      options:
+        - label: "I need step-by-step setup guidance"
+        - label: "I need help troubleshooting a specific error"
+        - label: "I need clarification on how features work"
+        - label: "I'm willing to provide additional debugging information"
+        - label: "I'm available for real-time troubleshooting if needed"
+
+  - type: markdown
+    attributes:
+      value: |
+        ## 📚 Helpful Resources
+
+        - **📖 Documentation**: [Unraid Integration Docs](https://domalab.github.io/ha-unraid/)
+        - **🔧 Troubleshooting**: [Troubleshooting Guide](https://domalab.github.io/ha-unraid/user-guide/troubleshooting/)
+        - **💬 Community**: [Home Assistant Community Forum](https://community.home-assistant.io/t/unraid-integration)
+        - **📋 Examples**: [Usage Examples](https://domalab.github.io/ha-unraid/advanced/examples/)
+
+        ## ⏱️ What Happens Next?
+
+        1. **Review**: We'll review your setup and issue details
+        2. **Guidance**: We'll provide specific troubleshooting steps or configuration help
+        3. **Follow-up**: We may ask for additional information or logs
+        4. **Resolution**: We'll work with you to resolve the issue
+        5. **Documentation**: If needed, we'll update docs to help others with similar issues
+
+        **Note**: For complex setup issues, we may suggest using the [Community Forum](https://community.home-assistant.io/t/unraid-integration) where more users can help.
+
+        Thank you for using the Unraid Integration! 🙏

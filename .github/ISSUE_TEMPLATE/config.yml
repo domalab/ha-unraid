@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Documentation
+    url: https://domalab.github.io/ha-unraid/
+    about: Read the comprehensive documentation for the Unraid Integration
+  - name: 💬 Community Forum
+    url: https://community.home-assistant.io/t/unraid-integration
+    about: Ask questions and get help from the Home Assistant community
+  - name: 🔧 Troubleshooting Guide
+    url: https://domalab.github.io/ha-unraid/user-guide/troubleshooting/
+    about: Follow the troubleshooting steps in our documentation
+  - name: 📋 Examples & Use Cases
+    url: https://domalab.github.io/ha-unraid/advanced/examples/
+    about: See examples of how to use the Unraid Integration
+  - name: 🤖 Ask DeepWiki
+    url: https://deepwiki.com/domalab/ha-unraid
+    about: Get AI-powered help and answers about the integration

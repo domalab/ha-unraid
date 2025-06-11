@@ -1,0 +1,182 @@
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement for the Unraid Integration
+title: "[Enhancement] "
+labels: ["enhancement"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # ✨ Feature Request
+
+        Thank you for suggesting a new feature! This template is for requesting **new features or enhancements** for the Unraid Integration for Home Assistant.
+
+        ## 📋 When to use this template:
+        - ✅ You want to add new functionality to the Unraid integration
+        - ✅ You have ideas for better automation or control options
+        - ✅ You want to suggest monitoring improvements or new sensors
+        - ✅ You want to suggest UI/UX improvements
+        - ✅ You have ideas for new services or entity types
+
+        ## ❌ When NOT to use this template:
+        - 🚫 **Bug Reports**: Existing features are broken → Use "Bug Report" template
+        - 🚫 **Setup Help**: Need help with configuration → Check [documentation](https://domalab.github.io/ha-unraid/) first
+
+  - type: dropdown
+    id: feature_category
+    attributes:
+      label: 🏷️ Feature Category
+      description: "What type of feature are you requesting?"
+      options:
+        - "New sensor type (monitoring, status, etc.)"
+        - "New switch/control entity"
+        - "Enhanced Docker container management"
+        - "Enhanced VM management"
+        - "New user script capabilities"
+        - "Improved disk/array monitoring"
+        - "Network monitoring enhancements"
+        - "UPS monitoring improvements"
+        - "New custom service"
+        - "Configuration options"
+        - "Performance optimization"
+        - "UI/UX improvements"
+        - "Documentation improvement"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: feature_description
+    attributes:
+      label: 📝 Feature Description
+      description: "Clear description of the feature you'd like to see"
+      placeholder: |
+        **What feature would you like:**
+        Add a sensor that shows the current parity check progress as a percentage instead of just showing "running" or "stopped".
+
+        **Why would this be useful:**
+        It would help users monitor long-running parity checks and set up automations based on progress.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: 🎯 Use Case / Problem Solved
+      description: "What problem does this feature solve? How would you use it?"
+      placeholder: |
+        **Problem:**
+        Currently I can only see if a parity check is running, but not how much progress has been made.
+
+        **Use Case:**
+        I want to create an automation that sends notifications when parity check reaches 50% and 90% completion.
+
+        **Benefit:**
+        This would help users better monitor and plan around long-running maintenance operations.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: 💡 Proposed Solution
+      description: "How do you think this feature should work?"
+      placeholder: |
+        **Implementation idea:**
+        - Add a new sensor entity: `sensor.unraid_parity_check_progress`
+        - Parse parity check status from Unraid logs or API
+        - Update every few minutes during active parity checks
+
+        **UI/UX:**
+        - Show progress percentage in entity state
+        - Include estimated time remaining as an attribute
+        - Add to device diagnostics
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 🔄 Alternatives Considered
+      description: "Have you considered any alternative solutions or workarounds?"
+      placeholder: |
+        **Current workarounds:**
+        - Manually checking Unraid web interface
+        - Using template sensors with SSH commands
+        - Setting up external monitoring scripts
+
+        **Why they're not ideal:**
+        - Requires manual checking or complex setup
+        - Not integrated with Home Assistant automations
+        - May not be reliable or efficient
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: unraid_context
+    attributes:
+      label: 🖥️ Unraid Context
+      description: "Relevant information about your Unraid setup"
+      placeholder: |
+        - Unraid version: 6.12.6
+        - Array size: 8 drives
+        - Specific hardware or configuration that might be relevant
+        - Current monitoring setup you're using
+      render: markdown
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 📊 Priority Level
+      description: "How important is this feature to you?"
+      options:
+        - "Low - Nice to have"
+        - "Medium - Would improve my experience"
+        - "High - Significantly impacts usability"
+        - "Critical - Blocking important use cases"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 🤝 Contribution
+      description: "Would you be willing to help implement this feature?"
+      options:
+        - label: "I'm willing to test development versions"
+        - label: "I can help with documentation"
+        - label: "I have programming skills and could contribute code"
+        - label: "I can provide detailed requirements and feedback"
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: 📝 Additional Context
+      description: "Any other relevant information, mockups, or examples"
+      placeholder: |
+        - Screenshots or mockups of desired UI
+        - Examples from other integrations
+        - Technical considerations
+        - Related feature requests
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: ✅ Checklist
+      description: "Please confirm you have done the following:"
+      options:
+        - label: "I have searched existing [open](https://github.com/domalab/ha-unraid/issues) and [closed](https://github.com/domalab/ha-unraid/issues?q=is%3Aissue+is%3Aclosed) issues to ensure this isn't a duplicate"
+          required: true
+        - label: "I have clearly described the problem this feature would solve"
+          required: true
+        - label: "I understand that feature requests might take time or not be implemented if they are not within project scope"
+          required: true

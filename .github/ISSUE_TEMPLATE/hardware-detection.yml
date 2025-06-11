@@ -1,0 +1,278 @@
+name: 🔍 Hardware Detection Issue
+description: Report hardware components that are not being detected or monitored by the integration
+title: "[Hardware Detection] "
+labels: ["hardware-detection", "enhancement"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🔍 Hardware Detection Issue
+        
+        Thank you for reporting a hardware detection issue! This template is for cases where **specific hardware components are not being detected or properly monitored** by the Unraid Integration, even though the integration itself is working.
+        
+        ## 📋 When to use this template:
+        - ✅ The Unraid integration is working but missing some hardware sensors
+        - ✅ You have hardware that should be monitored but isn't showing up
+        - ✅ Temperature sensors, fans, or other components are not detected
+        - ✅ Your CPU, GPU, or RAID controller isn't being properly monitored
+        - ✅ You want to help improve hardware support for your specific setup
+        
+        ## ❌ When NOT to use this template:
+        - 🚫 **Integration Issues**: The integration won't load or connect → Use "Bug Report" template
+        - 🚫 **Feature Requests**: Want new monitoring features → Use "Feature Request" template
+        - 🚫 **Setup Help**: Need help with basic configuration → Use "Support & Setup Help" template
+
+  - type: dropdown
+    id: hardware_category
+    attributes:
+      label: 🏷️ Hardware Category
+      description: "What type of hardware is not being detected?"
+      options:
+        - "CPU (processor information, cores, frequencies)"
+        - "GPU (Intel/AMD/NVIDIA graphics cards)"
+        - "Temperature Sensors (CPU, motherboard, drives)"
+        - "Fan Sensors (case fans, CPU fans, pump speeds)"
+        - "RAID Controllers (hardware RAID cards)"
+        - "Network Cards (additional NICs, 10GbE cards)"
+        - "Power Monitoring (UPS, power consumption)"
+        - "Memory (RAM information, usage)"
+        - "Storage Controllers (SATA, NVMe, SAS controllers)"
+        - "Motherboard Sensors (voltage, power, chipset)"
+        - "Other Hardware Component"
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware_details
+    attributes:
+      label: 🔧 Hardware Details
+      description: "Specific information about the hardware that's not being detected"
+      placeholder: |
+        **Hardware Model/Manufacturer:**
+        - CPU: Intel Core i7-12700K
+        - Motherboard: ASUS ROG Strix Z690-E
+        - GPU: NVIDIA RTX 3080
+        - RAID Controller: LSI MegaRAID 9260-8i
+        
+        **What should be detected:**
+        - CPU temperature sensors
+        - GPU temperature and usage
+        - Motherboard fan speeds
+        
+        **What is currently detected:**
+        - Only basic CPU information
+        - No temperature sensors
+        - No GPU monitoring
+      render: markdown
+    validations:
+      required: true
+
+  - type: input
+    id: unraid_version
+    attributes:
+      label: 🖥️ Unraid Version
+      description: "Your Unraid server version"
+      placeholder: "6.12.6"
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: 📦 Integration Version
+      description: "Version of the Unraid Integration (check in HACS or manifest.json)"
+      placeholder: "2025.06.05"
+    validations:
+      required: true
+
+  - type: textarea
+    id: system_specifications
+    attributes:
+      label: 💻 System Specifications
+      description: "Detailed system information"
+      placeholder: |
+        **Motherboard:** ASUS ROG Strix Z690-E Gaming WiFi
+        **CPU:** Intel Core i7-12700K
+        **RAM:** 32GB DDR4-3200
+        **GPU:** NVIDIA GeForce RTX 3080
+        **RAID Controller:** LSI MegaRAID 9260-8i
+        **Network Cards:** Intel X550-T2 (10GbE)
+        **Cooling:** Corsair H150i AIO + 6x Noctua fans
+        **PSU:** Corsair RM850x
+        **Case:** Fractal Design Define 7 XL
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_vs_actual
+    attributes:
+      label: 🎯 Expected vs Actual Detection
+      description: "What hardware monitoring do you expect vs what you actually see?"
+      placeholder: |
+        **Expected to see in Home Assistant:**
+        - CPU temperature sensor
+        - GPU temperature and usage sensors
+        - 6 case fan speed sensors
+        - Motherboard voltage sensors
+        - RAID controller status and temperature
+        
+        **Actually detected:**
+        - Basic CPU information only
+        - No temperature sensors
+        - No fan monitoring
+        - No GPU sensors
+        
+        **Missing entities that should exist:**
+        - sensor.unraid_cpu_temperature
+        - sensor.unraid_gpu_temperature
+        - sensor.unraid_fan_cpu
+        - sensor.unraid_fan_case_1 (through 6)
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware_detection_commands
+    attributes:
+      label: 🔍 Hardware Detection Commands Output
+      description: |
+        Please run these commands on your Unraid server and paste the output. This helps us understand what hardware is available:
+
+        **Required commands:**
+        ```bash
+        lscpu
+        lspci
+        sensors
+        ```
+
+        **Optional but helpful:**
+        ```bash
+        lsusb
+        dmidecode -t system
+        dmidecode -t baseboard
+        nvidia-smi (if NVIDIA GPU)
+        ```
+      placeholder: |
+        **lscpu output:**
+        ```
+        Architecture:        x86_64
+        CPU op-mode(s):      32-bit, 64-bit
+        Byte Order:          Little Endian
+        CPU(s):              16
+        ...
+        ```
+
+        **lspci output:**
+        ```
+        00:00.0 Host bridge: Intel Corporation 12th Gen Core Processor Host Bridge/DRAM Registers
+        01:00.0 VGA compatible controller: NVIDIA Corporation GA102 [GeForce RTX 3080]
+        ...
+        ```
+
+        **sensors output:**
+        ```
+        coretemp-isa-0000
+        Adapter: ISA adapter
+        Package id 0:  +45.0°C  (high = +80.0°C, crit = +100.0°C)
+        ...
+        ```
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: integration_logs
+    attributes:
+      label: 📋 Integration Debug Logs
+      description: |
+        Enable debug logging for the integration and include relevant logs:
+
+        ```yaml
+        logger:
+          logs:
+            custom_components.unraid: debug
+        ```
+
+        Look specifically for hardware detection messages during integration startup.
+      placeholder: |
+        ```
+        2025-06-11 10:30:00 DEBUG (MainThread) [custom_components.unraid.api.hardware] Detecting CPU information...
+        2025-06-11 10:30:01 DEBUG (MainThread) [custom_components.unraid.api.hardware] Found CPU: Intel Core i7-12700K
+        2025-06-11 10:30:02 DEBUG (MainThread) [custom_components.unraid.api.hardware] Scanning for temperature sensors...
+        2025-06-11 10:30:03 WARNING (MainThread) [custom_components.unraid.api.hardware] No temperature sensors found
+        ```
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: 📝 Additional Context
+      description: "Any other relevant information about your hardware setup"
+      placeholder: |
+        - Custom cooling solutions or fan controllers
+        - Hardware RAID configuration details
+        - BIOS/UEFI settings that might affect hardware detection
+        - Previous working configurations or changes made
+        - Screenshots of Unraid system information pages
+        - Any custom drivers or plugins installed
+        - Network card configurations or bonding setup
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: data_collection_willingness
+    attributes:
+      label: 🤝 Data Collection & Testing Willingness
+      description: "How can you help us improve hardware detection for your setup?"
+      options:
+        - label: "I'm willing to run additional diagnostic commands if needed"
+        - label: "I can provide SSH access for debugging (with proper security measures)"
+        - label: "I'm available to test development versions of the integration"
+        - label: "I can provide detailed hardware documentation or manuals"
+        - label: "I have programming experience and could help with code development"
+        - label: "I can help document the solution for other users with similar hardware"
+
+  - type: checkboxes
+    id: troubleshooting_completed
+    attributes:
+      label: ✅ Troubleshooting Completed
+      description: "Please confirm you have done the following:"
+      options:
+        - label: "I have searched existing [open](https://github.com/domalab/ha-unraid/issues) and [closed](https://github.com/domalab/ha-unraid/issues?q=is%3Aissue+is%3Aclosed) issues to ensure this isn't a duplicate"
+          required: true
+        - label: "I have verified the integration is working correctly for other features"
+          required: true
+        - label: "I have checked that the missing hardware is actually installed and functional"
+          required: true
+        - label: "I have tried reloading the integration to see if hardware is detected on restart"
+          required: false
+        - label: "I have enabled debug logging and included relevant logs"
+          required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ## 📚 Helpful Resources
+
+        - **📖 Documentation**: [Unraid Integration Docs](https://domalab.github.io/ha-unraid/)
+        - **🔧 Troubleshooting**: [Troubleshooting Guide](https://domalab.github.io/ha-unraid/user-guide/troubleshooting/)
+        - **💬 Community**: [Home Assistant Community Forum](https://community.home-assistant.io/t/unraid-integration)
+        - **📋 Examples**: [Hardware Monitoring Examples](https://domalab.github.io/ha-unraid/advanced/examples/)
+
+        ## ⏱️ What Happens Next?
+
+        1. **Analysis**: We'll analyze your hardware information and detection logs
+        2. **Research**: We'll research your specific hardware models and their monitoring capabilities
+        3. **Development**: If feasible, we'll work on adding support for your hardware
+        4. **Testing**: You'll be asked to test development versions with enhanced detection
+        5. **Documentation**: We'll document the new hardware support for other users
+
+        **Note**: Adding support for new hardware requires understanding the specific monitoring interfaces and may take time. Some hardware may not be detectable through standard interfaces.
+
+        Thank you for helping improve hardware detection in the Unraid Integration! 🙏

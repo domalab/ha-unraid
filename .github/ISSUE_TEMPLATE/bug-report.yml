@@ -1,0 +1,190 @@
+name: 🐛 Bug Report
+description: Report a bug or issue with the Unraid Integration
+title: "[BUG] "
+labels: ["bug"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🐛 Bug Report
+
+        Thank you for reporting a bug! This template is for issues with the **Unraid Integration for Home Assistant** that are not working correctly.
+
+        ## 📋 When to use this template:
+        - ✅ The Unraid integration was working before but now has issues
+        - ✅ The integration loads but some features don't work as expected
+        - ✅ You're getting error messages in Home Assistant logs related to Unraid
+        - ✅ Sensors, switches, or other entities are not updating correctly
+
+        ## ❌ When NOT to use this template:
+        - 🚫 **Feature Requests**: Want new features for the integration → Use "Feature Request" template
+        - 🚫 **Setup Help**: Need help with initial configuration → Check [documentation](https://domalab.github.io/ha-unraid/) first
+
+  - type: input
+    id: unraid_version
+    attributes:
+      label: 🖥️ Unraid Version
+      description: "Your Unraid server version"
+      placeholder: "6.12.6"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bug_category
+    attributes:
+      label: 🏷️ Bug Category
+      description: "What type of issue are you experiencing?"
+      options:
+        - "Integration fails to load/setup"
+        - "Connection issues (authentication, network)"
+        - "Sensors not updating or showing incorrect data"
+        - "Docker container controls not working"
+        - "VM controls not working"
+        - "User script execution issues"
+        - "Disk/array monitoring problems"
+        - "UPS monitoring issues"
+        - "Network monitoring problems"
+        - "Entity duplication or missing entities"
+        - "Home Assistant crashes/errors"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: bug_description
+    attributes:
+      label: 📝 Bug Description
+      description: "Clear description of what's wrong and what you expected to happen"
+      placeholder: |
+        **What's happening:**
+        Docker container switches don't work - when I try to start/stop containers in HA, nothing happens on Unraid.
+
+        **What should happen:**
+        Containers should start/stop when I toggle the switches in Home Assistant.
+
+        **When did this start:**
+        After updating to version 2025.06.05
+
+        **Additional context:**
+        Include any error messages, affected entities, or specific scenarios.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: 🔄 Steps to Reproduce
+      description: "Step-by-step instructions to reproduce the issue"
+      placeholder: |
+        1. Open Home Assistant
+        2. Go to the Unraid integration entities
+        3. Try to toggle a Docker container switch
+        4. Check Unraid dashboard - container state doesn't change
+        5. Check HA logs for any error messages
+      render: markdown
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: 📦 Integration Version
+      description: "Version of the Unraid Integration (check in HACS or manifest.json)"
+      placeholder: "2025.06.05"
+    validations:
+      required: true
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: 🏠 Home Assistant Version
+      description: "Your Home Assistant version"
+      placeholder: "2025.6.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ha_installation_type
+    attributes:
+      label: 🏗️ Home Assistant Installation Type
+      description: "How is Home Assistant installed?"
+      options:
+        - "Home Assistant OS (HAOS)"
+        - "Home Assistant Container (Docker)"
+        - "Home Assistant Supervised"
+        - "Home Assistant Core (Python venv)"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 📋 Relevant Logs
+      description: |
+        Home Assistant logs related to the issue. Enable debug logging first:
+
+        ```yaml
+        logger:
+          logs:
+            custom_components.unraid: debug
+        ```
+
+        Then reload the integration and reproduce the issue.
+      placeholder: |
+        ```
+        2025-06-11 10:30:00 ERROR (MainThread) [custom_components.unraid] ...
+        2025-06-11 10:30:01 DEBUG (MainThread) [custom_components.unraid.api] ...
+        ```
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: network_setup
+    attributes:
+      label: 🌐 Network Setup
+      description: "Information about your network configuration"
+      placeholder: |
+        - Unraid server IP: 192.168.1.100
+        - Home Assistant IP: 192.168.1.50
+        - Same subnet: Yes/No
+        - VLANs or firewalls: None/Details
+        - SSH port (if not 22): 22
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: 📝 Additional Context
+      description: "Any other relevant information"
+      placeholder: |
+        - Recent changes to your Unraid or HA setup
+        - Workarounds you've tried
+        - Screenshots of error messages
+        - Specific entities affected
+        - Docker containers or VMs involved
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: ✅ Checklist
+      description: "Please confirm you have done the following:"
+      options:
+        - label: "I have searched existing [open](https://github.com/domalab/ha-unraid/issues) and [closed](https://github.com/domalab/ha-unraid/issues?q=is%3Aissue+is%3Aclosed) issues to ensure this isn't a duplicate"
+          required: true
+        - label: "I have reproduced the issue on the latest version to confirm it still exists"
+          required: true
+        - label: "I have tried restarting Home Assistant"
+          required: false
+        - label: "I have tried reloading the Unraid integration"
+          required: false
+        - label: "I have enabled debug logging and included relevant logs"
+          required: false
