@@ -189,9 +189,163 @@ Comprehensive documentation is available on our [Documentation Site](https://dom
 - [User Scripts](https://domalab.github.io/ha-unraid/advanced/user-scripts/)
 - [Contributing Guide](https://domalab.github.io/ha-unraid/development/contributing/)
 
+## Development Environment
+
+This project provides a complete development environment using Visual Studio Code Dev Containers, making it easy for contributors to get started with a fully configured Home Assistant development setup.
+
+### Prerequisites
+
+Before setting up the development environment, ensure you have the following installed:
+
+- **Docker**: Required for running the development container
+  - [Install Docker Desktop](https://docs.docker.com/get-docker/) (Windows/Mac)
+  - [Install Docker Engine](https://docs.docker.com/engine/install/) (Linux)
+- **Visual Studio Code**: The primary development environment
+  - [Download VS Code](https://code.visualstudio.com/)
+- **Dev Containers Extension**: Enables devcontainer support in VS Code
+  - [Install Dev Containers Extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+
+### Devcontainer Setup
+
+The project includes a pre-configured development container that provides:
+- Python 3.13 environment
+- Home Assistant with debugging capabilities
+- Pre-installed development dependencies (ruff, colorlog, asyncssh)
+- VS Code extensions for Python development, linting, and GitHub integration
+- Automatic port forwarding for Home Assistant (port 8123)
+
+#### Getting Started
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/domalab/ha-unraid.git
+   cd ha-unraid
+   ```
+
+2. **Open in VS Code**:
+   ```bash
+   code .
+   ```
+
+3. **Open in Dev Container**:
+   - When VS Code opens, you should see a notification to "Reopen in Container"
+   - Alternatively, press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac) and select "Dev Containers: Reopen in Container"
+   - Or click the green button in the bottom-left corner and select "Reopen in Container"
+
+4. **Wait for container setup**:
+   - The container will build and install dependencies automatically
+   - The `scripts/setup` command runs automatically to install Python requirements
+
+### Development Workflow
+
+#### Starting Home Assistant for Testing
+
+The development environment includes a dedicated script to run Home Assistant with the integration loaded:
+
+```bash
+scripts/develop
+```
+
+This command:
+- Creates a `config` directory if it doesn't exist
+- Initializes Home Assistant configuration
+- Sets up the Python path to include the custom components
+- Starts Home Assistant in debug mode with the integration loaded
+- Makes Home Assistant available at `http://localhost:8123`
+
+#### Code Formatting and Linting
+
+The project uses Ruff for code formatting and linting:
+
+```bash
+scripts/lint
+```
+
+This command:
+- Formats code according to project standards
+- Fixes linting issues automatically where possible
+- Should be run before committing changes
+
+#### Testing the Integration
+
+1. **Start the development environment**:
+   ```bash
+   scripts/develop
+   ```
+
+2. **Access Home Assistant**:
+   - Open your browser to `http://localhost:8123`
+   - Complete the initial Home Assistant setup if prompted
+
+3. **Add the Unraid integration**:
+   - Go to Settings → Devices & Services
+   - Click "Add Integration"
+   - Search for "Unraid" and configure with your Unraid server details
+
+4. **Debug and develop**:
+   - The integration runs with debug logging enabled
+   - Check the Home Assistant logs for detailed information
+   - Make changes to the code and restart Home Assistant to test
+
+### Configuration and Files
+
+#### Key Development Files
+
+- **`.devcontainer.json`**: Defines the development container configuration
+- **`config/configuration.yaml`**: Home Assistant configuration for development
+- **`scripts/setup`**: Installs Python dependencies
+- **`scripts/develop`**: Starts Home Assistant in development mode
+- **`scripts/lint`**: Formats and lints the code
+- **`requirements.txt`**: Python dependencies for development
+
+#### Development Configuration
+
+The development Home Assistant instance is configured with:
+- Debug mode enabled
+- Debug logging for the Unraid integration
+- Default Home Assistant integrations loaded
+- Custom components path set to include this project
+
+### Additional Developer Resources
+
+#### Available Commands
+
+- **Setup environment**: `scripts/setup`
+- **Start development server**: `scripts/develop`
+- **Format and lint code**: `scripts/lint`
+
+#### Development Tips
+
+- **Hot reload**: Restart Home Assistant to see code changes
+- **Debugging**: Use VS Code's integrated debugger with the Python extension
+- **Logging**: Check Home Assistant logs for integration-specific debug information
+- **Testing**: Test with a real Unraid server or mock the SSH connections for unit testing
+
+#### VS Code Extensions Included
+
+The devcontainer automatically installs these helpful extensions:
+- **Ruff**: Python linting and formatting
+- **Python & Pylance**: Python language support and IntelliSense
+- **GitHub Pull Requests**: GitHub integration for pull requests
+- **Coverage Gutters**: Code coverage visualization
+
+#### Port Forwarding
+
+The development container automatically forwards:
+- **Port 8123**: Home Assistant web interface
+
 ## Contributing
 
-Contributions to this integration are welcome. Please fork the repository and submit a pull request with your changes. Make sure to follow the contribution guidelines. See our [Contributing Guide](https://domalab.github.io/ha-unraid/development/contributing/) for more details.
+Contributions to this integration are welcome. Please fork the repository and submit a pull request with your changes. Make sure to follow the contribution guidelines and use the development environment described above. See our [Contributing Guide](https://domalab.github.io/ha-unraid/development/contributing/) for more details.
+
+### Development Workflow for Contributors
+
+1. Set up the development environment using the instructions above
+2. Create a new branch for your feature or bug fix
+3. Make your changes and test them using `scripts/develop`
+4. Run `scripts/lint` to ensure code quality
+5. Test your changes thoroughly with a real Unraid server
+6. Submit a pull request with a clear description of your changes
 
 ## License
 
