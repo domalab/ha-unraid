@@ -9,40 +9,22 @@
 
 This custom integration allows you to monitor and control your Unraid server from Home Assistant. Unraid is a popular NAS (Network Attached Storage) operating system that provides flexible storage, virtualization, and application support.
 
-## ⚠️ Project Direction Update: Moving to GraphQL API
+## ⚠️ Project Status Update
 
-I wanted to share an important update regarding the future development of this integration. After careful consideration, I've decided to focus my efforts on developing a new version that utilizes Unraid's official GraphQL API instead of continuing with the current SSH-based implementation.
+Due to time constraints, I am no longer able to actively develop and support this integration. 
 
-### Why this change?
+### Recommended Alternative
 
-- **Improved Reliability**: The GraphQL API provides a more stable and officially supported method of interacting with Unraid
-- **Better Performance**: Direct API access should result in faster response times and less system overhead
-- **Future-Proof**: As Unraid continues to develop their API, we'll benefit from new capabilities without requiring extensive rewrites
-- **Reduced Edge Cases**: Many of the current integration's limitations stem from the varied environments where SSH commands can behave differently
+I encourage users to check out **[chris-mc1's Unraid API integration](https://github.com/chris-mc1/unraid_api)**, which is under active development and provides an alternative solution for integrating Unraid with Home Assistant.
 
-### What this means for users
+### What this means
 
-The current SSH-based integration will remain available but will enter maintenance mode. I won't be actively developing new features or addressing edge cases for it. Instead, I'm channeling those efforts into the new GraphQL-based integration, which I believe will provide a better experience for everyone in the long run.
+- This repository will remain available for reference and forking
+- No new features or bug fixes will be implemented
+- Pull requests may not be reviewed or merged
+- Issues will not be actively addressed
 
-For those who need immediate fixes for specific edge cases in the current integration, I encourage you to fork the repository and adapt it to your needs. Pull requests are still welcome and will be reviewed, though my primary development focus will be on the new approach.
-
-### Timeline & Progress
-
-I've already begun work on the new integration and will share updates as development progresses.
-
-I appreciate your understanding and continued support as we move toward this improved implementation.
-
-### Beta GraphQL Integration Available
-
-For those interested in trying the new approach, a beta version of the GraphQL-based integration is now available! The [Unraid Connect integration](https://github.com/domalab/ha-unraid-connect) leverages Unraid's official GraphQL API and represents the future direction of this project.
-
-**Important Notes:**
-
-- This is currently in **beta phase** - expect some rough edges
-- You can view current issues and track development progress on the GitHub repository
-- Remaining issues will be addressed as the Unraid API Team releases more updates and improvements
-
-If you're comfortable with beta software and want to help shape the future of Unraid integration with Home Assistant, give it a try.
+Thank you for your understanding and support. I hope the recommended alternative integration serves your needs well.
 
 ## Features
 
